@@ -30,25 +30,32 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 - JWT auth: register, login, logout, /me (httpOnly cookies, 12h access + 7d refresh)
 - Admin auto-seed from `.env`
 - Employee CRUD: `/api/employees` (NIK unique, full payroll fields)
+- Bulk CSV import: `/api/employees-import` + template download
 - Payroll preview: `/api/payroll/preview` (computes without saving)
 - Payroll run: `/api/payroll/run` (idempotent per period — replaces previous)
 - Payroll history: `/api/payroll/runs`, `/api/payroll/runs/{period}/slips`
 - Single payslip: `/api/payroll/payslip/{slip_id}`
-- Dashboard stats: `/api/dashboard/stats` (total employees, latest run, 12-period trend)
-- Config: `/api/config/constants` (PPh21 brackets, PTKP, BPJS rates)
+- PDF export: `/api/payroll/payslip/{slip_id}/pdf` (reportlab A4)
+- Fingerprint import: `/api/attendance/import?period=...` (xlsx/xls/csv → auto-aggregate)
+- **THR**: `/api/payroll/thr/preview`, `/api/payroll/thr/run`, `/api/payroll/thr/runs`, `/api/payroll/thr/{period}/slips` (proportional for tenure < 12 months, isolated PPh21 method)
+- **Email payslip**: `/api/payroll/payslip/{slip_id}/email` + `/api/payroll/runs/{period}/email-all` (Resend integration; mock mode when key empty; logs to `email_logs`)
+- **Bank transfer export**: `/api/payroll/runs/{period}/bank-export?format={generic|bca|mandiri|bni|bri}`
+- **Editable config**: GET + PUT `/api/config/constants` (PPh21, PTKP, BPJS, biaya jabatan, hari kerja, lembur multiplier) — persisted in `app_config` collection, hot-reload
+- Dashboard stats: `/api/dashboard/stats`
 
 ### Frontend (`/app/frontend/src/`)
 - `/login` — Branded split-screen login
-- `/` — Dashboard with hero stat (Total Net), 4 metric cards, 12-period trend chart
-- `/employees` — CRUD table + modal form (identity, salary, tax/BPJS, bank)
-- `/payroll` — Period picker + attendance input table + preview/generate + history list
-- `/payroll/:period` — Detail listing of all slips in a period
-- `/payslip/:slipId` — Full A4-style printable payslip with tax breakdown
-- `/settings` — Read-only configuration (PPh21, PTKP, BPJS, biaya jabatan)
+- `/` — Dashboard with hero stat, 4 metric cards, 12-period trend chart
+- `/employees` — CRUD + CSV import + template download
+- `/payroll` — Period picker + attendance + **Import Fingerprint** + preview/generate + history
+- `/payroll/:period` — Detail listing + **bank export** dropdown (5 formats) + **Kirim Email ke Semua**
+- `/payslip/:slipId` — Printable A4 + **Unduh PDF** + **Kirim Email**
+- `/thr` — Period picker + preview + run + history of THR runs
+- `/settings` — Fully editable PPh21 brackets, PTKP, BPJS, biaya jabatan, etc.
 
 ### Testing
-- 14/14 backend pytest cases pass (auth, CRUD, payroll math, idempotency, dashboard, config)
-- Full frontend e2e flow verified (login → employees → payroll → payslip → settings)
+- 31/31 backend pytest cases pass
+- Full frontend e2e flow verified
 - Test credentials at `/app/memory/test_credentials.md`
 
 ## Backlog (Prioritized)
