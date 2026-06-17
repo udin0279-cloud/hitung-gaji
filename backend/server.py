@@ -68,6 +68,34 @@ def create_refresh_token(user_id: str) -> str:
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
+def create_portal_token(employee_id: str, email: str) -> str:
+    payload = {
+        "sub": employee_id,
+        "email": email,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+        "type": "portal",
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+async def get_current_employee(request: Request) -> Dict[str, Any]:
+    token = request.cookies.get("portal_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Portal: not authenticated")
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "portal":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        emp = await db.employees.find_one({"id": payload["sub"]}, {"_id": 0})
+        if not emp:
+            raise HTTPException(status_code=401, detail="Karyawan tidak ditemukan")
+        return emp
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Sesi berakhir")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token tidak valid")
+
+
 def set_auth_cookies(response: Response, access: str, refresh: str) -> None:
     response.set_cookie("access_token", access, httponly=True, secure=False, samesite="lax", max_age=43200, path="/")
     response.set_cookie("refresh_token", refresh, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
@@ -355,7 +383,109 @@ async def me(user: dict = Depends(get_current_user)):
     return user
 
 
-# ---------------- Employee Endpoints ----------------
+# ---------------- Employee Portal (Self-service) ----------------
+class PortalLoginIn(BaseModel):
+    email: EmailStr
+    nik: str
+
+
+@api_router.post("/portal/login")
+async def portal_login(payload: PortalLoginIn, response: Response):
+    email = payload.email.lower().strip()
+    nik = payload.nik.strip()
+    emp = await db.employees.find_one({"nik": nik, "active": True}, {"_id": 0})
+    if not emp:
+        raise HTTPException(status_code=401, detail="NIK atau email salah")
+    if (emp.get("email") or "").lower() != email:
+        raise HTTPException(status_code=401, detail="NIK atau email salah")
+    token = create_portal_token(emp["id"], email)
+    response.set_cookie("portal_token", token, httponly=True, secure=False, samesite="lax", max_age=86400, path="/")
+    return {
+        "id": emp["id"],
+        "nik": emp["nik"],
+        "name": emp["name"],
+        "email": emp.get("email"),
+        "position": emp["position"],
+        "department": emp["department"],
+    }
+
+
+@api_router.post("/portal/logout")
+async def portal_logout(response: Response):
+    response.delete_cookie("portal_token", path="/")
+    return {"ok": True}
+
+
+@api_router.get("/portal/me")
+async def portal_me(emp: dict = Depends(get_current_employee)):
+    return {
+        "id": emp["id"],
+        "nik": emp["nik"],
+        "name": emp["name"],
+        "email": emp.get("email"),
+        "position": emp["position"],
+        "department": emp["department"],
+        "join_date": emp.get("join_date"),
+        "ptkp_status": emp.get("ptkp_status"),
+        "bank_name": emp.get("bank_name"),
+        "bank_account": emp.get("bank_account"),
+    }
+
+
+@api_router.get("/portal/payslips")
+async def portal_payslips(emp: dict = Depends(get_current_employee)):
+    slips = await db.payslips.find({"employee_id": emp["id"]}, {"_id": 0}).sort("period", -1).to_list(length=240)
+    return [
+        {
+            "id": s["id"],
+            "period": s["period"],
+            "net_salary": s["net_salary"],
+            "gross": s["earnings"]["gross"],
+            "pph21": s["deductions"]["pph21"],
+        }
+        for s in slips
+    ]
+
+
+@api_router.get("/portal/payslip/{slip_id}")
+async def portal_payslip(slip_id: str, emp: dict = Depends(get_current_employee)):
+    slip = await db.payslips.find_one({"id": slip_id, "employee_id": emp["id"]}, {"_id": 0})
+    if not slip:
+        raise HTTPException(status_code=404, detail="Slip tidak ditemukan")
+    return slip
+
+
+@api_router.get("/portal/payslip/{slip_id}/pdf")
+async def portal_payslip_pdf(slip_id: str, emp: dict = Depends(get_current_employee)):
+    slip = await db.payslips.find_one({"id": slip_id, "employee_id": emp["id"]}, {"_id": 0})
+    if not slip:
+        raise HTTPException(status_code=404, detail="Slip tidak ditemukan")
+    pdf = _build_payslip_pdf(slip)
+    fname = f"slip-{slip['period']}-{slip['nik']}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@api_router.get("/portal/thr")
+async def portal_thr_list(emp: dict = Depends(get_current_employee)):
+    rows = await db.thr_slips.find({"employee_id": emp["id"]}, {"_id": 0}).sort("period", -1).to_list(length=120)
+    return [
+        {
+            "id": r["id"],
+            "period": r["period"],
+            "thr_gross": r["thr_gross"],
+            "thr_net": r["thr_net"],
+            "pph21_thr": r["pph21_thr"],
+            "formula": r["formula"],
+        }
+        for r in rows
+    ]
+
+
+# ---------------- Employee Endpoints (Admin) ----------------
 @api_router.get("/employees")
 async def list_employees(user: dict = Depends(get_current_user)):
     cursor = db.employees.find({}, {"_id": 0}).sort("created_at", -1)
