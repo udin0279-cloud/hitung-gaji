@@ -13,6 +13,8 @@ import THR from "@/pages/THR";
 import Settings from "@/pages/Settings";
 import Layout from "@/components/Layout";
 import PortalLogin from "@/pages/PortalLogin";
+import PortalForgot from "@/pages/PortalForgot";
+import PortalMagicLogin from "@/pages/PortalMagicLogin";
 import { PortalDashboard, PortalPayslip } from "@/pages/Portal";
 
 function ProtectedRoute({ children }) {
@@ -50,6 +52,8 @@ function App() {
 
             {/* Employee Portal */}
             <Route path="/portal/login" element={<PortalLogin />} />
+            <Route path="/portal/forgot" element={<PortalForgot />} />
+            <Route path="/portal/magic-login" element={<PortalMagicLogin />} />
             <Route path="/portal" element={<PortalProtected><PortalDashboard /></PortalProtected>} />
             <Route path="/portal/payslip/:slipId" element={<PortalProtected><PortalPayslip /></PortalProtected>} />
 

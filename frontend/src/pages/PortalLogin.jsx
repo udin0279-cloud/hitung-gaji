@@ -104,6 +104,12 @@ export default function PortalLogin() {
             <div className="text-[10px] uppercase tracking-widest font-semibold text-zinc-500">Belum bisa masuk?</div>
             <div className="text-xs text-zinc-700 mt-1">Pastikan HR sudah mendaftarkan email Anda. Jika lupa NIK, hubungi tim HR.</div>
           </div>
+
+          <div className="mt-4 text-center">
+            <Link to="/portal/forgot" data-testid="forgot-nik-link" className="text-sm font-semibold text-[#002FA7] hover:underline">
+              Lupa NIK? Kirim link via email →
+            </Link>
+          </div>
         </div>
       </div>
     </div>

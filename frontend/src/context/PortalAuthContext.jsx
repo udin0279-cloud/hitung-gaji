@@ -32,7 +32,7 @@ export function PortalAuthProvider({ children }) {
   };
 
   return (
-    <PortalContext.Provider value={{ employee, loading, login, logout }}>
+    <PortalContext.Provider value={{ employee, loading, login, logout, setEmployee }}>
       {children}
     </PortalContext.Provider>
   );

@@ -485,6 +485,122 @@ async def portal_thr_list(emp: dict = Depends(get_current_employee)):
     ]
 
 
+# ---------------- Portal Magic Link (Forgot NIK) ----------------
+class ForgotPortalIn(BaseModel):
+    email: EmailStr
+
+
+@api_router.post("/portal/forgot")
+async def portal_forgot(payload: ForgotPortalIn):
+    """Generate one-time magic login token and email it. Always returns ok to avoid email enumeration."""
+    import secrets as pysecrets
+
+    email = payload.email.lower().strip()
+    emp = await db.employees.find_one({"email": email, "active": True}, {"_id": 0})
+    if not emp:
+        # Don't reveal whether email exists
+        return {"ok": True}
+
+    token = pysecrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    await db.portal_reset_tokens.insert_one({
+        "id": str(uuid.uuid4()),
+        "token": token,
+        "employee_id": emp["id"],
+        "email": email,
+        "expires_at": expires_at,
+        "used": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    # Build magic link
+    frontend_base = os.environ.get("PUBLIC_APP_URL", "").rstrip("/")
+    if not frontend_base:
+        # Best-effort: derive from referer header would need request; default to relative path
+        frontend_base = ""
+    magic_link = f"{frontend_base}/portal/magic-login?token={token}"
+
+    company = os.environ.get("COMPANY_NAME", "Payroll Indonesia")
+    html = f"""
+    <table width="100%" cellpadding="0" cellspacing="0" style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #18181b;">
+      <tr><td style="padding: 24px 0; border-bottom: 2px solid #18181b;">
+        <h2 style="margin:0; font-size:20px;">Akses Portal Karyawan</h2>
+        <div style="font-size:12px; color:#71717a; margin-top:4px;">{company}</div>
+      </td></tr>
+      <tr><td style="padding: 20px 0; font-size:14px;">
+        Halo <strong>{emp['name']}</strong>,<br/><br/>
+        Klik tombol di bawah untuk masuk ke Portal Karyawan tanpa NIK. Link berlaku <strong>30 menit</strong>.
+      </td></tr>
+      <tr><td style="padding: 8px 0 24px;">
+        <a href="{magic_link}" style="background:#002FA7; color:white; text-decoration:none; padding:12px 20px; font-weight:600; display:inline-block;">Masuk ke Portal</a>
+      </td></tr>
+      <tr><td style="padding-top: 16px; font-size:11px; color:#71717a;">
+        Jika Anda tidak meminta link ini, abaikan email ini. NIK Anda: <strong>{emp['nik']}</strong> (untuk login manual).
+      </td></tr>
+    </table>
+    """
+    subject = "Link Masuk Portal Karyawan"
+
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    if api_key:
+        try:
+            import resend
+            resend.api_key = api_key
+            sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": sender, "to": [email], "subject": subject, "html": html,
+            })
+            status = "sent"
+        except Exception as ex:
+            logger.error(f"Magic link email failed: {ex}")
+            status = "failed"
+    else:
+        status = "mocked"
+        logger.info(f"[MOCK MAGIC LINK] {email} → {magic_link}")
+
+    await db.email_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "type": "magic_link",
+        "email": email,
+        "employee_id": emp["id"],
+        "status": status,
+        "magic_link": magic_link if status == "mocked" else None,
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": True, "status": status, "magic_link_preview": magic_link if status == "mocked" else None}
+
+
+@api_router.post("/portal/magic-login")
+async def portal_magic_login(token: str, response: Response):
+    rec = await db.portal_reset_tokens.find_one({"token": token, "used": False})
+    if not rec:
+        raise HTTPException(status_code=400, detail="Link tidak valid atau sudah dipakai")
+    exp = rec.get("expires_at")
+    if isinstance(exp, str):
+        try:
+            exp = datetime.fromisoformat(exp)
+        except Exception:
+            exp = None
+    if not exp or datetime.now(timezone.utc) > (exp if exp.tzinfo else exp.replace(tzinfo=timezone.utc)):
+        raise HTTPException(status_code=400, detail="Link sudah kedaluwarsa")
+
+    emp = await db.employees.find_one({"id": rec["employee_id"], "active": True}, {"_id": 0})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Karyawan tidak aktif")
+
+    await db.portal_reset_tokens.update_one({"_id": rec["_id"]}, {"$set": {"used": True, "used_at": datetime.now(timezone.utc).isoformat()}})
+    portal_token = create_portal_token(emp["id"], emp.get("email") or "")
+    response.set_cookie("portal_token", portal_token, httponly=True, secure=False, samesite="lax", max_age=86400, path="/")
+    return {
+        "id": emp["id"],
+        "nik": emp["nik"],
+        "name": emp["name"],
+        "email": emp.get("email"),
+        "position": emp["position"],
+        "department": emp["department"],
+    }
+
+
 # ---------------- Employee Endpoints (Admin) ----------------
 @api_router.get("/employees")
 async def list_employees(user: dict = Depends(get_current_user)):
