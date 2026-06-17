@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, formatIDR, formatApiError } from "../lib/api";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Calculator, ChevronRight, Eye, Trash2, ArrowRight } from "lucide-react";
+import { Calculator, ChevronRight, Eye, Trash2, ArrowRight, Fingerprint } from "lucide-react";
 
 function defaultPeriod() {
   const d = new Date();
@@ -17,6 +17,8 @@ export default function Payroll() {
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [fpImporting, setFpImporting] = useState(false);
+  const [fpResult, setFpResult] = useState(null);
   const navigate = useNavigate();
 
   const load = async () => {
@@ -82,6 +84,39 @@ export default function Payroll() {
     }
   };
 
+  const onFingerprintImport = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setFpImporting(true);
+    setFpResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post(`/attendance/import?period=${period}`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      // Merge into attendance: overwrite days_worked & overtime_hours for matched employees
+      setAttendance((curr) => {
+        const next = { ...curr };
+        Object.entries(data.summary).forEach(([empId, v]) => {
+          next[empId] = {
+            ...(next[empId] || { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 }),
+            days_worked: v.days_worked,
+            overtime_hours: v.overtime_hours,
+          };
+        });
+        return next;
+      });
+      setFpResult(data);
+      toast.success(`${data.matched_employees} karyawan ter-update dari ${data.total_scans} scan`);
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal import fingerprint");
+    } finally {
+      setFpImporting(false);
+    }
+  };
+
   const totals = useMemo(() => {
     if (!preview) return null;
     return preview.totals;
@@ -137,7 +172,41 @@ export default function Payroll() {
       {/* Attendance & Adjustments */}
       {employees.length > 0 && (
         <div className="mt-6">
-          <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold mb-2">Input Kehadiran & Penyesuaian</div>
+          <div className="flex items-end justify-between mb-2">
+            <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Input Kehadiran & Penyesuaian</div>
+            <label
+              data-testid="import-fingerprint-label"
+              className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider hover:bg-zinc-50 inline-flex items-center gap-2 cursor-pointer"
+            >
+              <Fingerprint className="w-3.5 h-3.5" />
+              {fpImporting ? "Mengimpor…" : "Import Fingerprint (XLSX/CSV)"}
+              <input
+                data-testid="import-fingerprint-input"
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={onFingerprintImport}
+                disabled={fpImporting}
+              />
+            </label>
+          </div>
+
+          {fpResult && (
+            <div className="mb-3 p-3 border border-zinc-200 bg-zinc-50 flex items-start justify-between">
+              <div className="text-xs">
+                <div className="font-mono text-zinc-900">
+                  <span className="font-semibold">{fpResult.matched_employees}</span> karyawan ter-update · <span className="font-semibold">{fpResult.total_scans}</span> scan diproses
+                </div>
+                {fpResult.unmatched_niks?.length > 0 && (
+                  <div className="mt-1 text-[#E81123]">
+                    NIK tidak ditemukan: <span className="font-mono">{fpResult.unmatched_niks.join(", ")}</span>
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setFpResult(null)} className="text-zinc-400 hover:text-zinc-700 text-xs uppercase tracking-widest font-semibold">tutup</button>
+            </div>
+          )}
+
           <div className="border border-zinc-200 bg-white overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>

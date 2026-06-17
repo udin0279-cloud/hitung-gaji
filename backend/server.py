@@ -793,6 +793,181 @@ async def employees_import(file: UploadFile = File(...), user: dict = Depends(ge
     return {"created": created, "skipped": skipped, "errors": errors[:20]}
 
 
+# ---------------- Attendance Import (Fingerprint) ----------------
+NIK_COLS = {"nik", "pin", "userid", "user_id", "employee_id", "employee", "no_pegawai", "id"}
+DATE_COLS = {"tanggal", "date", "tgl"}
+TIME_COLS = {"jam", "time", "clock", "waktu", "jam_scan"}
+DATETIME_COLS = {"datetime", "date_time", "tanggal_jam", "timestamp", "tgl_jam"}
+STATUS_COLS = {"status", "verify", "io", "in_out"}
+
+STANDARD_START_HOUR = 8
+STANDARD_END_HOUR = 17
+STANDARD_DAYS_DEFAULT = 22
+
+
+def _normalize_col(c):
+    return str(c).strip().lower().replace(" ", "_") if c is not None else ""
+
+
+def _find_col(cols, candidates):
+    for c in cols:
+        if _normalize_col(c) in candidates:
+            return c
+    return None
+
+
+@api_router.post("/attendance/import")
+async def attendance_import(
+    period: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+):
+    """Import fingerprint export (xlsx/xls/csv).
+
+    Format yang didukung: log mentah (1 baris = 1 scan).
+    Sistem akan mengelompokkan per (NIK, tanggal) untuk menentukan jam IN/OUT,
+    menghitung hari kerja dan jam lembur (menit setelah 17:00).
+    Hasilnya bisa di-load otomatis ke halaman Payroll periode ybs.
+    """
+    import pandas as pd
+    from datetime import time as dtime
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="File tidak valid")
+    fname = file.filename.lower()
+    raw = await file.read()
+
+    try:
+        if fname.endswith(".csv"):
+            try:
+                df = pd.read_csv(io.BytesIO(raw))
+            except Exception:
+                df = pd.read_csv(io.BytesIO(raw), encoding="latin-1")
+        elif fname.endswith(".xlsx"):
+            df = pd.read_excel(io.BytesIO(raw), engine="openpyxl")
+        elif fname.endswith(".xls"):
+            df = pd.read_excel(io.BytesIO(raw), engine="xlrd")
+        else:
+            raise HTTPException(status_code=400, detail="Format harus .csv, .xls, atau .xlsx")
+    except HTTPException:
+        raise
+    except Exception as ex:
+        raise HTTPException(status_code=400, detail=f"Gagal membaca file: {str(ex)[:200]}")
+
+    if df.empty:
+        raise HTTPException(status_code=400, detail="File kosong")
+
+    cols = list(df.columns)
+    nik_col = _find_col(cols, NIK_COLS)
+    dt_col = _find_col(cols, DATETIME_COLS)
+    date_col = _find_col(cols, DATE_COLS)
+    time_col = _find_col(cols, TIME_COLS)
+
+    if not nik_col:
+        raise HTTPException(status_code=400, detail=f"Kolom NIK/PIN tidak ditemukan. Kolom file: {cols}")
+    if not dt_col and not (date_col and time_col) and not date_col:
+        raise HTTPException(status_code=400, detail="Kolom tanggal/jam tidak ditemukan")
+
+    # Build a unified datetime column
+    def _try_parse(series, with_dayfirst):
+        return pd.to_datetime(series, errors="coerce", dayfirst=with_dayfirst)
+
+    def _best_parse(series):
+        a = _try_parse(series, False)
+        if a.isna().mean() < 0.3:
+            return a
+        b = _try_parse(series, True)
+        return b if b.isna().mean() < a.isna().mean() else a
+
+    if dt_col:
+        df["_dt"] = _best_parse(df[dt_col])
+    else:
+        if time_col:
+            combined = df[date_col].astype(str) + " " + df[time_col].astype(str)
+            df["_dt"] = _best_parse(combined)
+        else:
+            df["_dt"] = _best_parse(df[date_col])
+
+    df = df.dropna(subset=["_dt"])
+    df["_nik"] = df[nik_col].astype(str).str.strip()
+    df = df[df["_nik"] != ""]
+    df["_date"] = df["_dt"].dt.date
+
+    # Aggregate per (nik, date) -> earliest=IN, latest=OUT
+    agg = df.groupby(["_nik", "_date"]).agg(in_time=("_dt", "min"), out_time=("_dt", "max")).reset_index()
+
+    # Filter to period (YYYY-MM)
+    try:
+        period_year, period_month = period.split("-")
+        py, pm = int(period_year), int(period_month)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Periode harus format YYYY-MM")
+    agg = agg[agg["_date"].apply(lambda d: d.year == py and d.month == pm)]
+
+    # Aggregate per employee
+    employees = await db.employees.find({}, {"_id": 0}).to_list(length=5000)
+    emp_by_nik = {e["nik"]: e for e in employees}
+
+    end_dt_template = dtime(STANDARD_END_HOUR, 0)
+    summary: Dict[str, Dict[str, float]] = {}
+    unmatched_nik = set()
+    total_scans = int(len(df))
+
+    for nik, group in agg.groupby("_nik"):
+        days_worked = int(len(group))
+        overtime_minutes = 0.0
+        for _, r in group.iterrows():
+            out_t = r["out_time"]
+            # compute minutes after STANDARD_END_HOUR:00 on same date
+            end_dt = pd.Timestamp.combine(r["_date"], end_dt_template)
+            diff = (out_t - end_dt).total_seconds() / 60.0
+            if diff > 0:
+                overtime_minutes += diff
+        overtime_hours = round(overtime_minutes / 60.0, 2)
+
+        emp = emp_by_nik.get(str(nik))
+        if not emp:
+            unmatched_nik.add(str(nik))
+            continue
+
+        summary[emp["id"]] = {
+            "nik": nik,
+            "name": emp["name"],
+            "days_worked": days_worked,
+            "overtime_hours": overtime_hours,
+            "bonus": 0,
+            "deduction": 0,
+        }
+
+    # Persist
+    record = {
+        "period": period,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "filename": file.filename,
+        "summary": summary,
+        "total_scans": total_scans,
+        "matched_employees": len(summary),
+        "unmatched_niks": sorted(unmatched_nik),
+    }
+    await db.attendance_imports.replace_one({"period": period}, record, upsert=True)
+
+    return {
+        "period": period,
+        "total_scans": total_scans,
+        "matched_employees": len(summary),
+        "unmatched_niks": sorted(unmatched_nik),
+        "summary": summary,
+    }
+
+
+@api_router.get("/attendance/{period}")
+async def get_attendance(period: str, user: dict = Depends(get_current_user)):
+    rec = await db.attendance_imports.find_one({"period": period}, {"_id": 0})
+    if not rec:
+        return {"period": period, "summary": {}, "matched_employees": 0, "total_scans": 0, "unmatched_niks": []}
+    return rec
+
+
 # ---------------- Dashboard ----------------
 @api_router.get("/dashboard/stats")
 async def dashboard_stats(user: dict = Depends(get_current_user)):
