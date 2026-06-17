@@ -1,0 +1,153 @@
+{
+  "theme": "Light Theme",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "vibe": "Objective, rigid, functional, high-density, highly legible, authoritative",
+  "colors": {
+    "background": {
+      "primary": "bg-white",
+      "secondary": "bg-zinc-50",
+      "tertiary": "bg-zinc-100"
+    },
+    "surface": {
+      "card": "bg-white",
+      "glass": "bg-white/90 backdrop-blur-xl border-b border-zinc-200"
+    },
+    "text": {
+      "primary": "text-zinc-900",
+      "secondary": "text-zinc-600",
+      "muted": "text-zinc-400",
+      "inverse": "text-white"
+    },
+    "border": {
+      "subtle": "border-zinc-200",
+      "strong": "border-zinc-900"
+    },
+    "brand": {
+      "primary": "bg-[#002FA7] text-white",
+      "hover": "hover:bg-[#002FA7]/90",
+      "active": "bg-[#002FA7]"
+    },
+    "status": {
+      "success": "text-[#008A00] bg-[#008A00]/10 border border-[#008A00]/20",
+      "warning": "text-[#D97706] bg-[#F59E0B]/10 border border-[#F59E0B]/20",
+      "danger": "text-[#E81123] bg-[#E81123]/10 border border-[#E81123]/20",
+      "info": "text-[#002FA7] bg-[#002FA7]/10 border border-[#002FA7]/20"
+    }
+  },
+  "typography": {
+    "external_fonts": [
+      "@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');",
+      "@import url('https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,900&display=swap');"
+    ],
+    "font_family_mapping": {
+      "heading": "font-['Cabinet_Grotesk',_sans-serif]",
+      "body": "font-['IBM_Plex_Sans',_sans-serif]",
+      "mono": "font-['JetBrains_Mono',_monospace]"
+    },
+    "scale": {
+      "h1": "text-3xl lg:text-4xl tracking-tight font-bold font-['Cabinet_Grotesk']",
+      "h2": "text-2xl lg:text-3xl tracking-tight font-bold font-['Cabinet_Grotesk']",
+      "h3": "text-xl font-bold tracking-tight font-['Cabinet_Grotesk']",
+      "body": "text-sm leading-relaxed font-['IBM_Plex_Sans']",
+      "small": "text-xs tracking-[0.05em] uppercase font-['IBM_Plex_Sans'] font-semibold",
+      "data": "text-sm font-['JetBrains_Mono'] tracking-tight"
+    }
+  },
+  "spacing_and_layout": {
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "grid": {
+      "dashboard": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4",
+      "hero_stat": "col-span-1 md:col-span-3 lg:col-span-4",
+      "stat_card": "col-span-1",
+      "main_chart": "col-span-1 md:col-span-2 lg:col-span-3",
+      "side_panel": "col-span-1"
+    },
+    "surfaces": "border border-zinc-200 bg-white shadow-sm rounded-none",
+    "padding": "p-5 md:p-6",
+    "table": "w-full text-left text-sm"
+  },
+  "components": {
+    "buttons": {
+      "primary": "rounded-none bg-[#002FA7] text-white px-5 py-2.5 font-medium transition-colors hover:bg-[#002FA7]/90 focus:ring-2 focus:ring-[#002FA7]/30 focus:outline-none flex items-center justify-center gap-2",
+      "secondary": "rounded-none bg-white text-zinc-900 border border-zinc-300 px-5 py-2.5 font-medium transition-colors hover:bg-zinc-50 focus:ring-2 focus:ring-zinc-200 focus:outline-none flex items-center justify-center gap-2",
+      "danger": "rounded-none bg-[#E81123] text-white px-5 py-2.5 font-medium transition-colors hover:bg-[#E81123]/90 focus:ring-2 focus:ring-[#E81123]/30"
+    },
+    "inputs": "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none w-full transition-shadow",
+    "labels": "block text-xs font-semibold text-zinc-900 uppercase tracking-wider mb-1.5",
+    "tables": {
+      "wrapper": "w-full border-collapse border border-zinc-200 bg-white overflow-hidden",
+      "header": "bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest",
+      "header_cell": "px-4 py-3 text-left",
+      "row": "border-b border-zinc-100 hover:bg-zinc-50/80 transition-colors group",
+      "cell": "whitespace-nowrap px-4 py-3 text-sm text-zinc-900",
+      "cell_numeric": "whitespace-nowrap px-4 py-3 text-sm text-zinc-900 font-['JetBrains_Mono'] text-right"
+    },
+    "cards": {
+      "wrapper": "border border-zinc-200 bg-white p-5 lg:p-6 flex flex-col hover:border-zinc-300 transition-colors duration-200",
+      "title": "text-[11px] font-bold text-zinc-500 uppercase tracking-widest mb-3",
+      "value": "text-4xl font-['JetBrains_Mono'] tracking-tighter font-semibold text-zinc-900"
+    },
+    "badges": "inline-flex items-center px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider rounded-none border"
+  },
+  "motion": {
+    "hover": "transition-all duration-200 cubic-bezier(0.4, 0, 0.2, 1)",
+    "dialog": "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
+  },
+  "icons": {
+    "library": "lucide-react",
+    "size": "w-4 h-4",
+    "stroke_width": "2"
+  },
+  "image_urls": {
+    "logo": {
+      "url": "https://images.unsplash.com/photo-1491183846256-33aec7637311?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTF8MHwxfHNlYXJjaHwyfHxnZW9tZXRyaWMlMjBjb21wYW55JTIwbG9nbyUyMHdoaXRlJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3ODE2NjE1MDh8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Geometric minimal structure mimicking an abstract corporate logo. Add a greyscale filter to it."
+    },
+    "employee_1": {
+      "url": "https://images.unsplash.com/photo-1534751516642-a1af1ef26a56?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NjZ8MHwxfHNlYXJjaHwzfHxhc2lhbiUyMHByb2Zlc3Npb25hbCUyMGhlYWRzaG90JTIwcG9ydHJhaXR8ZW58MHx8fHwxNzgxNjYxNTA4fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Asian female professional, used for HR profile or Employee list avatar"
+    },
+    "employee_2": {
+      "url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NjZ8MHwxfHNlYXJjaHwxfHxhc2lhbiUyMHByb2Zlc3Npb25hbCUyMGhlYWRzaG90JTIwcG9ydHJhaXR8ZW58MHx8fHwxNzgxNjYxNTA4fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Asian male professional, used for Employee list avatar"
+    }
+  },
+  "testing_attributes": {
+    "login": {
+      "email_input": "data-testid=\"login-email-input\"",
+      "password_input": "data-testid=\"login-password-input\"",
+      "submit_button": "data-testid=\"login-submit-button\""
+    },
+    "dashboard": {
+      "total_employees": "data-testid=\"stat-total-employees\"",
+      "total_payroll": "data-testid=\"stat-total-payroll\"",
+      "run_payroll_button": "data-testid=\"run-payroll-button\"",
+      "tax_summary": "data-testid=\"stat-tax-summary\"",
+      "bpjs_summary": "data-testid=\"stat-bpjs-summary\""
+    },
+    "employee": {
+      "add_button": "data-testid=\"add-employee-button\"",
+      "table_row": "data-testid=\"employee-row\"",
+      "edit_button": "data-testid=\"edit-employee-button\""
+    },
+    "payroll": {
+      "period_select": "data-testid=\"payroll-period-select\"",
+      "generate_button": "data-testid=\"generate-payroll-button\"",
+      "export_button": "data-testid=\"export-payslip-button\"",
+      "payslip_view": "data-testid=\"payslip-view-container\""
+    },
+    "settings": {
+      "save_config_button": "data-testid=\"save-config-button\""
+    }
+  },
+  "instructions_to_main_agent": [
+    "Design Archetype: Swiss & High-Contrast. The app must feel authoritative, objective, and dense, suitable for an enterprise fintech/HR tool. Absolutely no purple or teal gradients.",
+    "Borders & Surfaces: Do not use rounded corners. Everything must use `rounded-none` to enforce a rigid, 'control room' architectural feel. Drop shadows should be absent; use 1px solid borders (`border-zinc-200` or `border-zinc-300`) to separate elements.",
+    "Typography Rule: Add font imports to CSS. Use 'Cabinet Grotesk' for bold, striking headers. Use 'IBM Plex Sans' for all readable body text, buttons, and labels. Use 'JetBrains Mono' EXCLUSIVELY for all numeric data (salaries, taxes, BPJS values, NIK/IDs) so the digits align perfectly and convey precision.",
+    "Single-Metric Hero: Ensure the Dashboard prominently displays 'Total Payroll Bulan Ini' using a massive size (e.g., text-5xl JetBrains Mono) before showing smaller supplementary cards.",
+    "Data Density: Avoid 'cramped' designs but minimize wasted white space. Table columns should be compact, headers must be `uppercase tracking-widest text-[11px]`. Right-align all numeric/currency columns for clear scanability.",
+    "Form & Input Strategy: Forms should not look like consumer web forms. Use dense, bordered layouts for configurations (tunjangan, potongan, rate BPJS, PPh 21 progressive tiers). Inputs must have high contrast focus states (`focus:ring-[#002FA7] focus:border-[#002FA7]`).",
+    "Payslip Print Layout: The Payslip view must be printable. Wrap it in a container that mimics an A4 paper dimension, use stark black-and-white colors, remove sidebars, and apply standard `@media print` tailwind classes so HR can press Ctrl+P easily.",
+    "Interactive Elements: Ensure hover states explicitly alter text and background colors for accessibility (e.g., table row hovers). Utilize the exact testing attributes provided across all major interactive elements."
+  ]
+}
