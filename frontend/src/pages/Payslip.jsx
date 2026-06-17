@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, formatIDR } from "../lib/api";
-import { ChevronLeft, Printer, Square } from "lucide-react";
+import { ChevronLeft, Printer, Square, Download } from "lucide-react";
+import { API } from "../lib/api";
 
 export default function Payslip() {
   const { slipId } = useParams();
@@ -34,13 +35,24 @@ export default function Payslip() {
         <Link to={`/payroll/${slip.period}`} className="inline-flex items-center gap-1 text-xs uppercase tracking-widest text-zinc-500 hover:text-zinc-900 font-semibold">
           <ChevronLeft className="w-3.5 h-3.5" /> Kembali
         </Link>
-        <button
-          data-testid="export-payslip-button"
-          onClick={() => window.print()}
-          className="rounded-none bg-[#002FA7] text-white px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-[#002FA7]/90 inline-flex items-center gap-2"
-        >
-          <Printer className="w-3.5 h-3.5" /> Cetak / PDF
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            data-testid="download-pdf-button"
+            href={`${API}/payroll/payslip/${slip.id}/pdf`}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-zinc-50 inline-flex items-center gap-2"
+          >
+            <Download className="w-3.5 h-3.5" /> Unduh PDF
+          </a>
+          <button
+            data-testid="export-payslip-button"
+            onClick={() => window.print()}
+            className="rounded-none bg-[#002FA7] text-white px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-[#002FA7]/90 inline-flex items-center gap-2"
+          >
+            <Printer className="w-3.5 h-3.5" /> Cetak
+          </button>
+        </div>
       </div>
 
       {/* Payslip */}

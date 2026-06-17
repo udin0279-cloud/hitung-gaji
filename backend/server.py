@@ -12,10 +12,13 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
+from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
+import csv
+import io
 
 # ---------------- DB ----------------
 mongo_url = os.environ["MONGO_URL"]
@@ -521,6 +524,273 @@ async def delete_run(period: str, user: dict = Depends(get_current_user)):
     await db.payroll_runs.delete_one({"period": period})
     await db.payslips.delete_many({"period": period})
     return {"ok": True}
+
+
+# ---------------- PDF Export ----------------
+def _format_idr(n: float) -> str:
+    try:
+        return "Rp " + f"{int(round(n)):,}".replace(",", ".")
+    except Exception:
+        return "Rp 0"
+
+
+def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=14 * mm, rightMargin=14 * mm, topMargin=14 * mm, bottomMargin=14 * mm)
+    styles = getSampleStyleSheet()
+    label_style = ParagraphStyle("lbl", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=7, textColor=colors.HexColor("#71717a"))
+    val_style = ParagraphStyle("val", parent=styles["Normal"], fontName="Helvetica", fontSize=10, textColor=colors.HexColor("#18181b"))
+    section_style = ParagraphStyle("sec", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=9, textColor=colors.HexColor("#18181b"), spaceAfter=4, spaceBefore=6)
+
+    story = []
+    # Header
+    header = Table(
+        [[
+            Paragraph("<b>PAYROLL.ID</b><br/><font size=7 color='#71717a'>HR · TAX · BPJS</font>", val_style),
+            Paragraph(f"<para alignment='right'><font size=7 color='#71717a'>SLIP GAJI</font><br/><b><font size=14>Periode {slip['period']}</font></b><br/><font size=7 color='#71717a' face='Courier'>No: {slip['id'][:8].upper()}</font></para>", val_style),
+        ]],
+        colWidths=[90 * mm, 90 * mm],
+    )
+    header.setStyle(TableStyle([
+        ("LINEBELOW", (0, 0), (-1, -1), 1.5, colors.HexColor("#18181b")),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.append(header)
+    story.append(Spacer(1, 8))
+
+    # Employee
+    emp = Table(
+        [
+            [Paragraph("NAMA KARYAWAN", label_style), Paragraph(slip["name"], val_style),
+             Paragraph("NIK", label_style), Paragraph(f"<font face='Courier'>{slip['nik']}</font>", val_style)],
+            [Paragraph("JABATAN / DEPT", label_style), Paragraph(f"{slip['position']} · {slip['department']}", val_style),
+             Paragraph("PTKP / NPWP", label_style), Paragraph(f"<font face='Courier'>{slip['ptkp_status']} · {'Ya' if slip.get('has_npwp', True) else 'Tidak'}</font>", val_style)],
+        ],
+        colWidths=[35 * mm, 55 * mm, 30 * mm, 60 * mm],
+    )
+    emp.setStyle(TableStyle([
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.4, colors.HexColor("#e4e4e7")),
+    ]))
+    story.append(emp)
+    story.append(Spacer(1, 10))
+
+    # Earnings & Deductions side by side
+    e = slip["earnings"]
+    d = slip["deductions"]
+    earn_rows = [
+        ["PENDAPATAN", ""],
+        ["Gaji Pokok", _format_idr(e["basic_salary"])],
+        ["Tunjangan Tetap", _format_idr(e["fixed_allowance"])],
+        ["Lembur", _format_idr(e["overtime"])],
+        ["Bonus", _format_idr(e["bonus"])],
+        ["Total Bruto", _format_idr(e["gross"])],
+    ]
+    deduct_rows = [
+        ["POTONGAN", ""],
+        ["BPJS Kesehatan (1%)", _format_idr(d["bpjs_kesehatan_employee"])],
+        ["JHT (2%)", _format_idr(d["jht_employee"])],
+        ["JP (1%)", _format_idr(d["jp_employee"])],
+        ["PPh 21", _format_idr(d["pph21"])],
+        ["Potongan Lain", _format_idr(d["other_deduction"])],
+        ["Total Potongan", _format_idr(d["total"])],
+    ]
+    # Pad to same length
+    max_len = max(len(earn_rows), len(deduct_rows))
+    while len(earn_rows) < max_len:
+        earn_rows.insert(-1, ["", ""])
+
+    def style_box(rows, header_color):
+        t = Table(rows, colWidths=[48 * mm, 40 * mm])
+        s = TableStyle([
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 8),
+            ("TEXTCOLOR", (0, 0), (-1, 0), header_color),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#a1a1aa")),
+            ("FONTNAME", (1, 1), (1, -1), "Courier"),
+            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ("FONTSIZE", (0, 1), (-1, -1), 9),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("FONTNAME", (1, -1), (1, -1), "Courier-Bold"),
+            ("LINEABOVE", (0, -1), (-1, -1), 0.4, colors.HexColor("#71717a")),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ])
+        t.setStyle(s)
+        return t
+
+    two_col = Table(
+        [[style_box(earn_rows, colors.HexColor("#008A00")), style_box(deduct_rows, colors.HexColor("#E81123"))]],
+        colWidths=[90 * mm, 90 * mm],
+    )
+    two_col.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    story.append(two_col)
+    story.append(Spacer(1, 12))
+
+    # Take home (dark block)
+    th = Table(
+        [[
+            Paragraph(f"<font size=7 color='#a1a1aa'>TAKE HOME PAY</font><br/><font size=7 color='#a1a1aa'>Hari kerja: {slip['attendance']['days_worked']} · Lembur: {slip['attendance']['overtime_hours']} jam</font>", val_style),
+            Paragraph(f"<para alignment='right'><b><font face='Courier-Bold' size=18 color='white'>{_format_idr(slip['net_salary'])}</font></b></para>", val_style),
+        ]],
+        colWidths=[90 * mm, 90 * mm],
+    )
+    th.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#18181b")),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(th)
+    story.append(Spacer(1, 12))
+
+    # Tax detail
+    t = slip["tax_detail"]
+    tax_rows = [
+        ["Bruto Setahun", _format_idr(t["bruto_yearly"])],
+        ["Biaya Jabatan", "- " + _format_idr(t["biaya_jabatan_yearly"])],
+        ["Netto Setahun", _format_idr(t["netto_yearly"])],
+        [f"PTKP ({slip['ptkp_status']})", "- " + _format_idr(t["ptkp"])],
+        ["PKP", _format_idr(t["pkp"])],
+        ["PPh 21 Setahun", _format_idr(t["pph21_yearly"])],
+    ]
+    story.append(Paragraph("RINCIAN PERHITUNGAN PPH 21", section_style))
+    tt = Table(tax_rows, colWidths=[100 * mm, 80 * mm])
+    tt.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("FONTNAME", (1, 0), (1, -1), "Courier"),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#52525b")),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#f4f4f5")),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    story.append(tt)
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    return pdf_bytes
+
+
+@api_router.get("/payroll/payslip/{slip_id}/pdf")
+async def export_payslip_pdf(slip_id: str, user: dict = Depends(get_current_user)):
+    slip = await db.payslips.find_one({"id": slip_id}, {"_id": 0})
+    if not slip:
+        raise HTTPException(status_code=404, detail="Slip gaji tidak ditemukan")
+    pdf = _build_payslip_pdf(slip)
+    fname = f"slip-{slip['period']}-{slip['nik']}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ---------------- Employee CSV Import ----------------
+EMPLOYEE_CSV_HEADERS = [
+    "nik", "name", "email", "position", "department", "join_date",
+    "basic_salary", "fixed_allowance", "ptkp_status", "npwp", "has_npwp",
+    "bpjs_kesehatan", "bpjs_ketenagakerjaan", "bank_name", "bank_account",
+]
+
+
+def _parse_bool(v: str, default: bool = True) -> bool:
+    if v is None or v == "":
+        return default
+    return str(v).strip().lower() in ("1", "true", "yes", "ya", "y")
+
+
+@api_router.get("/employees-template.csv")
+async def employee_template(user: dict = Depends(get_current_user)):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(EMPLOYEE_CSV_HEADERS)
+    # example row
+    writer.writerow([
+        "EMP001", "Budi Santoso", "budi@company.id", "Software Engineer", "Engineering",
+        "2024-01-15", "10000000", "2000000", "TK/0", "12.345.678.9-012.000", "true",
+        "true", "true", "BCA", "1234567890",
+    ])
+    csv_bytes = output.getvalue().encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="employee_template.csv"'},
+    )
+
+
+@api_router.post("/employees-import")
+async def employees_import(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File harus berformat .csv")
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    reader = csv.DictReader(io.StringIO(text))
+    fieldnames = [(h or "").strip().lower() for h in (reader.fieldnames or [])]
+    missing = [h for h in ["nik", "name", "position", "department", "basic_salary"] if h not in fieldnames]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Kolom wajib hilang: {', '.join(missing)}")
+
+    created = 0
+    skipped = 0
+    errors: List[str] = []
+
+    for i, row in enumerate(reader, start=2):
+        try:
+            row = {(k or "").strip().lower(): (v.strip() if isinstance(v, str) else v) for k, v in row.items()}
+            nik = row.get("nik")
+            if not nik:
+                errors.append(f"Baris {i}: NIK kosong")
+                skipped += 1
+                continue
+            if await db.employees.find_one({"nik": nik}):
+                errors.append(f"Baris {i}: NIK '{nik}' sudah ada")
+                skipped += 1
+                continue
+
+            doc = {
+                "id": str(uuid.uuid4()),
+                "nik": nik,
+                "name": row.get("name") or "",
+                "email": row.get("email") or None,
+                "position": row.get("position") or "",
+                "department": row.get("department") or "",
+                "join_date": row.get("join_date") or datetime.now(timezone.utc).date().isoformat(),
+                "basic_salary": float(row.get("basic_salary") or 0),
+                "fixed_allowance": float(row.get("fixed_allowance") or 0),
+                "ptkp_status": row.get("ptkp_status") or "TK/0",
+                "npwp": row.get("npwp") or None,
+                "has_npwp": _parse_bool(row.get("has_npwp", ""), True),
+                "bpjs_kesehatan": _parse_bool(row.get("bpjs_kesehatan", ""), True),
+                "bpjs_ketenagakerjaan": _parse_bool(row.get("bpjs_ketenagakerjaan", ""), True),
+                "bank_name": row.get("bank_name") or None,
+                "bank_account": row.get("bank_account") or None,
+                "active": True,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.employees.insert_one(doc)
+            created += 1
+        except Exception as ex:
+            errors.append(f"Baris {i}: {str(ex)}")
+            skipped += 1
+
+    return {"created": created, "skipped": skipped, "errors": errors[:20]}
 
 
 # ---------------- Dashboard ----------------

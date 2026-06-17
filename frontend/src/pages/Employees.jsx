@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, formatIDR, formatApiError } from "../lib/api";
+import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, X, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Search, Upload, Download } from "lucide-react";
 
 const EMPTY = {
   nik: "",
@@ -32,6 +32,8 @@ export default function Employees() {
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -100,6 +102,28 @@ export default function Employees() {
     }
   };
 
+  const onImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/employees-import", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setImportResult(data);
+      toast.success(`${data.created} karyawan ditambahkan, ${data.skipped} dilewati`);
+      await load();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal import");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const filtered = list.filter((e) => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -119,14 +143,61 @@ export default function Employees() {
           <h1 className="font-heading text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Karyawan</h1>
           <p className="text-sm text-zinc-500 mt-1">{list.length} karyawan terdaftar.</p>
         </div>
-        <button
-          data-testid="add-employee-button"
-          onClick={openCreate}
-          className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" /> Tambah Karyawan
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            data-testid="download-template-button"
+            href={`${API}/employees-template.csv`}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-2.5 text-sm font-semibold hover:bg-zinc-50 inline-flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" /> Template CSV
+          </a>
+          <label
+            data-testid="import-csv-label"
+            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-2.5 text-sm font-semibold hover:bg-zinc-50 inline-flex items-center gap-2 cursor-pointer"
+          >
+            <Upload className="w-4 h-4" /> {importing ? "Mengimpor…" : "Import CSV"}
+            <input
+              data-testid="import-csv-input"
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={onImportFile}
+              disabled={importing}
+            />
+          </label>
+          <button
+            data-testid="add-employee-button"
+            onClick={openCreate}
+            className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" /> Tambah
+          </button>
+        </div>
       </div>
+
+      {importResult && (
+        <div className="mt-4 p-4 border border-zinc-200 bg-zinc-50">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[11px] uppercase tracking-widest font-semibold text-zinc-500">Hasil Import</div>
+              <div className="font-mono text-sm text-zinc-900 mt-1">
+                {importResult.created} ditambahkan · {importResult.skipped} dilewati
+              </div>
+            </div>
+            <button onClick={() => setImportResult(null)} className="p-1 hover:bg-zinc-200"><X className="w-4 h-4" /></button>
+          </div>
+          {importResult.errors?.length > 0 && (
+            <details className="mt-2">
+              <summary className="text-xs text-[#E81123] cursor-pointer font-semibold">Lihat {importResult.errors.length} error</summary>
+              <ul className="mt-2 text-xs text-zinc-700 font-mono space-y-0.5 list-disc list-inside">
+                {importResult.errors.map((er, i) => <li key={i}>{er}</li>)}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
 
       <div className="mt-6 flex items-center gap-3">
         <div className="relative flex-1 max-w-md">
