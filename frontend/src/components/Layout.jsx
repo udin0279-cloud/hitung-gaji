@@ -1,11 +1,12 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Users, Calculator, Settings as SettingsIcon, LogOut, Square } from "lucide-react";
+import { LayoutDashboard, Users, Calculator, Settings as SettingsIcon, LogOut, Square, Gift } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
   { to: "/employees", label: "Karyawan", icon: Users, testId: "nav-employees" },
   { to: "/payroll", label: "Payroll", icon: Calculator, testId: "nav-payroll" },
+  { to: "/thr", label: "THR", icon: Gift, testId: "nav-thr" },
   { to: "/settings", label: "Konfigurasi", icon: SettingsIcon, testId: "nav-settings" },
 ];
 

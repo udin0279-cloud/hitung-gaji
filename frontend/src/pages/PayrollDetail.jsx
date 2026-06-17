@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { api, formatIDR } from "../lib/api";
-import { ChevronLeft, Eye, Printer } from "lucide-react";
+import { api, formatIDR, formatApiError, API } from "../lib/api";
+import { toast } from "sonner";
+import { ChevronLeft, Eye, Mail, Download } from "lucide-react";
 
 export default function PayrollDetail() {
   const { period } = useParams();
   const [slips, setSlips] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [emailing, setEmailing] = useState(false);
+  const [emailResult, setEmailResult] = useState(null);
+  const [bankFmt, setBankFmt] = useState("generic");
 
   useEffect(() => {
     (async () => {
@@ -29,16 +33,88 @@ export default function PayrollDetail() {
     { gross: 0, net: 0, pph: 0, bpjs: 0 }
   );
 
+  const emailAll = async () => {
+    if (!window.confirm(`Kirim slip gaji ke semua karyawan periode ${period}?`)) return;
+    setEmailing(true);
+    setEmailResult(null);
+    try {
+      const { data } = await api.post(`/payroll/runs/${period}/email-all`);
+      setEmailResult(data);
+      toast.success(`Email: ${data.sent} terkirim · ${data.mocked} mock · ${data.skipped_no_email} dilewati`);
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal kirim");
+    } finally {
+      setEmailing(false);
+    }
+  };
+
   return (
     <div className="px-6 lg:px-10 py-8 max-w-7xl">
       <Link to="/payroll" className="inline-flex items-center gap-1 text-xs uppercase tracking-widest text-zinc-500 hover:text-zinc-900 font-semibold">
         <ChevronLeft className="w-3.5 h-3.5" /> Kembali ke Payroll
       </Link>
-      <div className="mt-3 pb-6 border-b border-zinc-200">
-        <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Detail Periode</div>
-        <h1 className="font-heading text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Payroll {period}</h1>
-        <p className="text-sm text-zinc-500 mt-1">{slips.length} slip gaji.</p>
+      <div className="mt-3 pb-6 border-b border-zinc-200 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Detail Periode</div>
+          <h1 className="font-heading text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Payroll {period}</h1>
+          <p className="text-sm text-zinc-500 mt-1">{slips.length} slip gaji.</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="block">
+            <span className="block text-[10px] font-semibold text-zinc-900 uppercase tracking-wider mb-1">Format Bank</span>
+            <select
+              data-testid="bank-format-select"
+              value={bankFmt}
+              onChange={(e) => setBankFmt(e.target.value)}
+              className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+            >
+              <option value="generic">Generik CSV</option>
+              <option value="bca">BCA</option>
+              <option value="mandiri">Mandiri</option>
+              <option value="bni">BNI</option>
+              <option value="bri">BRI</option>
+            </select>
+          </label>
+          <a
+            data-testid="bank-export-button"
+            href={`${API}/payroll/runs/${period}/bank-export?format=${bankFmt}`}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-2 text-sm font-semibold hover:bg-zinc-50 inline-flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" /> Export Bank
+          </a>
+          <button
+            data-testid="email-all-button"
+            onClick={emailAll}
+            disabled={emailing}
+            className="rounded-none bg-[#002FA7] text-white px-4 py-2 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2 disabled:opacity-60"
+          >
+            <Mail className="w-4 h-4" /> {emailing ? "Mengirim…" : "Kirim Email ke Semua"}
+          </button>
+        </div>
       </div>
+
+      {emailResult && (
+        <div className="mt-4 p-4 border border-zinc-200 bg-zinc-50">
+          <div className="text-[11px] uppercase tracking-widest font-semibold text-zinc-500">Hasil Kirim Email</div>
+          <div className="font-mono text-sm text-zinc-900 mt-1">
+            {emailResult.sent} terkirim · {emailResult.mocked} mock (key belum diatur) · {emailResult.failed} gagal · {emailResult.skipped_no_email} tanpa email
+          </div>
+          {emailResult.details?.length > 0 && (
+            <details className="mt-2">
+              <summary className="text-xs cursor-pointer text-zinc-600 font-semibold">Lihat detail</summary>
+              <ul className="mt-2 text-xs font-mono space-y-0.5 max-h-48 overflow-y-auto">
+                {emailResult.details.map((d, i) => (
+                  <li key={i} className={d.status === "sent" ? "text-[#008A00]" : d.status === "failed" ? "text-[#E81123]" : "text-zinc-600"}>
+                    [{d.status}] {d.name} {d.email ? `· ${d.email}` : ""} {d.reason ? `· ${d.reason}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
 
       <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-px bg-zinc-200 border border-zinc-200">
         <Stat label="Total Bruto" value={formatIDR(totals.gross)} />

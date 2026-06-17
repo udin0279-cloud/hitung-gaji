@@ -10,6 +10,7 @@ import Payroll from "@/pages/Payroll";
 import PayrollDetail from "@/pages/PayrollDetail";
 import Payslip from "@/pages/Payslip";
 import Settings from "@/pages/Settings";
+import THR from "@/pages/THR";
 import Layout from "@/components/Layout";
 
 function ProtectedRoute({ children }) {
@@ -32,6 +33,7 @@ function App() {
             <Route path="/payroll" element={<Payroll />} />
             <Route path="/payroll/:period" element={<PayrollDetail />} />
             <Route path="/payslip/:slipId" element={<Payslip />} />
+            <Route path="/thr" element={<THR />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

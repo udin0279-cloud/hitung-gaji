@@ -1,24 +1,135 @@
 import { useEffect, useState } from "react";
-import { api, formatIDR } from "../lib/api";
+import { api, formatIDR, formatApiError } from "../lib/api";
+import { toast } from "sonner";
+import { Save, RotateCcw } from "lucide-react";
+
+const PTKP_KEYS = ["TK/0", "TK/1", "TK/2", "TK/3", "K/0", "K/1", "K/2", "K/3"];
+
+const RATE_FIELDS = [
+  { group: "BPJS Kesehatan", items: [
+    { key: "bpjs_kesehatan_employee", label: "Iuran Karyawan", type: "pct" },
+    { key: "bpjs_kesehatan_employer", label: "Iuran Perusahaan", type: "pct" },
+    { key: "bpjs_kesehatan_max_base", label: "Batas Upah", type: "money" },
+  ]},
+  { group: "JHT", items: [
+    { key: "jht_employee", label: "Karyawan", type: "pct" },
+    { key: "jht_employer", label: "Perusahaan", type: "pct" },
+  ]},
+  { group: "JP", items: [
+    { key: "jp_employee", label: "Karyawan", type: "pct" },
+    { key: "jp_employer", label: "Perusahaan", type: "pct" },
+    { key: "jp_max_base", label: "Batas Upah", type: "money" },
+  ]},
+  { group: "JKK & JKM", items: [
+    { key: "jkk_employer", label: "JKK Perusahaan", type: "pct" },
+    { key: "jkm_employer", label: "JKM Perusahaan", type: "pct" },
+  ]},
+  { group: "Biaya Jabatan & Kerja", items: [
+    { key: "biaya_jabatan_rate", label: "Biaya Jabatan Rate", type: "pct" },
+    { key: "biaya_jabatan_max_year", label: "Biaya Jabatan Max/Tahun", type: "money" },
+    { key: "standard_workdays", label: "Hari Kerja Standar/Bulan", type: "num" },
+    { key: "overtime_multiplier", label: "Multiplier Lembur", type: "num" },
+  ]},
+];
 
 export default function Settings() {
   const [config, setConfig] = useState(null);
+  const [draft, setDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await api.get("/config/constants");
-      setConfig(data);
-    })();
-  }, []);
+  const load = async () => {
+    const { data } = await api.get("/config/constants");
+    setConfig(data);
+    setDraft({
+      ptkp_table: { ...data.ptkp_table },
+      pph21_brackets: data.pph21_brackets.map((b) => [b.limit, b.rate]),
+      bpjs_kesehatan_employee: data.bpjs.kesehatan_employee,
+      bpjs_kesehatan_employer: data.bpjs.kesehatan_employer,
+      bpjs_kesehatan_max_base: data.bpjs.kesehatan_max_base,
+      jht_employee: data.bpjs.jht_employee,
+      jht_employer: data.bpjs.jht_employer,
+      jp_employee: data.bpjs.jp_employee,
+      jp_employer: data.bpjs.jp_employer,
+      jp_max_base: data.bpjs.jp_max_base,
+      jkk_employer: data.bpjs.jkk_employer,
+      jkm_employer: data.bpjs.jkm_employer,
+      biaya_jabatan_rate: data.biaya_jabatan_rate,
+      biaya_jabatan_max_year: data.biaya_jabatan_max_year,
+      standard_workdays: data.standard_workdays,
+      overtime_multiplier: data.overtime_multiplier,
+    });
+  };
 
-  if (!config) return <div className="p-10 text-sm text-zinc-400 font-mono">Memuat…</div>;
+  useEffect(() => { load(); }, []);
+
+  if (!draft) return <div className="p-10 text-sm text-zinc-400 font-mono">Memuat…</div>;
+
+  const setField = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
+  const setPtkp = (k, v) => setDraft((d) => ({ ...d, ptkp_table: { ...d.ptkp_table, [k]: Number(v) || 0 } }));
+  const setBracket = (i, idx, v) => setDraft((d) => {
+    const next = d.pph21_brackets.map((b) => [...b]);
+    next[i][idx] = v === "" || v === null ? (idx === 0 ? null : 0) : Number(v);
+    return { ...d, pph21_brackets: next };
+  });
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        ...draft,
+        // Convert numeric fields
+        bpjs_kesehatan_employee: Number(draft.bpjs_kesehatan_employee),
+        bpjs_kesehatan_employer: Number(draft.bpjs_kesehatan_employer),
+        bpjs_kesehatan_max_base: Number(draft.bpjs_kesehatan_max_base),
+        jht_employee: Number(draft.jht_employee),
+        jht_employer: Number(draft.jht_employer),
+        jp_employee: Number(draft.jp_employee),
+        jp_employer: Number(draft.jp_employer),
+        jp_max_base: Number(draft.jp_max_base),
+        jkk_employer: Number(draft.jkk_employer),
+        jkm_employer: Number(draft.jkm_employer),
+        biaya_jabatan_rate: Number(draft.biaya_jabatan_rate),
+        biaya_jabatan_max_year: Number(draft.biaya_jabatan_max_year),
+        standard_workdays: Number(draft.standard_workdays),
+        overtime_multiplier: Number(draft.overtime_multiplier),
+      };
+      await api.put("/config/constants", payload);
+      toast.success("Konfigurasi tersimpan");
+      await load();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal menyimpan");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reset = () => load();
 
   return (
     <div className="px-6 lg:px-10 py-8 max-w-7xl">
-      <div className="pb-6 border-b border-zinc-200">
-        <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Referensi Regulasi</div>
-        <h1 className="font-heading text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Konfigurasi Pajak & BPJS</h1>
-        <p className="text-sm text-zinc-500 mt-1">Tarif yang digunakan sistem untuk perhitungan otomatis (UU HPP 2022 & Regulasi BPJS).</p>
+      <div className="flex flex-wrap items-end justify-between gap-4 pb-6 border-b border-zinc-200">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Pengaturan</div>
+          <h1 className="font-heading text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Konfigurasi Pajak & BPJS</h1>
+          <p className="text-sm text-zinc-500 mt-1">Edit tarif jika ada perubahan regulasi. Berlaku untuk perhitungan payroll selanjutnya.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            data-testid="reset-config-button"
+            onClick={reset}
+            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-2.5 text-sm font-semibold hover:bg-zinc-50 inline-flex items-center gap-2"
+          >
+            <RotateCcw className="w-4 h-4" /> Reset
+          </button>
+          <button
+            data-testid="save-config-button"
+            onClick={save}
+            disabled={saving}
+            className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2 disabled:opacity-60"
+          >
+            <Save className="w-4 h-4" /> {saving ? "Menyimpan…" : "Simpan Perubahan"}
+          </button>
+        </div>
       </div>
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -27,15 +138,31 @@ export default function Settings() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-zinc-50 text-[11px] uppercase tracking-widest text-zinc-600 font-bold">
-                <th className="px-3 py-2 text-left">Lapisan PKP</th>
-                <th className="px-3 py-2 text-right">Tarif</th>
+                <th className="px-3 py-2 text-left">Lapisan PKP s/d</th>
+                <th className="px-3 py-2 text-right">Tarif (%)</th>
               </tr>
             </thead>
             <tbody>
-              {config.pph21_brackets.map((b, i) => (
+              {draft.pph21_brackets.map((b, i) => (
                 <tr key={i} className="border-t border-zinc-100">
-                  <td className="px-3 py-2.5 font-mono text-zinc-900">{b.limit ? `s/d ${formatIDR(b.limit)}` : "di atas Rp 5 M"}</td>
-                  <td className="px-3 py-2.5 font-mono text-right text-zinc-900">{(b.rate * 100).toFixed(0)}%</td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="number"
+                      value={b[0] ?? ""}
+                      placeholder={i === draft.pph21_brackets.length - 1 ? "tanpa batas" : ""}
+                      onChange={(e) => setBracket(i, 0, e.target.value)}
+                      className="w-full font-mono text-sm border border-zinc-300 px-2 py-1 focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="number"
+                      step="0.001"
+                      value={b[1] * 100}
+                      onChange={(e) => setBracket(i, 1, Number(e.target.value) / 100)}
+                      className="w-full font-mono text-sm text-right border border-zinc-300 px-2 py-1 focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -48,47 +175,57 @@ export default function Settings() {
             <thead>
               <tr className="bg-zinc-50 text-[11px] uppercase tracking-widest text-zinc-600 font-bold">
                 <th className="px-3 py-2 text-left">Status</th>
-                <th className="px-3 py-2 text-right">PTKP/Tahun</th>
+                <th className="px-3 py-2 text-right">PTKP/Tahun (Rp)</th>
               </tr>
             </thead>
             <tbody>
-              {Object.entries(config.ptkp_table).map(([k, v]) => (
+              {PTKP_KEYS.map((k) => (
                 <tr key={k} className="border-t border-zinc-100">
-                  <td className="px-3 py-2.5 font-mono text-zinc-900">{k}</td>
-                  <td className="px-3 py-2.5 font-mono text-right text-zinc-900">{formatIDR(v)}</td>
+                  <td className="px-3 py-2 font-mono text-zinc-900">{k}</td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="number"
+                      value={draft.ptkp_table[k] || 0}
+                      onChange={(e) => setPtkp(k, e.target.value)}
+                      className="w-full font-mono text-sm text-right border border-zinc-300 px-2 py-1 focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </Section>
 
-        {/* BPJS */}
-        <Section title="BPJS Kesehatan">
-          <KV label="Iuran Karyawan" value={`${(config.bpjs.kesehatan_employee * 100).toFixed(0)}%`} />
-          <KV label="Iuran Perusahaan" value={`${(config.bpjs.kesehatan_employer * 100).toFixed(0)}%`} />
-          <KV label="Batas Upah" value={formatIDR(config.bpjs.kesehatan_max_base)} />
-        </Section>
-
-        <Section title="BPJS Ketenagakerjaan">
-          <KV label="JHT — Karyawan" value={`${(config.bpjs.jht_employee * 100).toFixed(1)}%`} />
-          <KV label="JHT — Perusahaan" value={`${(config.bpjs.jht_employer * 100).toFixed(2)}%`} />
-          <KV label="JP — Karyawan" value={`${(config.bpjs.jp_employee * 100).toFixed(0)}%`} />
-          <KV label="JP — Perusahaan" value={`${(config.bpjs.jp_employer * 100).toFixed(0)}%`} />
-          <KV label="JP Batas Upah" value={formatIDR(config.bpjs.jp_max_base)} />
-          <KV label="JKK — Perusahaan" value={`${(config.bpjs.jkk_employer * 100).toFixed(2)}%`} />
-          <KV label="JKM — Perusahaan" value={`${(config.bpjs.jkm_employer * 100).toFixed(1)}%`} />
-        </Section>
-
-        <Section title="Biaya Jabatan" sub="Pengurang penghasilan bruto">
-          <KV label="Tarif" value="5% dari Bruto" />
-          <KV label="Maksimum/Tahun" value={formatIDR(config.biaya_jabatan_max_year)} />
-        </Section>
+        {RATE_FIELDS.map((g) => (
+          <Section key={g.group} title={g.group}>
+            {g.items.map((f) => (
+              <div key={f.key} className="flex items-center justify-between gap-3 px-2 py-2 border-b border-zinc-100 last:border-0">
+                <span className="text-sm text-zinc-700 flex-1">{f.label}</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    step={f.type === "pct" ? "0.0001" : "1"}
+                    value={f.type === "pct" ? (draft[f.key] * 100).toFixed(4).replace(/\.?0+$/, "") : draft[f.key]}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setField(f.key, f.type === "pct" ? v / 100 : v);
+                    }}
+                    className="w-32 font-mono text-sm text-right border border-zinc-300 px-2 py-1 focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+                  />
+                  <span className="text-xs text-zinc-500 w-6">{f.type === "pct" ? "%" : f.type === "money" ? "Rp" : ""}</span>
+                </div>
+              </div>
+            ))}
+          </Section>
+        ))}
       </div>
 
       <div className="mt-8 p-4 border border-zinc-200 bg-zinc-50">
         <div className="text-[11px] uppercase tracking-widest font-semibold text-zinc-500">Catatan</div>
         <p className="text-xs text-zinc-700 mt-2 leading-relaxed">
-          Perhitungan PPh 21 menggunakan metode disetahunkan: <span className="font-mono">PKP = (Bruto Setahun − Biaya Jabatan − Iuran JHT/JP Karyawan) − PTKP</span>. PPh 21 setahun lalu dibagi 12 untuk pemotongan bulanan. Karyawan tanpa NPWP dikenakan tarif tambahan 20%.
+          Perubahan disimpan ke database dan langsung dipakai untuk perhitungan payroll dan THR berikutnya. PPh 21 progresif:
+          <span className="font-mono"> PKP = (Bruto Setahun − Biaya Jabatan − Iuran JHT/JP Karyawan) − PTKP</span>.
+          Karyawan tanpa NPWP otomatis +20% PPh 21.
         </p>
       </div>
     </div>
@@ -99,19 +236,10 @@ function Section({ title, sub, children }) {
   return (
     <div className="border border-zinc-200 bg-white">
       <div className="px-4 py-3 border-b border-zinc-200">
-        <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">{sub || "Tarif"}</div>
+        {sub && <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">{sub}</div>}
         <div className="font-heading text-lg font-bold text-zinc-900">{title}</div>
       </div>
       <div className="p-2">{children}</div>
-    </div>
-  );
-}
-
-function KV({ label, value }) {
-  return (
-    <div className="flex items-center justify-between px-2 py-2 border-b border-zinc-100 last:border-0">
-      <span className="text-sm text-zinc-700">{label}</span>
-      <span className="font-mono text-sm text-zinc-900">{value}</span>
     </div>
   );
 }

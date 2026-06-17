@@ -7,6 +7,7 @@ load_dotenv(ROOT_DIR / ".env")
 import os
 import logging
 import uuid
+import asyncio
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
@@ -147,44 +148,49 @@ class PayrollRunIn(BaseModel):
     # attendance[employee_id] = {"days_worked": 22, "overtime_hours": 0, "bonus": 0, "deduction": 0}
 
 
-# ---------------- Indonesian Payroll Constants (2024+) ----------------
-PTKP_TABLE = {
-    "TK/0": 54_000_000,
-    "TK/1": 58_500_000,
-    "TK/2": 63_000_000,
-    "TK/3": 67_500_000,
-    "K/0": 58_500_000,
-    "K/1": 63_000_000,
-    "K/2": 67_500_000,
-    "K/3": 72_000_000,
+# ---------------- Indonesian Payroll Configuration (overridable via /api/config) ----------------
+CONFIG: Dict[str, Any] = {
+    "ptkp_table": {
+        "TK/0": 54_000_000,
+        "TK/1": 58_500_000,
+        "TK/2": 63_000_000,
+        "TK/3": 67_500_000,
+        "K/0": 58_500_000,
+        "K/1": 63_000_000,
+        "K/2": 67_500_000,
+        "K/3": 72_000_000,
+    },
+    # PPh 21 brackets (UU HPP 2022) — list of [limit, rate]; last limit uses None for infinity
+    "pph21_brackets": [
+        [60_000_000, 0.05],
+        [250_000_000, 0.15],
+        [500_000_000, 0.25],
+        [5_000_000_000, 0.30],
+        [None, 0.35],
+    ],
+    "bpjs_kesehatan_employee": 0.01,
+    "bpjs_kesehatan_employer": 0.04,
+    "bpjs_kesehatan_max_base": 12_000_000,
+    "jht_employee": 0.02,
+    "jht_employer": 0.037,
+    "jp_employee": 0.01,
+    "jp_employer": 0.02,
+    "jp_max_base": 10_042_300,
+    "jkk_employer": 0.0024,
+    "jkm_employer": 0.003,
+    "biaya_jabatan_rate": 0.05,
+    "biaya_jabatan_max_year": 6_000_000,
+    "standard_workdays": 22,
+    "overtime_multiplier": 1.5,
 }
 
-# PPh 21 brackets (UU HPP 2022)
-PPH21_BRACKETS = [
-    (60_000_000, 0.05),
-    (250_000_000, 0.15),
-    (500_000_000, 0.25),
-    (5_000_000_000, 0.30),
-    (float("inf"), 0.35),
-]
 
-# BPJS rates
-BPJS_KESEHATAN_EMPLOYEE = 0.01
-BPJS_KESEHATAN_EMPLOYER = 0.04
-BPJS_KESEHATAN_MAX_BASE = 12_000_000
-
-JHT_EMPLOYEE = 0.02
-JHT_EMPLOYER = 0.037
-
-JP_EMPLOYEE = 0.01
-JP_EMPLOYER = 0.02
-JP_MAX_BASE = 10_042_300  # 2024 ceiling
-
-JKK_EMPLOYER = 0.0024
-JKM_EMPLOYER = 0.003
-
-BIAYA_JABATAN_RATE = 0.05
-BIAYA_JABATAN_MAX_YEAR = 6_000_000
+def _pph21_brackets_normalized():
+    out = []
+    for b in CONFIG["pph21_brackets"]:
+        limit = b[0] if b[0] is not None else float("inf")
+        out.append((float(limit), float(b[1])))
+    return out
 
 
 def compute_pph21_annual(pkp: float) -> float:
@@ -192,7 +198,7 @@ def compute_pph21_annual(pkp: float) -> float:
         return 0.0
     tax = 0.0
     prev_limit = 0.0
-    for limit, rate in PPH21_BRACKETS:
+    for limit, rate in _pph21_brackets_normalized():
         taxable_in_bracket = min(pkp, limit) - prev_limit
         if taxable_in_bracket <= 0:
             break
@@ -212,46 +218,45 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     overtime_hours = float(attendance.get("overtime_hours", 0) or 0)
     bonus = float(attendance.get("bonus", 0) or 0)
     other_deduction = float(attendance.get("deduction", 0) or 0)
-    days_worked = float(attendance.get("days_worked", 22) or 22)
+    standard_days = float(CONFIG["standard_workdays"]) or 22.0
+    days_worked = float(attendance.get("days_worked", standard_days) or standard_days)
 
     # Overtime rate: 1/173 * basic salary per hour (Indonesian standard)
     overtime_rate_per_hour = basic / 173 if basic else 0
-    overtime_pay = overtime_rate_per_hour * overtime_hours * 1.5  # simplified
+    overtime_pay = overtime_rate_per_hour * overtime_hours * float(CONFIG["overtime_multiplier"])
 
-    # Pro-rate basic if days_worked < 22 (standard month)
-    standard_days = 22
+    # Pro-rate basic if days_worked < standard
     prorate_factor = min(days_worked / standard_days, 1.0) if standard_days > 0 else 1.0
     basic_paid = basic * prorate_factor
 
     gross = basic_paid + fixed_allowance + overtime_pay + bonus
 
     # BPJS Kesehatan (capped)
-    bpjs_kes_base = min(basic_paid + fixed_allowance, BPJS_KESEHATAN_MAX_BASE) if employee.get("bpjs_kesehatan") else 0
-    bpjs_kes_employee = bpjs_kes_base * BPJS_KESEHATAN_EMPLOYEE
-    bpjs_kes_employer = bpjs_kes_base * BPJS_KESEHATAN_EMPLOYER
+    bpjs_kes_base = min(basic_paid + fixed_allowance, CONFIG["bpjs_kesehatan_max_base"]) if employee.get("bpjs_kesehatan") else 0
+    bpjs_kes_employee = bpjs_kes_base * CONFIG["bpjs_kesehatan_employee"]
+    bpjs_kes_employer = bpjs_kes_base * CONFIG["bpjs_kesehatan_employer"]
 
     # BPJS Ketenagakerjaan
     has_btk = employee.get("bpjs_ketenagakerjaan", True)
     jht_base = basic_paid + fixed_allowance if has_btk else 0
-    jp_base = min(basic_paid + fixed_allowance, JP_MAX_BASE) if has_btk else 0
+    jp_base = min(basic_paid + fixed_allowance, CONFIG["jp_max_base"]) if has_btk else 0
 
-    jht_employee = jht_base * JHT_EMPLOYEE
-    jht_employer = jht_base * JHT_EMPLOYER
-    jp_employee = jp_base * JP_EMPLOYEE
-    jp_employer = jp_base * JP_EMPLOYER
-    jkk_employer = jht_base * JKK_EMPLOYER
-    jkm_employer = jht_base * JKM_EMPLOYER
+    jht_employee = jht_base * CONFIG["jht_employee"]
+    jht_employer = jht_base * CONFIG["jht_employer"]
+    jp_employee = jp_base * CONFIG["jp_employee"]
+    jp_employer = jp_base * CONFIG["jp_employer"]
+    jkk_employer = jht_base * CONFIG["jkk_employer"]
+    jkm_employer = jht_base * CONFIG["jkm_employer"]
 
     # Annual PPh21 calculation (gross-up method simplified)
-    # Bruto setahun = (gross monthly) * 12 + employer BPJS Kes + JKK + JKM (treated as add-on)
     bruto_monthly = gross + bpjs_kes_employer + jkk_employer + jkm_employer
     bruto_yearly = bruto_monthly * 12
 
-    biaya_jabatan_yearly = min(bruto_yearly * BIAYA_JABATAN_RATE, BIAYA_JABATAN_MAX_YEAR)
+    biaya_jabatan_yearly = min(bruto_yearly * CONFIG["biaya_jabatan_rate"], CONFIG["biaya_jabatan_max_year"])
     iuran_pengurang_yearly = (jht_employee + jp_employee) * 12
 
     netto_yearly = bruto_yearly - biaya_jabatan_yearly - iuran_pengurang_yearly
-    ptkp = PTKP_TABLE.get(employee.get("ptkp_status", "TK/0"), 54_000_000)
+    ptkp = CONFIG["ptkp_table"].get(employee.get("ptkp_status", "TK/0"), 54_000_000)
     pkp = max(0, netto_yearly - ptkp)
     # Round down PKP to thousands per UU HPP
     pkp = (pkp // 1000) * 1000
@@ -990,22 +995,436 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
 @api_router.get("/config/constants")
 async def config_constants(user: dict = Depends(get_current_user)):
     return {
-        "ptkp_table": PTKP_TABLE,
-        "pph21_brackets": [{"limit": b[0] if b[0] != float("inf") else None, "rate": b[1]} for b in PPH21_BRACKETS],
+        "ptkp_table": CONFIG["ptkp_table"],
+        "pph21_brackets": [{"limit": b[0], "rate": b[1]} for b in CONFIG["pph21_brackets"]],
         "bpjs": {
-            "kesehatan_employee": BPJS_KESEHATAN_EMPLOYEE,
-            "kesehatan_employer": BPJS_KESEHATAN_EMPLOYER,
-            "kesehatan_max_base": BPJS_KESEHATAN_MAX_BASE,
-            "jht_employee": JHT_EMPLOYEE,
-            "jht_employer": JHT_EMPLOYER,
-            "jp_employee": JP_EMPLOYEE,
-            "jp_employer": JP_EMPLOYER,
-            "jp_max_base": JP_MAX_BASE,
-            "jkk_employer": JKK_EMPLOYER,
-            "jkm_employer": JKM_EMPLOYER,
+            "kesehatan_employee": CONFIG["bpjs_kesehatan_employee"],
+            "kesehatan_employer": CONFIG["bpjs_kesehatan_employer"],
+            "kesehatan_max_base": CONFIG["bpjs_kesehatan_max_base"],
+            "jht_employee": CONFIG["jht_employee"],
+            "jht_employer": CONFIG["jht_employer"],
+            "jp_employee": CONFIG["jp_employee"],
+            "jp_employer": CONFIG["jp_employer"],
+            "jp_max_base": CONFIG["jp_max_base"],
+            "jkk_employer": CONFIG["jkk_employer"],
+            "jkm_employer": CONFIG["jkm_employer"],
         },
-        "biaya_jabatan_max_year": BIAYA_JABATAN_MAX_YEAR,
+        "biaya_jabatan_rate": CONFIG["biaya_jabatan_rate"],
+        "biaya_jabatan_max_year": CONFIG["biaya_jabatan_max_year"],
+        "standard_workdays": CONFIG["standard_workdays"],
+        "overtime_multiplier": CONFIG["overtime_multiplier"],
     }
+
+
+class ConfigUpdateIn(BaseModel):
+    ptkp_table: Optional[Dict[str, float]] = None
+    pph21_brackets: Optional[List[List[Any]]] = None  # [[limit_or_null, rate], ...]
+    bpjs_kesehatan_employee: Optional[float] = None
+    bpjs_kesehatan_employer: Optional[float] = None
+    bpjs_kesehatan_max_base: Optional[float] = None
+    jht_employee: Optional[float] = None
+    jht_employer: Optional[float] = None
+    jp_employee: Optional[float] = None
+    jp_employer: Optional[float] = None
+    jp_max_base: Optional[float] = None
+    jkk_employer: Optional[float] = None
+    jkm_employer: Optional[float] = None
+    biaya_jabatan_rate: Optional[float] = None
+    biaya_jabatan_max_year: Optional[float] = None
+    standard_workdays: Optional[float] = None
+    overtime_multiplier: Optional[float] = None
+
+
+@api_router.put("/config/constants")
+async def update_config(payload: ConfigUpdateIn, user: dict = Depends(get_current_user)):
+    update = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not update:
+        return {"updated": 0}
+    # Normalize pph21_brackets nulls
+    if "pph21_brackets" in update:
+        normalized = []
+        for row in update["pph21_brackets"]:
+            limit = row[0] if (row[0] is not None and row[0] != "") else None
+            rate = float(row[1])
+            normalized.append([float(limit) if limit is not None else None, rate])
+        update["pph21_brackets"] = normalized
+    CONFIG.update(update)
+    await db.app_config.update_one(
+        {"id": "payroll_config"},
+        {"$set": {**update, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"updated": len(update), "config": update}
+
+
+async def _load_config_from_db():
+    rec = await db.app_config.find_one({"id": "payroll_config"}, {"_id": 0})
+    if rec:
+        for k in list(CONFIG.keys()):
+            if k in rec and rec[k] is not None:
+                CONFIG[k] = rec[k]
+        logger.info("Loaded payroll config overrides from DB")
+
+
+# ---------------- THR (Tunjangan Hari Raya) ----------------
+class THRRunIn(BaseModel):
+    period: str  # YYYY-MM (month THR is paid)
+
+
+def _months_between(start_iso: str, end_dt: datetime) -> float:
+    try:
+        sd = datetime.fromisoformat(start_iso)
+    except Exception:
+        try:
+            sd = datetime.strptime(start_iso, "%Y-%m-%d")
+        except Exception:
+            return 12.0
+    delta = (end_dt.year - sd.year) * 12 + (end_dt.month - sd.month)
+    if end_dt.day < sd.day:
+        delta -= 1
+    return max(0.0, float(delta))
+
+
+def _calculate_thr(employee: Dict[str, Any], reference_dt: datetime) -> Dict[str, Any]:
+    """1x (basic + fixed_allowance) for tenure >= 12 months; proportional for < 12 months (min 1 month)."""
+    basic = float(employee.get("basic_salary", 0))
+    allowance = float(employee.get("fixed_allowance", 0))
+    monthly_base = basic + allowance
+    months = _months_between(employee.get("join_date", "2020-01-01"), reference_dt)
+    if months < 1:
+        thr_gross = 0.0
+        formula = "Belum berhak (masa kerja < 1 bulan)"
+    elif months >= 12:
+        thr_gross = monthly_base
+        formula = "1x Gaji + Tunjangan Tetap"
+    else:
+        thr_gross = monthly_base * (months / 12.0)
+        formula = f"({months:.0f}/12) x Gaji + Tunjangan Tetap"
+    # PPh 21 on THR using progressive bracket on isolated annual amount per Indonesian practice (simplified)
+    # Treat THR as standalone annual income for tax (jumlah neto disetahunkan)
+    # For simplicity use 5% bracket; for higher PKP brackets, fall back to compute_pph21_annual on (annual_gross + thr) - (annual_gross alone)
+    annual_no_thr = monthly_base * 12
+    ptkp = CONFIG["ptkp_table"].get(employee.get("ptkp_status", "TK/0"), 54_000_000)
+    pkp_no_thr = max(0, annual_no_thr - ptkp)
+    pkp_with_thr = max(0, annual_no_thr + thr_gross - ptkp)
+    pph_no_thr = compute_pph21_annual(pkp_no_thr)
+    pph_with_thr = compute_pph21_annual(pkp_with_thr)
+    pph21_thr = max(0.0, pph_with_thr - pph_no_thr)
+    if not employee.get("has_npwp", True):
+        pph21_thr *= 1.2
+    net = thr_gross - pph21_thr
+    return {
+        "months_of_service": months,
+        "monthly_base": round(monthly_base, 2),
+        "thr_gross": round(thr_gross, 2),
+        "pph21_thr": round(pph21_thr, 2),
+        "thr_net": round(net, 2),
+        "formula": formula,
+    }
+
+
+@api_router.post("/payroll/thr/preview")
+async def thr_preview(payload: THRRunIn, user: dict = Depends(get_current_user)):
+    try:
+        ref = datetime.strptime(payload.period + "-01", "%Y-%m-%d")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Periode harus format YYYY-MM")
+    employees = await db.employees.find({"active": True}, {"_id": 0}).to_list(length=2000)
+    items = []
+    total_gross = 0.0
+    total_net = 0.0
+    total_pph = 0.0
+    for emp in employees:
+        thr = _calculate_thr(emp, ref)
+        items.append({
+            "employee_id": emp["id"],
+            "nik": emp["nik"],
+            "name": emp["name"],
+            "position": emp["position"],
+            "department": emp["department"],
+            "ptkp_status": emp.get("ptkp_status", "TK/0"),
+            **thr,
+        })
+        total_gross += thr["thr_gross"]
+        total_net += thr["thr_net"]
+        total_pph += thr["pph21_thr"]
+    return {
+        "period": payload.period,
+        "items": items,
+        "totals": {
+            "gross": round(total_gross, 2),
+            "net": round(total_net, 2),
+            "pph21": round(total_pph, 2),
+            "count": len(items),
+        },
+    }
+
+
+@api_router.post("/payroll/thr/run")
+async def thr_run(payload: THRRunIn, user: dict = Depends(get_current_user)):
+    try:
+        ref = datetime.strptime(payload.period + "-01", "%Y-%m-%d")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Periode harus format YYYY-MM")
+    employees = await db.employees.find({"active": True}, {"_id": 0}).to_list(length=2000)
+    run_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    docs = []
+    total_gross = 0.0
+    total_net = 0.0
+    total_pph = 0.0
+    for emp in employees:
+        thr = _calculate_thr(emp, ref)
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "run_id": run_id,
+            "period": payload.period,
+            "employee_id": emp["id"],
+            "nik": emp["nik"],
+            "name": emp["name"],
+            "position": emp["position"],
+            "department": emp["department"],
+            "ptkp_status": emp.get("ptkp_status", "TK/0"),
+            "bank_name": emp.get("bank_name"),
+            "bank_account": emp.get("bank_account"),
+            "created_at": now,
+            **thr,
+        })
+        total_gross += thr["thr_gross"]
+        total_net += thr["thr_net"]
+        total_pph += thr["pph21_thr"]
+    await db.thr_runs.delete_many({"period": payload.period})
+    await db.thr_slips.delete_many({"period": payload.period})
+    if docs:
+        await db.thr_slips.insert_many(docs)
+    rec = {
+        "id": run_id,
+        "period": payload.period,
+        "created_at": now,
+        "employee_count": len(docs),
+        "total_gross": round(total_gross, 2),
+        "total_net": round(total_net, 2),
+        "total_pph21": round(total_pph, 2),
+    }
+    await db.thr_runs.insert_one(rec)
+    rec.pop("_id", None)
+    return rec
+
+
+@api_router.get("/payroll/thr/runs")
+async def list_thr_runs(user: dict = Depends(get_current_user)):
+    return await db.thr_runs.find({}, {"_id": 0}).sort("period", -1).to_list(length=200)
+
+
+@api_router.get("/payroll/thr/{period}/slips")
+async def thr_slips(period: str, user: dict = Depends(get_current_user)):
+    rows = await db.thr_slips.find({"period": period}, {"_id": 0}).sort("name", 1).to_list(length=2000)
+    if not rows:
+        raise HTTPException(status_code=404, detail="THR untuk periode ini belum dijalankan")
+    return rows
+
+
+# ---------------- Email Payslip ----------------
+def _payslip_html(slip: Dict[str, Any]) -> str:
+    e, d = slip["earnings"], slip["deductions"]
+    company = os.environ.get("COMPANY_NAME", "Payroll Indonesia")
+    return f"""
+    <table width="100%" cellpadding="0" cellspacing="0" style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+      <tr><td style="padding: 24px 0; border-bottom: 2px solid #18181b;">
+        <h2 style="margin:0; font-size:20px; letter-spacing:-0.5px;">SLIP GAJI · {slip['period']}</h2>
+        <div style="font-size:12px; color:#71717a; margin-top:4px;">{company} · HR Department</div>
+      </td></tr>
+      <tr><td style="padding: 20px 0;">
+        Halo <strong>{slip['name']}</strong>,<br/><br/>
+        Berikut adalah ringkasan slip gaji Anda untuk periode <strong>{slip['period']}</strong>.
+        Slip lengkap dengan rincian pajak terlampir sebagai PDF.
+      </td></tr>
+      <tr><td>
+        <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse; font-size: 13px;">
+          <tr style="background:#f4f4f5;"><th align="left" style="border-bottom:1px solid #e4e4e7;">PENDAPATAN</th><th align="right" style="border-bottom:1px solid #e4e4e7;">Rp</th></tr>
+          <tr><td>Gaji Pokok</td><td align="right" style="font-family:monospace;">{_format_idr(e['basic_salary'])}</td></tr>
+          <tr><td>Tunjangan</td><td align="right" style="font-family:monospace;">{_format_idr(e['fixed_allowance'])}</td></tr>
+          <tr><td>Lembur</td><td align="right" style="font-family:monospace;">{_format_idr(e['overtime'])}</td></tr>
+          <tr><td>Bonus</td><td align="right" style="font-family:monospace;">{_format_idr(e['bonus'])}</td></tr>
+          <tr style="font-weight:bold; border-top:1px solid #a1a1aa;"><td>Total Bruto</td><td align="right" style="font-family:monospace;">{_format_idr(e['gross'])}</td></tr>
+          <tr style="background:#f4f4f5;"><th align="left" style="border-bottom:1px solid #e4e4e7;">POTONGAN</th><th align="right" style="border-bottom:1px solid #e4e4e7;">Rp</th></tr>
+          <tr><td>BPJS Karyawan</td><td align="right" style="font-family:monospace;">{_format_idr(d['bpjs_kesehatan_employee'] + d['jht_employee'] + d['jp_employee'])}</td></tr>
+          <tr><td>PPh 21</td><td align="right" style="font-family:monospace;">{_format_idr(d['pph21'])}</td></tr>
+          <tr><td>Lain-lain</td><td align="right" style="font-family:monospace;">{_format_idr(d['other_deduction'])}</td></tr>
+          <tr style="font-weight:bold; border-top:1px solid #a1a1aa;"><td>Total Potongan</td><td align="right" style="font-family:monospace;">{_format_idr(d['total'])}</td></tr>
+        </table>
+      </td></tr>
+      <tr><td style="padding:16px; background:#18181b; color:white; margin-top:12px;">
+        <table width="100%"><tr>
+          <td style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:1px;">Take Home Pay</td>
+          <td align="right" style="font-family:monospace; font-size:22px; font-weight:bold;">{_format_idr(slip['net_salary'])}</td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="padding: 16px 0; font-size:11px; color:#71717a;">
+        Email otomatis dari sistem payroll. Jangan dibalas. Untuk pertanyaan hubungi HR.
+      </td></tr>
+    </table>
+    """
+
+
+def _send_email_via_resend(to_email: str, subject: str, html: str, pdf_bytes: bytes, pdf_filename: str) -> Dict[str, Any]:
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+    if not api_key:
+        return {"status": "mocked", "to": to_email, "subject": subject, "message": "RESEND_API_KEY belum diatur — email tidak dikirim (mode mock)."}
+    try:
+        import resend
+        import base64 as b64
+        resend.api_key = api_key
+        params = {
+            "from": sender,
+            "to": [to_email],
+            "subject": subject,
+            "html": html,
+            "attachments": [{
+                "filename": pdf_filename,
+                "content": b64.b64encode(pdf_bytes).decode("utf-8"),
+            }],
+        }
+        result = resend.Emails.send(params)
+        return {"status": "sent", "to": to_email, "email_id": result.get("id")}
+    except Exception as ex:
+        return {"status": "failed", "to": to_email, "error": str(ex)[:200]}
+
+
+@api_router.post("/payroll/payslip/{slip_id}/email")
+async def email_single_payslip(slip_id: str, user: dict = Depends(get_current_user)):
+    slip = await db.payslips.find_one({"id": slip_id}, {"_id": 0})
+    if not slip:
+        raise HTTPException(status_code=404, detail="Slip tidak ditemukan")
+    emp = await db.employees.find_one({"id": slip["employee_id"]}, {"_id": 0})
+    if not emp or not emp.get("email"):
+        raise HTTPException(status_code=400, detail="Karyawan tidak memiliki email")
+
+    html = _payslip_html(slip)
+    pdf = _build_payslip_pdf(slip)
+    subject = f"Slip Gaji {slip['period']} - {emp['name']}"
+    fname = f"slip-{slip['period']}-{slip['nik']}.pdf"
+    result = await asyncio.to_thread(_send_email_via_resend, emp["email"], subject, html, pdf, fname)
+    await db.email_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "slip_id": slip_id,
+        "period": slip["period"],
+        "employee_id": emp["id"],
+        "email": emp["email"],
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+        **result,
+    })
+    return result
+
+
+@api_router.post("/payroll/runs/{period}/email-all")
+async def email_all_payslips(period: str, user: dict = Depends(get_current_user)):
+    slips = await db.payslips.find({"period": period}, {"_id": 0}).to_list(length=2000)
+    if not slips:
+        raise HTTPException(status_code=404, detail="Tidak ada slip untuk periode ini")
+    employees = await db.employees.find({}, {"_id": 0}).to_list(length=5000)
+    emp_by_id = {e["id"]: e for e in employees}
+
+    results = {"sent": 0, "mocked": 0, "failed": 0, "skipped_no_email": 0, "details": []}
+    for slip in slips:
+        emp = emp_by_id.get(slip["employee_id"])
+        if not emp or not emp.get("email"):
+            results["skipped_no_email"] += 1
+            results["details"].append({"name": slip["name"], "status": "skipped", "reason": "no email"})
+            continue
+        html = _payslip_html(slip)
+        pdf = _build_payslip_pdf(slip)
+        fname = f"slip-{period}-{slip['nik']}.pdf"
+        subj = f"Slip Gaji {period} - {emp['name']}"
+        res = await asyncio.to_thread(_send_email_via_resend, emp["email"], subj, html, pdf, fname)
+        await db.email_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "slip_id": slip["id"],
+            "period": period,
+            "employee_id": emp["id"],
+            "email": emp["email"],
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+            **res,
+        })
+        status = res.get("status", "failed")
+        if status == "sent":
+            results["sent"] += 1
+        elif status == "mocked":
+            results["mocked"] += 1
+        else:
+            results["failed"] += 1
+        results["details"].append({"name": slip["name"], "email": emp["email"], "status": status})
+    return results
+
+
+# ---------------- Bank Transfer Export ----------------
+def _format_bank_export(slips: List[Dict[str, Any]], emp_by_id: Dict[str, Dict[str, Any]], fmt: str, period: str) -> tuple:
+    """Returns (content_bytes, filename, mimetype) for given format."""
+    rows = []
+    for s in slips:
+        emp = emp_by_id.get(s["employee_id"], {})
+        rows.append({
+            "nik": s["nik"],
+            "name": s["name"],
+            "bank": emp.get("bank_name") or "",
+            "account": emp.get("bank_account") or "",
+            "amount": round(float(s["net_salary"])),
+            "note": f"Gaji {period}",
+        })
+
+    out = io.StringIO()
+    if fmt == "bca":
+        # Format KlikBCA Business sederhana: SourceAcc|Date|DestAcc|Amount|Reference
+        out.write("ACCOUNT_NUMBER|DATE|DESTINATION_ACCOUNT|AMOUNT|REFERENCE\n")
+        for r in rows:
+            out.write(f"SENDER|{period}-25|{r['account']}|{r['amount']}|{r['note']}\n")
+        filename = f"bca-payroll-{period}.txt"
+        mime = "text/plain"
+    elif fmt == "mandiri":
+        # Mandiri Cash Management CSV
+        out.write("Nama Penerima,Bank Penerima,Nomor Rekening,Jumlah,Berita\n")
+        for r in rows:
+            out.write(f'"{r["name"]}","{r["bank"]}","{r["account"]}",{r["amount"]},"{r["note"]}"\n')
+        filename = f"mandiri-payroll-{period}.csv"
+        mime = "text/csv"
+    elif fmt == "bni":
+        out.write("NomorRekening,NamaPenerima,Bank,Jumlah,Keterangan\n")
+        for r in rows:
+            out.write(f'"{r["account"]}","{r["name"]}","{r["bank"]}",{r["amount"]},"{r["note"]}"\n')
+        filename = f"bni-payroll-{period}.csv"
+        mime = "text/csv"
+    elif fmt == "bri":
+        out.write("NoRekening;NamaPenerima;BankPenerima;Nominal;Berita\n")
+        for r in rows:
+            out.write(f'{r["account"]};{r["name"]};{r["bank"]};{r["amount"]};{r["note"]}\n')
+        filename = f"bri-payroll-{period}.csv"
+        mime = "text/csv"
+    else:  # generic
+        out.write("NIK,Nama,Bank,No Rekening,Jumlah,Keterangan\n")
+        for r in rows:
+            out.write(f'"{r["nik"]}","{r["name"]}","{r["bank"]}","{r["account"]}",{r["amount"]},"{r["note"]}"\n')
+        filename = f"payroll-{period}.csv"
+        mime = "text/csv"
+    return out.getvalue().encode("utf-8"), filename, mime
+
+
+@api_router.get("/payroll/runs/{period}/bank-export")
+async def bank_export(period: str, format: str = "generic", user: dict = Depends(get_current_user)):
+    fmt = format.lower()
+    if fmt not in {"generic", "bca", "mandiri", "bni", "bri"}:
+        raise HTTPException(status_code=400, detail="Format tidak valid")
+    slips = await db.payslips.find({"period": period}, {"_id": 0}).to_list(length=2000)
+    if not slips:
+        raise HTTPException(status_code=404, detail="Periode tidak ditemukan")
+    employees = await db.employees.find({}, {"_id": 0}).to_list(length=5000)
+    emp_by_id = {e["id"]: e for e in employees}
+    content, filename, mime = _format_bank_export(slips, emp_by_id, fmt, period)
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------------- Health ----------------
@@ -1021,6 +1440,13 @@ async def startup():
     await db.employees.create_index("nik", unique=True)
     await db.payslips.create_index([("period", 1), ("employee_id", 1)])
     await db.payroll_runs.create_index("period", unique=True)
+    await db.thr_runs.create_index("period", unique=True)
+    await db.thr_slips.create_index([("period", 1), ("employee_id", 1)])
+    await db.app_config.create_index("id", unique=True)
+    await db.email_logs.create_index("sent_at")
+
+    # Load config overrides
+    await _load_config_from_db()
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@payroll.id").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")

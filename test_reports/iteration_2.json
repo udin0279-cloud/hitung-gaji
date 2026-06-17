@@ -1,0 +1,38 @@
+{
+  "summary": "Validated all 4 new payroll features end-to-end (backend + frontend): editable config (PPh21/BPJS/biaya jabatan/standard_workdays/overtime_multiplier), THR calculation+run+history, bank transfer export (generic/BCA/Mandiri/BNI/BRI), and email payslip (mock mode + skip-no-email). 31/31 backend pytest tests pass (14 regression + 17 new). All frontend flows including new THR page, Settings editable inputs, PayrollDetail bank export download, email-all results panel, and Payslip 'Kirim Email' button all working.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/backend/tests/test_payroll_api.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_new_features.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Config update endpoint PUT /api/config/constants correctly applies partial updates and persists via $set upsert. Round-trip GET confirms persistence. _load_config_from_db is called on startup to rehydrate overrides.",
+    "THR calculation in _calculate_thr correctly: 1x monthly_base for tenure>=12mo, proportional months/12 for <12mo, 0 for <1mo. PPh21 on THR uses isolated tax-on-THR method (difference of progressive bracket with and without THR added to annual income) — sound approach. 20% surcharge applied when has_npwp=false.",
+    "Email mock mode: when RESEND_API_KEY empty, _send_email_via_resend logs to email_logs with status='mocked' instead of actually sending. Email-all returns {sent:0, mocked:1, failed:0, skipped_no_email:3, details:[...]} for 2026-01 (Syarifuddin has email → mocked, 3 others → skipped). Verified in UI and via API.",
+    "Bank export formats produce distinct content as required: generic (CSV with NIK,Nama,Bank,No Rekening,Jumlah,Keterangan), BCA (pipe-separated .txt with ACCOUNT_NUMBER|DATE|...), Mandiri (CSV Nama Penerima,Bank Penerima,...), BNI (CSV NomorRekening,NamaPenerima,...), BRI (semicolon-separated NoRekening;NamaPenerima;...). MIME types and filenames also distinct.",
+    "Minor: pre-existing CORS issue from iteration 1 still present (allow_origins=['*'] + allow_credentials=True). Not a blocker since same-origin proxy is used, but should be tightened for cross-origin deployments.",
+    "Minor: 'Tester · QA' department in employee form vs 'Karyawan' label in table use consistent zinc styling and good contrast — no design issues observed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py"
+  ],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "100%"},
+  "test_credentials": "admin@payroll.id / admin123",
+  "seed_data_creation": "Tests created and CLEANED UP: TEST001 employee + 2025-12 payroll period + 2026-04 THR run+slips. Config standard_workdays/overtime_multiplier restored to defaults (22, 1.5) after testing.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Two pytest files: /app/backend/tests/test_payroll_api.py (regression: auth/employee/payroll/dashboard/config) and /app/backend/tests/test_new_features.py (new: THR preview/run/list/slips, config GET+PUT partial+roundtrip, bank export for 5 formats, email mock mode for single+all+no-email-400). RESEND_API_KEY intentionally empty for mock mode. 2026-01 payroll has 4 employees, only Syarifuddin (NIK 211) has email; rest are skipped. Frontend 'Kirim Email ke Semua' button triggers window.confirm — Playwright tests must register page.on('dialog', accept) before clicking. Same applies to 'Simpan THR' button.",
+  "mocked_apis_notes": "RESEND email send is MOCKED when RESEND_API_KEY is empty in /app/backend/.env. Mocked status appears in API response as {status:'mocked'} and is logged to email_logs MongoDB collection. To enable real sending, populate RESEND_API_KEY in .env and restart backend.",
+  "rca of the issue": "No issues found in this iteration. All 4 new features fully functional. Initial Playwright run for 'email-all' appeared to fail silently because Playwright auto-dismisses native dialogs (window.confirm) by default; once dialog handler was registered, the API call fired correctly with the expected 200 response and UI panel rendered as designed."
+}

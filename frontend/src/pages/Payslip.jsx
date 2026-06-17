@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { api, formatIDR } from "../lib/api";
-import { ChevronLeft, Printer, Square, Download } from "lucide-react";
-import { API } from "../lib/api";
+import { api, formatIDR, formatApiError, API } from "../lib/api";
+import { ChevronLeft, Printer, Square, Download, Mail } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Payslip() {
   const { slipId } = useParams();
   const [slip, setSlip] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [emailing, setEmailing] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -19,6 +20,21 @@ export default function Payslip() {
       }
     })();
   }, [slipId]);
+
+  const sendEmail = async () => {
+    if (!window.confirm("Kirim slip ini ke email karyawan?")) return;
+    setEmailing(true);
+    try {
+      const { data } = await api.post(`/payroll/payslip/${slip.id}/email`);
+      if (data.status === "sent") toast.success(`Email terkirim ke ${data.to}`);
+      else if (data.status === "mocked") toast.info("Mode mock: API key Resend belum diatur");
+      else toast.error(data.error || "Gagal kirim");
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal kirim");
+    } finally {
+      setEmailing(false);
+    }
+  };
 
   if (loading) return <div className="p-10 text-sm text-zinc-400 font-mono">Memuat…</div>;
   if (!slip) return <div className="p-10 text-sm text-zinc-700">Slip tidak ditemukan</div>;
@@ -36,6 +52,14 @@ export default function Payslip() {
           <ChevronLeft className="w-3.5 h-3.5" /> Kembali
         </Link>
         <div className="flex items-center gap-2">
+          <button
+            data-testid="email-payslip-button"
+            onClick={sendEmail}
+            disabled={emailing}
+            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-zinc-50 inline-flex items-center gap-2 disabled:opacity-60"
+          >
+            <Mail className="w-3.5 h-3.5" /> {emailing ? "Mengirim…" : "Kirim Email"}
+          </button>
           <a
             data-testid="download-pdf-button"
             href={`${API}/payroll/payslip/${slip.id}/pdf`}
