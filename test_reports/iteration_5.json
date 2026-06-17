@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 5 — Annual Tax Summary Dashboard + Bukti Potong 1721-A1 PDF (employee + admin) verified end-to-end. 17/17 new backend tests pass, 31/31 regression tests (test_portal + test_magic_link) still green, all required UI elements present and integrated.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_annual_bukti_potong.py",
+    "/app/test_reports/pytest/pytest_annual_bukti_potong.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 1995 lines. Strong candidate for modularising into routers (portal_router.py, payroll_router.py, pdf_utils.py) — not blocking but increasingly hard to maintain.",
+    "_build_bukti_potong_pdf imports reportlab inside the function — fine for lazy import but the same pattern repeats elsewhere; consider top-level import for clarity.",
+    "Year dropdown in Portal.jsx is hardcoded to [currentYear, currentYear-1, currentYear-2]. Employees with payslip history older than 2 years cannot view/download via UI (backend still serves them). Consider deriving the list from /api/portal/payslips distinct year set, or extending range.",
+    "Frontend admin Employees page hardcodes new Date().getFullYear() for the bp- href. No year selector per row — admin cannot download prior-year forms from this page. Acceptable for MVP but worth noting.",
+    "Both PDF endpoints return 404 when no data for the year. Good. But /api/payroll/bukti-potong/{eid}/{year}/pdf returns 404 for unknown employee_id with same code path — ensure error message distinguishes 'employee not found' from 'no data' for better admin UX.",
+    "Anti-enumeration nit (carry-over from iter 4): /api/portal/forgot still leaks response-shape difference for known vs unknown emails. Not in scope of this iteration."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_annual_bukti_potong.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (17/17 new + 31/31 regression)", "frontend": "100% (all UI elements + integrations verified)"},
+  "test_credentials": "Admin: admin@payroll.id / admin123. Employee portal: udin0279@gmail.com / NIK 211 (Syarifuddin).",
+  "seed_data_creation": "None. Used existing Syarifuddin payslips (2026-01, 2026-06).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Annual Tax Summary feature complete. Backend: GET /api/portal/annual/{year} returns {year, months[], totals{gross,basic,allowance,overtime,bonus,pph21,bpjs_employee,net,thr_gross,thr_pph21}, months_count}. PDF endpoints: /api/portal/bukti-potong/{year}/pdf (employee, scoped to logged-in user, no employee_id parameter — structurally safe) and /api/payroll/bukti-potong/{employee_id}/{year}/pdf (admin only). Both return %PDF bytes ~3KB built via reportlab. Returns 404 when no data. Portal token cannot access admin endpoint (401). Frontend: Portal.jsx has data-testid annual-year-select (options: currentYear..currentYear-2) and bukti-potong-button (href dynamically tracks selected year). Employees.jsx adds 1721-A1 column with data-testid bp-{employee_id} per row pointing to current-year PDF. Verified for Syarifuddin year=2026: months_count=2, totals.gross=800000 (matches spec).",
+  "rca of the issue": "N/A — no bugs found."
+}

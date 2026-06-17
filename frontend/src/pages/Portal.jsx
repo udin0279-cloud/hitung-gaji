@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { useNavigate, Link, useParams } from "react-router-dom";
 import { api, formatIDR, API } from "../lib/api";
 import { usePortalAuth } from "../context/PortalAuthContext";
-import { LogOut, Square, Download, FileText, Gift, ChevronLeft, Printer } from "lucide-react";
+import { LogOut, Square, Download, FileText, Gift, ChevronLeft, Printer, Receipt } from "lucide-react";
 
 export function PortalDashboard() {
   const { employee, logout } = usePortalAuth();
   const navigate = useNavigate();
   const [payslips, setPayslips] = useState([]);
   const [thr, setThr] = useState([]);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [annual, setAnnual] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -22,6 +24,17 @@ export function PortalDashboard() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get(`/portal/annual/${year}`);
+        setAnnual(data);
+      } catch {
+        setAnnual(null);
+      }
+    })();
+  }, [year]);
 
   const handleLogout = async () => {
     await logout();
@@ -67,6 +80,50 @@ export function PortalDashboard() {
               <div className="font-mono text-lg text-zinc-900">{employee.nik}</div>
             </div>
           </div>
+        </div>
+
+        {/* Annual Tax Summary */}
+        <div className="mt-8">
+          <div className="flex items-end justify-between gap-3 mb-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Receipt className="w-4 h-4 text-zinc-700" />
+              <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Ringkasan Pajak Tahunan</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                data-testid="annual-year-select"
+                value={year}
+                onChange={(e) => setYear(Number(e.target.value))}
+                className="rounded-none border border-zinc-300 px-3 py-1.5 text-xs font-mono focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+              >
+                {[0, 1, 2].map((d) => {
+                  const y = new Date().getFullYear() - d;
+                  return <option key={y} value={y}>{y}</option>;
+                })}
+              </select>
+              <a
+                data-testid="bukti-potong-button"
+                href={`${API}/portal/bukti-potong/${year}/pdf`}
+                target="_blank"
+                rel="noreferrer"
+                className="bg-[#002FA7] text-white px-3 py-1.5 text-xs font-semibold uppercase tracking-wider hover:bg-[#002FA7]/90 inline-flex items-center gap-2"
+              >
+                <Download className="w-3.5 h-3.5" /> Unduh Bukti Potong 1721-A1
+              </a>
+            </div>
+          </div>
+          {annual && annual.months_count > 0 ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-zinc-200 border border-zinc-200">
+              <Stat label="Total Bruto" value={formatIDR(annual.totals.gross)} sub={`${annual.months_count} bulan`} />
+              <Stat label="Total PPh 21" value={formatIDR(annual.totals.pph21 + annual.totals.thr_pph21)} sub="termasuk THR" />
+              <Stat label="Total BPJS" value={formatIDR(annual.totals.bpjs_employee)} sub="Kes + JHT + JP" />
+              <Stat label="Take Home" value={formatIDR(annual.totals.net)} sub="setelah potongan" highlight />
+            </div>
+          ) : (
+            <div className="p-4 border border-zinc-200 bg-zinc-50 text-sm text-zinc-500 font-mono">
+              Belum ada penghasilan untuk tahun {year}.
+            </div>
+          )}
         </div>
 
         {/* Payslips */}
@@ -289,6 +346,16 @@ function Row({ label, value, bold, border }) {
     <div className={`flex items-center justify-between py-1.5 ${border ? "border-t border-zinc-300 mt-1.5 pt-2" : ""}`}>
       <span className={`text-sm ${bold ? "font-semibold text-zinc-900" : "text-zinc-600"}`}>{label}</span>
       <span className={`font-mono text-sm ${bold ? "font-semibold text-zinc-900" : "text-zinc-900"}`}>{formatIDR(value)}</span>
+    </div>
+  );
+}
+
+function Stat({ label, value, sub, highlight }) {
+  return (
+    <div className="bg-white p-4">
+      <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">{label}</div>
+      <div className={`font-mono mt-2 ${highlight ? "text-xl font-semibold text-[#002FA7]" : "text-lg text-zinc-900"}`}>{value}</div>
+      {sub && <div className="text-[10px] text-zinc-500 mt-1 font-mono">{sub}</div>}
     </div>
   );
 }

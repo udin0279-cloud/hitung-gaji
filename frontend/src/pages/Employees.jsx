@@ -223,12 +223,13 @@ export default function Employees() {
               <th className="px-4 py-3">PTKP</th>
               <th className="px-4 py-3 text-right">Gaji Pokok</th>
               <th className="px-4 py-3 text-right">Tunjangan</th>
+              <th className="px-4 py-3">1721-A1</th>
               <th className="px-4 py-3 text-right">Aksi</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>
             )}
             {!loading && filtered.length === 0 && (
               <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400">
@@ -249,6 +250,18 @@ export default function Employees() {
                 </td>
                 <td className="px-4 py-3 font-mono text-right text-zinc-900">{formatIDR(emp.basic_salary)}</td>
                 <td className="px-4 py-3 font-mono text-right text-zinc-700">{formatIDR(emp.fixed_allowance)}</td>
+                <td className="px-4 py-3">
+                  <a
+                    data-testid={`bp-${emp.id}`}
+                    href={`${API}/payroll/bukti-potong/${emp.id}/${new Date().getFullYear()}/pdf`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`Bukti Potong ${new Date().getFullYear()}`}
+                    className="inline-flex items-center gap-1 px-2 py-1 border border-zinc-300 hover:bg-zinc-900 hover:text-white text-[10px] font-bold uppercase tracking-wider transition-colors"
+                  >
+                    <Download className="w-3 h-3" /> {new Date().getFullYear()}
+                  </a>
+                </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-1">
                     <button

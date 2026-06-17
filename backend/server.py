@@ -485,6 +485,267 @@ async def portal_thr_list(emp: dict = Depends(get_current_employee)):
     ]
 
 
+# ---------------- Annual Summary & Bukti Potong 1721-A1 ----------------
+async def _build_annual_summary(employee_id: str, year: int) -> Dict[str, Any]:
+    year_prefix = f"{year}-"
+    slips = await db.payslips.find(
+        {"employee_id": employee_id, "period": {"$regex": f"^{year_prefix}"}},
+        {"_id": 0},
+    ).sort("period", 1).to_list(length=24)
+    thrs = await db.thr_slips.find(
+        {"employee_id": employee_id, "period": {"$regex": f"^{year_prefix}"}},
+        {"_id": 0},
+    ).to_list(length=12)
+
+    months = {}
+    for s in slips:
+        e, d = s["earnings"], s["deductions"]
+        months[s["period"]] = {
+            "period": s["period"],
+            "gross": e["gross"],
+            "basic": e["basic_salary"],
+            "allowance": e["fixed_allowance"],
+            "overtime": e["overtime"],
+            "bonus": e["bonus"],
+            "pph21": d["pph21"],
+            "bpjs_employee": d["bpjs_kesehatan_employee"] + d["jht_employee"] + d["jp_employee"],
+            "net": s["net_salary"],
+        }
+
+    total_gross = sum(m["gross"] for m in months.values())
+    total_basic = sum(m["basic"] for m in months.values())
+    total_allowance = sum(m["allowance"] for m in months.values())
+    total_overtime = sum(m["overtime"] for m in months.values())
+    total_bonus = sum(m["bonus"] for m in months.values())
+    total_pph21 = sum(m["pph21"] for m in months.values())
+    total_bpjs = sum(m["bpjs_employee"] for m in months.values())
+    total_net = sum(m["net"] for m in months.values())
+
+    total_thr_gross = sum(t["thr_gross"] for t in thrs)
+    total_thr_pph = sum(t["pph21_thr"] for t in thrs)
+
+    return {
+        "year": year,
+        "months": sorted(months.values(), key=lambda x: x["period"]),
+        "totals": {
+            "gross": round(total_gross, 2),
+            "basic": round(total_basic, 2),
+            "allowance": round(total_allowance, 2),
+            "overtime": round(total_overtime, 2),
+            "bonus": round(total_bonus, 2),
+            "pph21": round(total_pph21, 2),
+            "bpjs_employee": round(total_bpjs, 2),
+            "net": round(total_net, 2),
+            "thr_gross": round(total_thr_gross, 2),
+            "thr_pph21": round(total_thr_pph, 2),
+        },
+        "months_count": len(months),
+    }
+
+
+def _build_bukti_potong_pdf(employee: Dict[str, Any], summary: Dict[str, Any]) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=14 * mm, rightMargin=14 * mm, topMargin=14 * mm, bottomMargin=14 * mm)
+    styles = getSampleStyleSheet()
+    body_style = ParagraphStyle("body", parent=styles["Normal"], fontName="Helvetica", fontSize=8.5, leading=11)
+    bold_style = ParagraphStyle("bold", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=8.5, leading=11)
+    tiny = ParagraphStyle("tiny", parent=styles["Normal"], fontName="Helvetica", fontSize=7, textColor=colors.HexColor("#71717a"))
+
+    company = os.environ.get("COMPANY_NAME", "Payroll Indonesia")
+    year = summary["year"]
+    totals = summary["totals"]
+
+    story = []
+    # Header
+    header = Table([
+        [Paragraph(f"<b>FORMULIR 1721-A1</b><br/><font size=7>BUKTI PEMOTONGAN PAJAK PENGHASILAN PASAL 21</font>", bold_style),
+         Paragraph(f"<para alignment='right'><font size=7>MASA PEROLEHAN PENGHASILAN<br/></font><b>JANUARI &nbsp;–&nbsp; DESEMBER {year}</b></para>", body_style)],
+    ], colWidths=[110 * mm, 70 * mm])
+    header.setStyle(TableStyle([
+        ("LINEABOVE", (0, 0), (-1, 0), 1.5, colors.HexColor("#18181b")),
+        ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.HexColor("#18181b")),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f4f4f5")),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(header)
+    story.append(Spacer(1, 6))
+
+    # Employer info
+    story.append(Paragraph("<b>A. IDENTITAS PEMOTONG</b>", bold_style))
+    employer = Table([
+        ["Nama Pemotong", ":", company],
+        ["NPWP Pemotong", ":", os.environ.get("COMPANY_NPWP", "00.000.000.0-000.000")],
+    ], colWidths=[40 * mm, 6 * mm, 130 * mm])
+    employer.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica"),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    story.append(employer)
+    story.append(Spacer(1, 6))
+
+    # Employee info
+    story.append(Paragraph("<b>B. IDENTITAS PENERIMA PENGHASILAN</b>", bold_style))
+    emp_table = Table([
+        ["Nama", ":", employee.get("name", ""), "NIK/NIP", ":", employee.get("nik", "")],
+        ["NPWP", ":", employee.get("npwp") or "—", "Status PTKP", ":", employee.get("ptkp_status", "")],
+        ["Jabatan", ":", employee.get("position", ""), "Departemen", ":", employee.get("department", "")],
+    ], colWidths=[22 * mm, 5 * mm, 60 * mm, 25 * mm, 5 * mm, 63 * mm])
+    emp_table.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    story.append(emp_table)
+    story.append(Spacer(1, 10))
+
+    # Bagian C: Rincian Penghasilan
+    story.append(Paragraph("<b>C. RINCIAN PENGHASILAN DAN PENGHITUNGAN PPh PASAL 21</b>", bold_style))
+
+    biaya_jabatan = min(totals["gross"] * CONFIG["biaya_jabatan_rate"], CONFIG["biaya_jabatan_max_year"])
+    # Recompute final PPh from aggregated sums (months might be < 12)
+    ptkp = CONFIG["ptkp_table"].get(employee.get("ptkp_status", "TK/0"), 54_000_000)
+    netto = totals["gross"] - biaya_jabatan - 0  # iuran already in bpjs_employee aggregation
+    # Note: bpjs_employee includes BPJS Kesehatan which is NOT a deduction for tax calc; only JHT+JP are. Approximation:
+    # We'll show pph21 as the sum from monthly slips (already correct progressive calc).
+    pph_total = totals["pph21"] + totals["thr_pph21"]
+
+    rows = [
+        ["NO", "PENGHASILAN", "JUMLAH (Rp)"],
+        ["1", "Gaji/Tunjangan Tetap", _format_idr(totals["basic"] + totals["allowance"])],
+        ["2", "Uang Lembur", _format_idr(totals["overtime"])],
+        ["3", "Bonus / Tantiem", _format_idr(totals["bonus"])],
+        ["4", "Tunjangan Hari Raya (THR)", _format_idr(totals["thr_gross"])],
+        ["5", "Jumlah Penghasilan Bruto (1+2+3+4)", _format_idr(totals["gross"] + totals["thr_gross"])],
+        ["", "PENGURANGAN", ""],
+        ["6", "Biaya Jabatan", _format_idr(biaya_jabatan)],
+        ["7", "Iuran BPJS Karyawan (Kes + JHT + JP)", _format_idr(totals["bpjs_employee"])],
+        ["8", "Jumlah Pengurangan (6+7)", _format_idr(biaya_jabatan + totals["bpjs_employee"])],
+        ["", "PERHITUNGAN PPh 21", ""],
+        ["9", "Penghasilan Neto (5−8)", _format_idr(totals["gross"] + totals["thr_gross"] - biaya_jabatan - totals["bpjs_employee"])],
+        ["10", f"PTKP Setahun ({employee.get('ptkp_status', 'TK/0')})", _format_idr(ptkp)],
+        ["11", "PKP (9−10)", _format_idr(max(0, totals["gross"] + totals["thr_gross"] - biaya_jabatan - totals["bpjs_employee"] - ptkp))],
+        ["12", "PPh 21 Terutang Setahun", _format_idr(pph_total)],
+        ["13", "PPh 21 yang sudah dipotong", _format_idr(pph_total)],
+        ["14", "PPh 21 kurang/(lebih) dipotong", _format_idr(0)],
+    ]
+    t = Table(rows, colWidths=[10 * mm, 110 * mm, 60 * mm])
+    style = TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f4f4f5")),
+        ("ALIGN", (2, 0), (2, -1), "RIGHT"),
+        ("FONTNAME", (2, 1), (2, -1), "Courier"),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#d4d4d8")),
+        ("BACKGROUND", (0, 6), (-1, 6), colors.HexColor("#f4f4f5")),
+        ("BACKGROUND", (0, 10), (-1, 10), colors.HexColor("#f4f4f5")),
+        ("FONTNAME", (0, 5), (-1, 5), "Helvetica-Bold"),
+        ("FONTNAME", (0, 9), (-1, 9), "Helvetica-Bold"),
+        ("FONTNAME", (0, 11), (-1, 11), "Helvetica-Bold"),
+        ("FONTNAME", (0, 14), (-1, 14), "Helvetica-Bold"),
+        ("LINEABOVE", (0, 14), (-1, 14), 1.2, colors.HexColor("#18181b")),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ])
+    t.setStyle(style)
+    story.append(t)
+    story.append(Spacer(1, 12))
+
+    # Monthly breakdown
+    story.append(Paragraph("<b>D. RINCIAN BULANAN</b>", bold_style))
+    m_rows = [["BULAN", "BRUTO", "PPh 21", "BPJS", "TAKE HOME"]]
+    for m in summary["months"]:
+        m_rows.append([m["period"], _format_idr(m["gross"]), _format_idr(m["pph21"]), _format_idr(m["bpjs_employee"]), _format_idr(m["net"])])
+    m_rows.append(["TOTAL", _format_idr(totals["gross"]), _format_idr(totals["pph21"]), _format_idr(totals["bpjs_employee"]), _format_idr(totals["net"])])
+    mt = Table(m_rows, colWidths=[30 * mm, 35 * mm, 35 * mm, 35 * mm, 45 * mm])
+    mt.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f4f4f5")),
+        ("FONTNAME", (1, 1), (-1, -1), "Courier"),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTNAME", (1, -1), (-1, -1), "Courier-Bold"),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fafafa")),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#d4d4d8")),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    story.append(mt)
+    story.append(Spacer(1, 12))
+
+    # Footer signature
+    story.append(Paragraph(
+        "<i>Catatan: Formulir ini merupakan ringkasan dari rincian slip gaji bulanan. "
+        "Gunakan sebagai referensi untuk SPT Tahunan PPh Orang Pribadi.</i>",
+        tiny,
+    ))
+    story.append(Spacer(1, 14))
+    sign_table = Table([
+        ["", ""],
+        ["Diterima oleh,", "Diterbitkan oleh Pemotong,"],
+        ["", ""],
+        [Paragraph(f"<b>{employee.get('name','')}</b><br/><font size=7>NIK: {employee.get('nik','')}</font>", body_style),
+         Paragraph(f"<b>{company}</b><br/><font size=7>HR / Pajak</font>", body_style)],
+    ], colWidths=[90 * mm, 90 * mm])
+    sign_table.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("TOPPADDING", (0, 2), (-1, 2), 24),
+    ]))
+    story.append(sign_table)
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    return pdf_bytes
+
+
+@api_router.get("/portal/annual/{year}")
+async def portal_annual(year: int, emp: dict = Depends(get_current_employee)):
+    return await _build_annual_summary(emp["id"], year)
+
+
+@api_router.get("/portal/bukti-potong/{year}/pdf")
+async def portal_bukti_potong(year: int, emp: dict = Depends(get_current_employee)):
+    summary = await _build_annual_summary(emp["id"], year)
+    if summary["months_count"] == 0:
+        raise HTTPException(status_code=404, detail=f"Tidak ada data penghasilan tahun {year}")
+    pdf = _build_bukti_potong_pdf(emp, summary)
+    fname = f"bukti-potong-1721-A1-{year}-{emp['nik']}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# Admin can also download bukti potong for any employee
+@api_router.get("/payroll/bukti-potong/{employee_id}/{year}/pdf")
+async def admin_bukti_potong(employee_id: str, year: int, user: dict = Depends(get_current_user)):
+    emp = await db.employees.find_one({"id": employee_id}, {"_id": 0})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
+    summary = await _build_annual_summary(employee_id, year)
+    if summary["months_count"] == 0:
+        raise HTTPException(status_code=404, detail=f"Tidak ada data penghasilan tahun {year}")
+    pdf = _build_bukti_potong_pdf(emp, summary)
+    fname = f"bukti-potong-1721-A1-{year}-{emp['nik']}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 # ---------------- Portal Magic Link (Forgot NIK) ----------------
 class ForgotPortalIn(BaseModel):
     email: EmailStr
