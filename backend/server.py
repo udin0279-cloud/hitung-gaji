@@ -1934,6 +1934,108 @@ async def bank_export(period: str, format: str = "generic", user: dict = Depends
     )
 
 
+# ---------------- Database Backup & Restore (Admin) ----------------
+BACKUP_COLLECTIONS = [
+    "users",
+    "employees",
+    "payslips",
+    "payroll_runs",
+    "thr_slips",
+    "thr_runs",
+    "attendance_imports",
+    "app_config",
+    "email_logs",
+    "portal_reset_tokens",
+]
+
+
+def _json_default(o):
+    if isinstance(o, datetime):
+        return o.isoformat()
+    if hasattr(o, "isoformat"):
+        return o.isoformat()
+    return str(o)
+
+
+@api_router.get("/admin/export-database")
+async def export_database(user: dict = Depends(get_current_user)):
+    """Download a full JSON backup of all collections (admin only)."""
+    import json as _json
+
+    snapshot: Dict[str, Any] = {
+        "_meta": {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_by": user.get("email"),
+            "db_name": os.environ.get("DB_NAME"),
+            "version": 1,
+        }
+    }
+
+    for col_name in BACKUP_COLLECTIONS:
+        docs = await db[col_name].find({}, {"_id": 0}).to_list(length=100000)
+        snapshot[col_name] = docs
+
+    content = _json.dumps(snapshot, default=_json_default, ensure_ascii=False, indent=2).encode("utf-8")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"payroll-backup-{stamp}.json"
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.post("/admin/import-database")
+async def import_database(
+    file: UploadFile = File(...),
+    mode: str = "replace",  # 'replace' or 'merge'
+    user: dict = Depends(get_current_user),
+):
+    """Restore database from a JSON backup created via export-database.
+    mode='replace': drop existing data in each collection then insert from backup.
+    mode='merge': upsert by `id` field (keeps current admin and non-backed-up records).
+    """
+    import json as _json
+
+    raw = await file.read()
+    try:
+        snapshot = _json.loads(raw.decode("utf-8-sig"))
+    except Exception as ex:
+        raise HTTPException(status_code=400, detail=f"File JSON tidak valid: {ex}")
+
+    if not isinstance(snapshot, dict) or "_meta" not in snapshot:
+        raise HTTPException(status_code=400, detail="Format backup tidak dikenali")
+
+    summary: Dict[str, Any] = {"mode": mode, "restored": {}, "errors": []}
+
+    for col_name in BACKUP_COLLECTIONS:
+        docs = snapshot.get(col_name) or []
+        if not isinstance(docs, list):
+            summary["errors"].append(f"{col_name}: bukan list, dilewati")
+            continue
+        try:
+            if mode == "replace":
+                await db[col_name].delete_many({})
+                if docs:
+                    await db[col_name].insert_many(docs)
+            elif mode == "merge":
+                for d in docs:
+                    if "id" in d:
+                        await db[col_name].update_one({"id": d["id"]}, {"$set": d}, upsert=True)
+                    else:
+                        await db[col_name].insert_one(d)
+            else:
+                raise HTTPException(status_code=400, detail="mode harus 'replace' atau 'merge'")
+            summary["restored"][col_name] = len(docs)
+        except Exception as ex:
+            summary["errors"].append(f"{col_name}: {str(ex)[:200]}")
+
+    # Reload config in memory
+    await _load_config_from_db()
+
+    return summary
+
+
 # ---------------- Health ----------------
 @api_router.get("/")
 async def root():

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, formatIDR, formatApiError } from "../lib/api";
+import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { Save, RotateCcw } from "lucide-react";
+import { Save, RotateCcw, Download, Upload, Database } from "lucide-react";
 
 const PTKP_KEYS = ["TK/0", "TK/1", "TK/2", "TK/3", "K/0", "K/1", "K/2", "K/3"];
 
@@ -36,6 +36,9 @@ export default function Settings() {
   const [config, setConfig] = useState(null);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [importMode, setImportMode] = useState("merge");
+  const [restoring, setRestoring] = useState(false);
+  const [restoreResult, setRestoreResult] = useState(null);
 
   const load = async () => {
     const { data } = await api.get("/config/constants");
@@ -104,6 +107,29 @@ export default function Settings() {
   };
 
   const reset = () => load();
+
+  const onRestoreFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!window.confirm(`Restore database dengan mode '${importMode}'?\n\n${importMode === "replace" ? "MODE REPLACE: semua data lama akan dihapus dan diganti dengan backup." : "MODE MERGE: data backup di-upsert by ID, data lain tetap."}\n\nLanjutkan?`)) return;
+    setRestoring(true);
+    setRestoreResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post(`/admin/import-database?mode=${importMode}`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setRestoreResult(data);
+      toast.success("Restore selesai");
+      await load();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal restore");
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   return (
     <div className="px-6 lg:px-10 py-8 max-w-7xl">
@@ -227,6 +253,80 @@ export default function Settings() {
           <span className="font-mono"> PKP = (Bruto Setahun − Biaya Jabatan − Iuran JHT/JP Karyawan) − PTKP</span>.
           Karyawan tanpa NPWP otomatis +20% PPh 21.
         </p>
+      </div>
+
+      {/* Database Backup & Restore */}
+      <div className="mt-10 border border-zinc-200 bg-white">
+        <div className="px-5 py-4 border-b border-zinc-200 flex items-center gap-2">
+          <Database className="w-4 h-4 text-zinc-700" />
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Database</div>
+            <div className="font-heading text-lg font-bold text-zinc-900">Backup & Restore</div>
+          </div>
+        </div>
+        <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Backup */}
+          <div>
+            <div className="text-sm font-semibold text-zinc-900">Backup Database</div>
+            <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+              Unduh seluruh data (karyawan, slip gaji, THR, konfigurasi, log email) sebagai 1 file JSON. Bisa diimport balik ke sistem ini, ke MongoDB Anda sendiri, atau MongoDB Atlas.
+            </p>
+            <a
+              data-testid="backup-db-button"
+              href={`${API}/admin/export-database`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 inline-flex items-center gap-2 bg-zinc-900 text-white px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-zinc-800"
+            >
+              <Download className="w-3.5 h-3.5" /> Unduh Backup JSON
+            </a>
+          </div>
+
+          {/* Restore */}
+          <div>
+            <div className="text-sm font-semibold text-zinc-900">Restore Database</div>
+            <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+              Upload file backup JSON. Gunakan <b>merge</b> untuk menambah/update data, <b>replace</b> untuk mengganti seluruh isi koleksi.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <select
+                data-testid="restore-mode-select"
+                value={importMode}
+                onChange={(e) => setImportMode(e.target.value)}
+                className="rounded-none border border-zinc-300 px-3 py-2 text-xs focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+              >
+                <option value="merge">Mode: Merge (upsert by id)</option>
+                <option value="replace">Mode: Replace (DESTRUKTIF)</option>
+              </select>
+              <label
+                data-testid="restore-db-label"
+                className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-zinc-50 inline-flex items-center gap-2 cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5" /> {restoring ? "Memproses…" : "Pilih File Backup"}
+                <input data-testid="restore-db-input" type="file" accept=".json" className="hidden" onChange={onRestoreFile} disabled={restoring} />
+              </label>
+            </div>
+            {restoreResult && (
+              <div className="mt-3 p-3 border border-zinc-200 bg-zinc-50 text-xs font-mono">
+                <div className="font-bold text-zinc-900 mb-1">Hasil ({restoreResult.mode}):</div>
+                {Object.entries(restoreResult.restored || {}).map(([k, v]) => (
+                  <div key={k} className="text-zinc-700">{k}: <span className="text-[#008A00]">{v}</span></div>
+                ))}
+                {restoreResult.errors?.length > 0 && (
+                  <div className="mt-2 text-[#E81123]">
+                    {restoreResult.errors.map((e, i) => <div key={i}>{e}</div>)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="px-5 py-3 border-t border-zinc-200 bg-zinc-50">
+          <div className="text-[10px] text-zinc-600 font-mono">
+            Cara import ke MongoDB Anda sendiri: download JSON di atas, lalu jalankan <code>mongoimport --uri="mongodb://...&lt;db&gt;" --collection=&lt;col&gt; --file=&lt;col&gt;.json --jsonArray</code> per koleksi setelah memecah JSON. Atau pakai endpoint restore di MongoDB lain yang menjalankan app ini.
+          </div>
+        </div>
       </div>
     </div>
   );
