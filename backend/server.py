@@ -1988,7 +1988,7 @@ async def export_database(user: dict = Depends(get_current_user)):
 @api_router.post("/admin/import-database")
 async def import_database(
     file: UploadFile = File(...),
-    mode: str = "replace",  # 'replace' or 'merge'
+    mode: str = "merge",  # 'replace' or 'merge' (default: safer 'merge')
     user: dict = Depends(get_current_user),
 ):
     """Restore database from a JSON backup created via export-database.
@@ -1996,6 +1996,9 @@ async def import_database(
     mode='merge': upsert by `id` field (keeps current admin and non-backed-up records).
     """
     import json as _json
+
+    if mode not in {"replace", "merge"}:
+        raise HTTPException(status_code=400, detail="mode harus 'replace' atau 'merge'")
 
     raw = await file.read()
     try:
@@ -2018,14 +2021,12 @@ async def import_database(
                 await db[col_name].delete_many({})
                 if docs:
                     await db[col_name].insert_many(docs)
-            elif mode == "merge":
+            else:  # merge
                 for d in docs:
                     if "id" in d:
                         await db[col_name].update_one({"id": d["id"]}, {"$set": d}, upsert=True)
                     else:
                         await db[col_name].insert_one(d)
-            else:
-                raise HTTPException(status_code=400, detail="mode harus 'replace' atau 'merge'")
             summary["restored"][col_name] = len(docs)
         except Exception as ex:
             summary["errors"].append(f"{col_name}: {str(ex)[:200]}")
