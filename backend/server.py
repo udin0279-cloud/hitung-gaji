@@ -565,7 +565,7 @@ def _build_bukti_potong_pdf(employee: Dict[str, Any], summary: Dict[str, Any]) -
     story = []
     # Header
     header = Table([
-        [Paragraph(f"<b>FORMULIR 1721-A1</b><br/><font size=7>BUKTI PEMOTONGAN PAJAK PENGHASILAN PASAL 21</font>", bold_style),
+        [Paragraph("<b>FORMULIR 1721-A1</b><br/><font size=7>BUKTI PEMOTONGAN PAJAK PENGHASILAN PASAL 21</font>", bold_style),
          Paragraph(f"<para alignment='right'><font size=7>MASA PEROLEHAN PENGHASILAN<br/></font><b>JANUARI &nbsp;–&nbsp; DESEMBER {year}</b></para>", body_style)],
     ], colWidths=[110 * mm, 70 * mm])
     header.setStyle(TableStyle([
@@ -613,11 +613,8 @@ def _build_bukti_potong_pdf(employee: Dict[str, Any], summary: Dict[str, Any]) -
     story.append(Paragraph("<b>C. RINCIAN PENGHASILAN DAN PENGHITUNGAN PPh PASAL 21</b>", bold_style))
 
     biaya_jabatan = min(totals["gross"] * CONFIG["biaya_jabatan_rate"], CONFIG["biaya_jabatan_max_year"])
-    # Recompute final PPh from aggregated sums (months might be < 12)
     ptkp = CONFIG["ptkp_table"].get(employee.get("ptkp_status", "TK/0"), 54_000_000)
-    netto = totals["gross"] - biaya_jabatan - 0  # iuran already in bpjs_employee aggregation
-    # Note: bpjs_employee includes BPJS Kesehatan which is NOT a deduction for tax calc; only JHT+JP are. Approximation:
-    # We'll show pph21 as the sum from monthly slips (already correct progressive calc).
+    # Use the per-month progressive PPh already computed in slips (includes THR PPh separately)
     pph_total = totals["pph21"] + totals["thr_pph21"]
 
     rows = [
