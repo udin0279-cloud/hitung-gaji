@@ -7,6 +7,7 @@ const EMPTY = {
   nik: "",
   name: "",
   email: "",
+  phone: "",
   position: "",
   department: "",
   join_date: new Date().toISOString().slice(0, 10),
@@ -328,6 +329,9 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
             </Field>
             <Field label="Email">
               <input data-testid="emp-email" type="email" value={form.email || ""} onChange={set("email")} className={inputCls} />
+            </Field>
+            <Field label="WhatsApp (08xx atau 62xx)">
+              <input data-testid="emp-phone" value={form.phone || ""} onChange={set("phone")} placeholder="081234567890" className={inputCls + " font-mono"} />
             </Field>
             <Field label="Tanggal Masuk">
               <input data-testid="emp-join-date" type="date" required value={form.join_date} onChange={set("join_date")} className={inputCls} />

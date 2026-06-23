@@ -149,6 +149,7 @@ class EmployeeIn(BaseModel):
     nik: str  # employee internal id (NIP)
     name: str
     email: Optional[str] = None
+    phone: Optional[str] = None  # WhatsApp number (Indonesian local 08... or 62...)
     position: str
     department: str
     join_date: str  # ISO date
@@ -1212,7 +1213,7 @@ async def export_payslip_pdf(slip_id: str, user: dict = Depends(get_current_user
 
 # ---------------- Employee CSV Import ----------------
 EMPLOYEE_CSV_HEADERS = [
-    "nik", "name", "email", "position", "department", "join_date",
+    "nik", "name", "email", "phone", "position", "department", "join_date",
     "basic_salary", "fixed_allowance", "ptkp_status", "npwp", "has_npwp",
     "bpjs_kesehatan", "bpjs_ketenagakerjaan", "bank_name", "bank_account",
 ]
@@ -1231,7 +1232,7 @@ async def employee_template(user: dict = Depends(get_current_user)):
     writer.writerow(EMPLOYEE_CSV_HEADERS)
     # example row
     writer.writerow([
-        "EMP001", "Budi Santoso", "budi@company.id", "Software Engineer", "Engineering",
+        "EMP001", "Budi Santoso", "budi@company.id", "081234567890", "Software Engineer", "Engineering",
         "2024-01-15", "10000000", "2000000", "TK/0", "12.345.678.9-012.000", "true",
         "true", "true", "BCA", "1234567890",
     ])
@@ -1281,6 +1282,7 @@ async def employees_import(file: UploadFile = File(...), user: dict = Depends(ge
                 "nik": nik,
                 "name": row.get("name") or "",
                 "email": row.get("email") or None,
+                "phone": row.get("phone") or None,
                 "position": row.get("position") or "",
                 "department": row.get("department") or "",
                 "join_date": row.get("join_date") or datetime.now(timezone.utc).date().isoformat(),
@@ -2035,6 +2037,154 @@ async def import_database(
     await _load_config_from_db()
 
     return summary
+
+
+# ---------------- WhatsApp via Fonnte ----------------
+def _normalize_phone_id(phone: str) -> Optional[str]:
+    """Normalize Indonesian phone to '62xxx' format. Returns None if invalid."""
+    if not phone:
+        return None
+    p = "".join(c for c in str(phone) if c.isdigit())
+    if not p:
+        return None
+    if p.startswith("0"):
+        p = "62" + p[1:]
+    elif p.startswith("62"):
+        pass
+    elif p.startswith("8"):
+        p = "62" + p
+    if len(p) < 10 or len(p) > 15:
+        return None
+    return p
+
+
+def _whatsapp_slip_message(slip: Dict[str, Any], employee: Dict[str, Any]) -> str:
+    company = os.environ.get("COMPANY_NAME", "Payroll Indonesia")
+    portal = (os.environ.get("PUBLIC_APP_URL", "").rstrip("/")) + "/portal/login"
+    take_home = f"{int(round(slip['net_salary'])):,}".replace(",", ".")
+    gross = f"{int(round(slip['earnings']['gross'])):,}".replace(",", ".")
+    pph = f"{int(round(slip['deductions']['pph21'])):,}".replace(",", ".")
+    return (
+        f"Halo {employee['name']},\n\n"
+        f"Slip gaji periode *{slip['period']}* telah tersedia.\n\n"
+        f"💰 Take Home: Rp {take_home}\n"
+        f"📊 Bruto: Rp {gross}\n"
+        f"🧾 PPh 21: Rp {pph}\n\n"
+        f"Lihat slip lengkap di portal:\n{portal}\n"
+        f"(Email: {employee.get('email') or '-'}, NIK: {employee['nik']})\n\n"
+        f"— {company}"
+    )
+
+
+async def _send_whatsapp(phone: str, message: str) -> Dict[str, Any]:
+    """Send a WhatsApp message via Fonnte. Returns status dict."""
+    import httpx
+
+    target = _normalize_phone_id(phone)
+    if not target:
+        return {"status": "failed", "phone": phone, "reason": "phone_invalid"}
+
+    token = os.environ.get("FONNTE_TOKEN", "").strip()
+    if not token:
+        logger.info(f"[MOCK WA] to {target}: {message[:60]}...")
+        return {"status": "mocked", "phone": target, "reason": "no_token"}
+
+    base_url = os.environ.get("FONNTE_BASE_URL", "https://api.fonnte.com").rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{base_url}/send",
+                data={"target": target, "message": message, "countryCode": "62"},
+                headers={"Authorization": token},
+            )
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = {"raw": resp.text}
+        if resp.status_code >= 400 or payload.get("status") is False:
+            return {
+                "status": "failed",
+                "phone": target,
+                "reason": payload.get("reason") or f"http_{resp.status_code}",
+            }
+        return {"status": "sent", "phone": target, "fonnte_id": payload.get("id")}
+    except Exception as ex:
+        logger.error(f"Fonnte send error: {ex}")
+        return {"status": "failed", "phone": phone, "reason": str(ex)[:200]}
+
+
+@api_router.post("/payroll/payslip/{slip_id}/whatsapp")
+async def whatsapp_single_payslip(slip_id: str, user: dict = Depends(get_current_user)):
+    slip = await db.payslips.find_one({"id": slip_id}, {"_id": 0})
+    if not slip:
+        raise HTTPException(status_code=404, detail="Slip tidak ditemukan")
+    emp = await db.employees.find_one({"id": slip["employee_id"]}, {"_id": 0})
+    if not emp or not emp.get("phone"):
+        raise HTTPException(status_code=400, detail="Karyawan tidak memiliki nomor WhatsApp")
+
+    msg = _whatsapp_slip_message(slip, emp)
+    res = await _send_whatsapp(emp["phone"], msg)
+    await db.whatsapp_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "slip_id": slip_id,
+        "period": slip["period"],
+        "employee_id": emp["id"],
+        "phone": emp["phone"],
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+        **res,
+    })
+    return res
+
+
+@api_router.post("/payroll/runs/{period}/whatsapp-all")
+async def whatsapp_all_payslips(period: str, user: dict = Depends(get_current_user)):
+    slips = await db.payslips.find({"period": period}, {"_id": 0}).to_list(length=2000)
+    if not slips:
+        raise HTTPException(status_code=404, detail="Tidak ada slip untuk periode ini")
+    employees = await db.employees.find({}, {"_id": 0}).to_list(length=5000)
+    emp_by_id = {e["id"]: e for e in employees}
+
+    results = {"sent": 0, "mocked": 0, "failed": 0, "skipped_no_phone": 0, "details": []}
+    for slip in slips:
+        emp = emp_by_id.get(slip["employee_id"])
+        if not emp or not emp.get("phone"):
+            results["skipped_no_phone"] += 1
+            results["details"].append({"name": slip["name"], "status": "skipped", "reason": "no phone"})
+            continue
+        msg = _whatsapp_slip_message(slip, emp)
+        res = await _send_whatsapp(emp["phone"], msg)
+        await db.whatsapp_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "slip_id": slip["id"],
+            "period": period,
+            "employee_id": emp["id"],
+            "phone": emp["phone"],
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+            **res,
+        })
+        s = res.get("status", "failed")
+        if s == "sent":
+            results["sent"] += 1
+        elif s == "mocked":
+            results["mocked"] += 1
+        else:
+            results["failed"] += 1
+        results["details"].append({
+            "name": slip["name"], "phone": emp.get("phone"),
+            "status": s, "reason": res.get("reason"),
+        })
+        await asyncio.sleep(0.3)  # gentle pacing for Fonnte free plan
+    return results
+
+
+@api_router.get("/admin/whatsapp/status")
+async def whatsapp_status(user: dict = Depends(get_current_user)):
+    has_token = bool(os.environ.get("FONNTE_TOKEN", "").strip())
+    return {
+        "configured": has_token,
+        "provider": "Fonnte",
+        "mode": "live" if has_token else "mock",
+    }
 
 
 # ---------------- Health ----------------

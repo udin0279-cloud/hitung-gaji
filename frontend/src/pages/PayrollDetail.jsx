@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { ChevronLeft, Eye, Mail, Download } from "lucide-react";
+import { ChevronLeft, Eye, Mail, Download, MessageCircle } from "lucide-react";
 
 export default function PayrollDetail() {
   const { period } = useParams();
@@ -11,6 +11,8 @@ export default function PayrollDetail() {
   const [emailing, setEmailing] = useState(false);
   const [emailResult, setEmailResult] = useState(null);
   const [bankFmt, setBankFmt] = useState("generic");
+  const [waSending, setWaSending] = useState(false);
+  const [waResult, setWaResult] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -45,6 +47,21 @@ export default function PayrollDetail() {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal kirim");
     } finally {
       setEmailing(false);
+    }
+  };
+
+  const sendWaAll = async () => {
+    if (!window.confirm(`Kirim WhatsApp ke semua karyawan periode ${period}?\n\n(Pengiriman bertahap, ~0.3 detik per pesan untuk hormati limit Fonnte.)`)) return;
+    setWaSending(true);
+    setWaResult(null);
+    try {
+      const { data } = await api.post(`/payroll/runs/${period}/whatsapp-all`);
+      setWaResult(data);
+      toast.success(`WA: ${data.sent} terkirim · ${data.mocked} mock · ${data.skipped_no_phone} tanpa no.HP · ${data.failed} gagal`);
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal kirim WhatsApp");
+    } finally {
+      setWaSending(false);
     }
   };
 
@@ -92,6 +109,14 @@ export default function PayrollDetail() {
           >
             <Mail className="w-4 h-4" /> {emailing ? "Mengirim…" : "Kirim Email ke Semua"}
           </button>
+          <button
+            data-testid="wa-all-button"
+            onClick={sendWaAll}
+            disabled={waSending}
+            className="rounded-none bg-[#25D366] text-white px-4 py-2 text-sm font-semibold hover:bg-[#25D366]/90 inline-flex items-center gap-2 disabled:opacity-60"
+          >
+            <MessageCircle className="w-4 h-4" /> {waSending ? "Mengirim…" : "Kirim WhatsApp ke Semua"}
+          </button>
         </div>
       </div>
 
@@ -108,6 +133,27 @@ export default function PayrollDetail() {
                 {emailResult.details.map((d, i) => (
                   <li key={i} className={d.status === "sent" ? "text-[#008A00]" : d.status === "failed" ? "text-[#E81123]" : "text-zinc-600"}>
                     [{d.status}] {d.name} {d.email ? `· ${d.email}` : ""} {d.reason ? `· ${d.reason}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+
+      {waResult && (
+        <div className="mt-4 p-4 border border-[#25D366]/30 bg-[#25D366]/5">
+          <div className="text-[11px] uppercase tracking-widest font-semibold text-[#0a6b3a]">Hasil Kirim WhatsApp</div>
+          <div className="font-mono text-sm text-zinc-900 mt-1">
+            {waResult.sent} terkirim · {waResult.mocked} mock (Fonnte token belum diatur) · {waResult.failed} gagal · {waResult.skipped_no_phone} tanpa no.HP
+          </div>
+          {waResult.details?.length > 0 && (
+            <details className="mt-2">
+              <summary className="text-xs cursor-pointer text-zinc-600 font-semibold">Lihat detail</summary>
+              <ul className="mt-2 text-xs font-mono space-y-0.5 max-h-48 overflow-y-auto">
+                {waResult.details.map((d, i) => (
+                  <li key={i} className={d.status === "sent" ? "text-[#008A00]" : d.status === "failed" ? "text-[#E81123]" : "text-zinc-600"}>
+                    [{d.status}] {d.name} {d.phone ? `· ${d.phone}` : ""} {d.reason ? `· ${d.reason}` : ""}
                   </li>
                 ))}
               </ul>

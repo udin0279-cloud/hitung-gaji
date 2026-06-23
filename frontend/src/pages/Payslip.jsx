@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, formatIDR, formatApiError, API } from "../lib/api";
-import { ChevronLeft, Printer, Square, Download, Mail } from "lucide-react";
+import { ChevronLeft, Printer, Square, Download, Mail, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Payslip() {
@@ -9,6 +9,7 @@ export default function Payslip() {
   const [slip, setSlip] = useState(null);
   const [loading, setLoading] = useState(true);
   const [emailing, setEmailing] = useState(false);
+  const [waSending, setWaSending] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -36,6 +37,21 @@ export default function Payslip() {
     }
   };
 
+  const sendWa = async () => {
+    if (!window.confirm("Kirim slip ini ke WhatsApp karyawan?")) return;
+    setWaSending(true);
+    try {
+      const { data } = await api.post(`/payroll/payslip/${slip.id}/whatsapp`);
+      if (data.status === "sent") toast.success(`WhatsApp terkirim ke ${data.phone}`);
+      else if (data.status === "mocked") toast.info("Mode mock: Fonnte token belum diatur");
+      else toast.error(`Gagal: ${data.reason || "unknown"}`);
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal kirim");
+    } finally {
+      setWaSending(false);
+    }
+  };
+
   if (loading) return <div className="p-10 text-sm text-zinc-400 font-mono">Memuat…</div>;
   if (!slip) return <div className="p-10 text-sm text-zinc-700">Slip tidak ditemukan</div>;
 
@@ -58,7 +74,15 @@ export default function Payslip() {
             disabled={emailing}
             className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-zinc-50 inline-flex items-center gap-2 disabled:opacity-60"
           >
-            <Mail className="w-3.5 h-3.5" /> {emailing ? "Mengirim…" : "Kirim Email"}
+            <Mail className="w-3.5 h-3.5" /> {emailing ? "Mengirim…" : "Email"}
+          </button>
+          <button
+            data-testid="wa-payslip-button"
+            onClick={sendWa}
+            disabled={waSending}
+            className="rounded-none bg-[#25D366] text-white px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-[#25D366]/90 inline-flex items-center gap-2 disabled:opacity-60"
+          >
+            <MessageCircle className="w-3.5 h-3.5" /> {waSending ? "Mengirim…" : "WhatsApp"}
           </button>
           <a
             data-testid="download-pdf-button"

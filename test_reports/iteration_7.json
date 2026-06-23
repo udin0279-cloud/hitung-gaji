@@ -1,0 +1,25 @@
+{
+  "summary": "Fonnte WhatsApp integration (mock mode) fully tested end-to-end. 19/19 new backend tests pass and full UI flow verified. Status endpoint returns mock+Fonnte, phone field stored/updated/imported, single-send returns 400 when no phone and {status:'mocked', reason:'no_token', phone:'62...'} when phone present, bulk endpoint correctly buckets {sent:0, mocked:1, failed:0, skipped_no_phone:3, details:[...]} on 2026-01 (Syarifuddin has phone, other 3 don't). Auth gating works for admin cookie & rejects portal token and anonymous. CSV template includes phone column; CSV import persists phone. UI: emp-phone field with 'WHATSAPP (08XX ATAU 62XX)' label, wa-all-button (green #25D366) + result panel showing '0 terkirim · 1 mock · 0 gagal · 3 tanpa no.HP', and wa-payslip-button on payslip detail page (also green, next to Email). Phone normalisation 081... → 6281... confirmed via API response. Regression smoke: existing payroll/email/portal/employees endpoints still healthy.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_whatsapp_fonnte.py",
+    "/app/test_reports/pytest/pytest_whatsapp_fonnte.xml"
+  ],
+  "action_items": [
+    "Pre-existing (unrelated to this iter): /app/backend/tests/test_backup_restore.py::test_import_invalid_mode_captures_error now fails because iteration-6 review comment was implemented — invalid mode returns 400 instead of 200-with-errors. Either update that test or revert the validation. Not blocking this feature."
+  ],
+  "critical_code_review_comments": [
+    "_normalize_phone_id length bounds (10-15) silently rejects bad inputs; for single-send the route returns {'status':'failed','reason':'phone_invalid'} but the response is still HTTP 200 — consider 422 so the UI can show a clearer error.",
+    "whatsapp_status, whatsapp_single_payslip, whatsapp_all_payslips depend on get_current_user without explicit admin-role check; works today because portal users use a different cookie (`portal_token`), but if future tokens add roles, add an explicit `if user['role'] != 'admin': 403` guard for defense-in-depth.",
+    "_send_whatsapp catches generic Exception and stores str(ex)[:200] — fine, but Fonnte returns useful field 'detail' on rate-limits; consider preserving payload.get('detail') too.",
+    "Bulk endpoint sleeps 0.3s between sends; for large payrolls (>200) the request may exceed gateway timeout. Consider chunking or background task with progress polling."
+  ],
+  "updated_files": ["/app/backend/tests/test_whatsapp_fonnte.py"],
+  "success_rate": {"backend": "100% (19/19 new + 108/109 full-suite, 1 pre-existing unrelated failure)", "frontend": "100% (all 6 UI steps)"},
+  "test_credentials": "admin@payroll.id / admin123 ; portal: udin0279@gmail.com / NIK 211",
+  "seed_data_creation": "Created temporary TEST_ employees during tests (phone + CSV import paths) — all cleaned up via DELETE in teardown. No production data altered.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fonnte WhatsApp covered in test_whatsapp_fonnte.py. Mock mode active until FONNTE_TOKEN is filled in backend/.env. Once token is added, _send_whatsapp will hit https://api.fonnte.com/send — tests that currently assert status=='mocked' will need an env-aware skip/branch. Note: test_backup_restore.py has 1 pre-existing failure due to iter-6 code review being implemented (mode validation now returns 400); orthogonal to this iteration."
+}
