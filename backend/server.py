@@ -13,13 +13,14 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 import csv
 import io
+import base64
 
 # ---------------- DB ----------------
 mongo_url = os.environ["MONGO_URL"]
@@ -1801,6 +1802,20 @@ def _send_email_via_resend(to_email: str, subject: str, html: str, pdf_bytes: by
         return {"status": "failed", "to": to_email, "error": str(ex)[:200]}
 
 
+def _send_simple_email(to_email: str, subject: str, html: str) -> Dict[str, Any]:
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+    if not api_key or not to_email:
+        return {"status": "mocked", "to": to_email}
+    try:
+        import resend
+        resend.api_key = api_key
+        result = resend.Emails.send({"from": sender, "to": [to_email], "subject": subject, "html": html})
+        return {"status": "sent", "to": to_email, "email_id": result.get("id")}
+    except Exception as ex:
+        return {"status": "failed", "to": to_email, "error": str(ex)[:200]}
+
+
 @api_router.post("/payroll/payslip/{slip_id}/email")
 async def email_single_payslip(slip_id: str, user: dict = Depends(get_current_user)):
     slip = await db.payslips.find_one({"id": slip_id}, {"_id": 0})
@@ -2187,6 +2202,296 @@ async def whatsapp_status(user: dict = Depends(get_current_user)):
     }
 
 
+# ---------------- Leave & Permission Module ----------------
+LEAVE_TYPES = {"terlambat", "pulang_awal", "tidak_masuk", "sakit"}
+LEAVE_TYPE_LABELS = {
+    "terlambat": "Izin Datang Terlambat",
+    "pulang_awal": "Izin Pulang Awal",
+    "tidak_masuk": "Izin Tidak Masuk",
+    "sakit": "Izin Sakit",
+}
+MAX_ATTACHMENT_SIZE = 2 * 1024 * 1024  # 2 MB
+ALLOWED_ATTACHMENT_MIME = {"application/pdf", "image/jpeg", "image/jpg", "image/png"}
+
+
+def _leave_view(doc: dict, include_attachment_meta: bool = True) -> dict:
+    out = {
+        "id": doc["id"],
+        "employee_id": doc["employee_id"],
+        "employee_name": doc.get("employee_name"),
+        "employee_nik": doc.get("employee_nik"),
+        "department": doc.get("department"),
+        "type": doc["type"],
+        "type_label": LEAVE_TYPE_LABELS.get(doc["type"], doc["type"]),
+        "date_start": doc["date_start"],
+        "date_end": doc["date_end"],
+        "time_minutes": doc.get("time_minutes"),
+        "reason": doc.get("reason", ""),
+        "status": doc.get("status", "pending"),
+        "hr_note": doc.get("hr_note"),
+        "submitted_at": doc.get("submitted_at"),
+        "reviewed_at": doc.get("reviewed_at"),
+        "reviewed_by": doc.get("reviewed_by"),
+    }
+    if include_attachment_meta and doc.get("attachment"):
+        att = doc["attachment"]
+        out["attachment"] = {
+            "filename": att.get("filename"),
+            "mime": att.get("mime"),
+            "size": att.get("size"),
+        }
+    else:
+        out["attachment"] = None
+    return out
+
+
+@api_router.post("/portal/leave")
+async def portal_leave_create(
+    type: str = Form(...),
+    date_start: str = Form(...),
+    date_end: Optional[str] = Form(None),
+    time_minutes: Optional[int] = Form(None),
+    reason: str = Form(""),
+    file: Optional[UploadFile] = File(None),
+    emp: dict = Depends(get_current_employee),
+):
+    if type not in LEAVE_TYPES:
+        raise HTTPException(status_code=400, detail="Jenis izin tidak valid")
+    if not date_start:
+        raise HTTPException(status_code=400, detail="Tanggal wajib diisi")
+    end = date_end or date_start
+    if end < date_start:
+        raise HTTPException(status_code=400, detail="Tanggal akhir tidak boleh sebelum tanggal mulai")
+
+    if type in {"terlambat", "pulang_awal"}:
+        if not time_minutes or time_minutes <= 0:
+            raise HTTPException(status_code=400, detail="Durasi (menit) wajib diisi")
+        end = date_start  # single day for these types
+
+    attachment = None
+    if file is not None and file.filename:
+        content = await file.read()
+        if len(content) > MAX_ATTACHMENT_SIZE:
+            raise HTTPException(status_code=400, detail="Ukuran file maks 2MB")
+        mime = (file.content_type or "").lower()
+        if mime not in ALLOWED_ATTACHMENT_MIME:
+            raise HTTPException(status_code=400, detail="Format file harus PDF/JPG/PNG")
+        attachment = {
+            "filename": file.filename,
+            "mime": mime,
+            "size": len(content),
+            "data_base64": base64.b64encode(content).decode("ascii"),
+        }
+
+    if type == "sakit" and not attachment:
+        # File upload optional sesuai konfigurasi (HR dapat meminta surat dokter saat review jika perlu)
+        pass
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "employee_id": emp["id"],
+        "employee_name": emp.get("name"),
+        "employee_nik": emp.get("nik"),
+        "department": emp.get("department"),
+        "type": type,
+        "date_start": date_start,
+        "date_end": end,
+        "time_minutes": time_minutes if type in {"terlambat", "pulang_awal"} else None,
+        "reason": reason.strip(),
+        "attachment": attachment,
+        "status": "pending",
+        "hr_note": None,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "reviewed_at": None,
+        "reviewed_by": None,
+    }
+    await db.leave_requests.insert_one(doc)
+
+    # Notify HR via email
+    try:
+        hr_email = os.environ.get("ADMIN_EMAIL", "").strip()
+        if hr_email:
+            html = f"""
+            <div style="font-family:Arial,sans-serif;max-width:560px">
+              <h2 style="color:#002FA7;margin:0 0 8px">Pengajuan Izin Baru</h2>
+              <p style="color:#444">Karyawan <b>{doc['employee_name']}</b> (NIK {doc['employee_nik']}) mengajukan izin.</p>
+              <table style="border-collapse:collapse;width:100%;font-size:14px">
+                <tr><td style="padding:6px 0;color:#666">Jenis</td><td><b>{LEAVE_TYPE_LABELS.get(doc['type'])}</b></td></tr>
+                <tr><td style="padding:6px 0;color:#666">Tanggal</td><td>{doc['date_start']}{(' s/d ' + doc['date_end']) if doc['date_end'] != doc['date_start'] else ''}</td></tr>
+                {('<tr><td style=padding:6px;color:#666>Durasi</td><td>' + str(doc['time_minutes']) + ' menit</td></tr>') if doc.get('time_minutes') else ''}
+                <tr><td style="padding:6px 0;color:#666">Alasan</td><td>{doc['reason']}</td></tr>
+              </table>
+              <p style="margin-top:16px;color:#666;font-size:13px">Login ke Dashboard HR untuk meninjau pengajuan.</p>
+            </div>
+            """
+            _send_simple_email(hr_email, f"[Payroll] Pengajuan Izin Baru — {doc['employee_name']}", html)
+    except Exception as ex:
+        logger.warning(f"Failed to notify HR for leave {doc['id']}: {ex}")
+
+    return _leave_view(doc)
+
+
+@api_router.get("/portal/leave")
+async def portal_leave_list(emp: dict = Depends(get_current_employee)):
+    items = await db.leave_requests.find({"employee_id": emp["id"]}, {"_id": 0, "attachment.data_base64": 0}).sort("submitted_at", -1).to_list(length=500)
+    return [_leave_view(x) for x in items]
+
+
+@api_router.delete("/portal/leave/{leave_id}")
+async def portal_leave_cancel(leave_id: str, emp: dict = Depends(get_current_employee)):
+    doc = await db.leave_requests.find_one({"id": leave_id, "employee_id": emp["id"]})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
+    if doc.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Pengajuan yang sudah diproses tidak dapat dibatalkan")
+    await db.leave_requests.delete_one({"id": leave_id})
+    return {"ok": True}
+
+
+@api_router.get("/portal/leave/{leave_id}/attachment")
+async def portal_leave_attachment(leave_id: str, emp: dict = Depends(get_current_employee)):
+    doc = await db.leave_requests.find_one({"id": leave_id, "employee_id": emp["id"]})
+    if not doc or not doc.get("attachment"):
+        raise HTTPException(status_code=404, detail="Lampiran tidak ditemukan")
+    att = doc["attachment"]
+    data = base64.b64decode(att["data_base64"])
+    return Response(
+        content=data,
+        media_type=att["mime"],
+        headers={"Content-Disposition": f'inline; filename="{att["filename"]}"'},
+    )
+
+
+# ----- HR Admin endpoints -----
+@api_router.get("/leave")
+async def admin_leave_list(
+    status: Optional[str] = None,
+    type: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    q: Dict[str, Any] = {}
+    if status:
+        q["status"] = status
+    if type:
+        q["type"] = type
+    items = await db.leave_requests.find(q, {"_id": 0, "attachment.data_base64": 0}).sort("submitted_at", -1).to_list(length=1000)
+    return [_leave_view(x) for x in items]
+
+
+@api_router.get("/leave/stats")
+async def admin_leave_stats(user: dict = Depends(get_current_user)):
+    pending = await db.leave_requests.count_documents({"status": "pending"})
+    approved = await db.leave_requests.count_documents({"status": "approved"})
+    rejected = await db.leave_requests.count_documents({"status": "rejected"})
+    return {"pending": pending, "approved": approved, "rejected": rejected, "total": pending + approved + rejected}
+
+
+@api_router.get("/leave/{leave_id}")
+async def admin_leave_detail(leave_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.leave_requests.find_one({"id": leave_id}, {"_id": 0, "attachment.data_base64": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
+    return _leave_view(doc)
+
+
+@api_router.get("/leave/{leave_id}/attachment")
+async def admin_leave_attachment(leave_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.leave_requests.find_one({"id": leave_id})
+    if not doc or not doc.get("attachment"):
+        raise HTTPException(status_code=404, detail="Lampiran tidak ditemukan")
+    att = doc["attachment"]
+    data = base64.b64decode(att["data_base64"])
+    return Response(
+        content=data,
+        media_type=att["mime"],
+        headers={"Content-Disposition": f'inline; filename="{att["filename"]}"'},
+    )
+
+
+class LeaveReviewIn(BaseModel):
+    hr_note: Optional[str] = ""
+
+
+@api_router.put("/leave/{leave_id}/approve")
+async def admin_leave_approve(leave_id: str, payload: LeaveReviewIn, user: dict = Depends(get_current_user)):
+    doc = await db.leave_requests.find_one({"id": leave_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
+    await db.leave_requests.update_one(
+        {"id": leave_id},
+        {"$set": {
+            "status": "approved",
+            "hr_note": (payload.hr_note or "").strip(),
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_by": user.get("email"),
+        }},
+    )
+    updated = await db.leave_requests.find_one({"id": leave_id}, {"_id": 0, "attachment.data_base64": 0})
+    _notify_employee_leave_status(updated, "approved")
+    return _leave_view(updated)
+
+
+@api_router.put("/leave/{leave_id}/reject")
+async def admin_leave_reject(leave_id: str, payload: LeaveReviewIn, user: dict = Depends(get_current_user)):
+    doc = await db.leave_requests.find_one({"id": leave_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
+    if not (payload.hr_note or "").strip():
+        raise HTTPException(status_code=400, detail="Alasan penolakan wajib diisi")
+    await db.leave_requests.update_one(
+        {"id": leave_id},
+        {"$set": {
+            "status": "rejected",
+            "hr_note": payload.hr_note.strip(),
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_by": user.get("email"),
+        }},
+    )
+    updated = await db.leave_requests.find_one({"id": leave_id}, {"_id": 0, "attachment.data_base64": 0})
+    _notify_employee_leave_status(updated, "rejected")
+    return _leave_view(updated)
+
+
+def _notify_employee_leave_status(leave_doc: dict, status: str):
+    try:
+        asyncio.create_task(_send_leave_status_email(leave_doc, status))
+    except Exception as ex:
+        logger.warning(f"Failed to schedule leave notif: {ex}")
+
+
+async def _send_leave_status_email(leave_doc: dict, status: str):
+    try:
+        emp = await db.employees.find_one({"id": leave_doc["employee_id"]}, {"_id": 0, "email": 1, "name": 1})
+        if not emp or not emp.get("email"):
+            return
+        label_status = "DISETUJUI" if status == "approved" else "DITOLAK"
+        color = "#059669" if status == "approved" else "#dc2626"
+        type_label = LEAVE_TYPE_LABELS.get(leave_doc.get("type"), leave_doc.get("type"))
+        period = leave_doc["date_start"]
+        if leave_doc.get("date_end") and leave_doc["date_end"] != leave_doc["date_start"]:
+            period = f"{leave_doc['date_start']} s/d {leave_doc['date_end']}"
+        note_html = ""
+        if leave_doc.get("hr_note"):
+            note_html = f'<p style="margin-top:12px;padding:10px;background:#f5f5f5;border-left:3px solid {color};font-size:13px"><b>Catatan HR:</b> {leave_doc["hr_note"]}</p>'
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:560px">
+          <h2 style="color:{color};margin:0 0 8px">Pengajuan Izin {label_status}</h2>
+          <p style="color:#444">Halo {emp.get('name', '')},</p>
+          <p style="color:#444">Pengajuan izin Anda telah diproses dengan detail berikut:</p>
+          <table style="border-collapse:collapse;width:100%;font-size:14px">
+            <tr><td style="padding:6px 0;color:#666">Jenis</td><td><b>{type_label}</b></td></tr>
+            <tr><td style="padding:6px 0;color:#666">Tanggal</td><td>{period}</td></tr>
+            <tr><td style="padding:6px 0;color:#666">Status</td><td style="color:{color}"><b>{label_status}</b></td></tr>
+          </table>
+          {note_html}
+          <p style="margin-top:16px;color:#666;font-size:13px">Terima kasih.</p>
+        </div>
+        """
+        _send_simple_email(emp["email"], f"[Payroll] Pengajuan Izin {label_status}", html)
+    except Exception as ex:
+        logger.warning(f"Failed to send leave status email: {ex}")
+
+
 # ---------------- Health ----------------
 @api_router.get("/")
 async def root():
@@ -2204,6 +2509,8 @@ async def startup():
     await db.thr_slips.create_index([("period", 1), ("employee_id", 1)])
     await db.app_config.create_index("id", unique=True)
     await db.email_logs.create_index("sent_at")
+    await db.leave_requests.create_index([("employee_id", 1), ("submitted_at", -1)])
+    await db.leave_requests.create_index("status")
 
     # Load config overrides
     await _load_config_from_db()

@@ -11,11 +11,13 @@ import PayrollDetail from "@/pages/PayrollDetail";
 import Payslip from "@/pages/Payslip";
 import THR from "@/pages/THR";
 import Settings from "@/pages/Settings";
+import LeaveAdmin from "@/pages/LeaveAdmin";
 import Layout from "@/components/Layout";
 import PortalLogin from "@/pages/PortalLogin";
 import PortalForgot from "@/pages/PortalForgot";
 import PortalMagicLogin from "@/pages/PortalMagicLogin";
 import { PortalDashboard, PortalPayslip } from "@/pages/Portal";
+import PortalLeave from "@/pages/PortalLeave";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -47,6 +49,7 @@ function App() {
               <Route path="/payroll/:period" element={<PayrollDetail />} />
               <Route path="/payslip/:slipId" element={<Payslip />} />
               <Route path="/thr" element={<THR />} />
+              <Route path="/leave" element={<LeaveAdmin />} />
               <Route path="/settings" element={<Settings />} />
             </Route>
 
@@ -56,6 +59,7 @@ function App() {
             <Route path="/portal/magic-login" element={<PortalMagicLogin />} />
             <Route path="/portal" element={<PortalProtected><PortalDashboard /></PortalProtected>} />
             <Route path="/portal/payslip/:slipId" element={<PortalProtected><PortalPayslip /></PortalProtected>} />
+            <Route path="/portal/leave" element={<PortalProtected><PortalLeave /></PortalProtected>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

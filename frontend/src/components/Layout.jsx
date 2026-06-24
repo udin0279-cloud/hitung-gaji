@@ -1,18 +1,37 @@
+import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Users, Calculator, Settings as SettingsIcon, LogOut, Square, Gift } from "lucide-react";
+import { LayoutDashboard, Users, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { api } from "../lib/api";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
   { to: "/employees", label: "Karyawan", icon: Users, testId: "nav-employees" },
   { to: "/payroll", label: "Payroll", icon: Calculator, testId: "nav-payroll" },
   { to: "/thr", label: "THR", icon: Gift, testId: "nav-thr" },
+  { to: "/leave", label: "Izin & Cuti", icon: CalendarDays, testId: "nav-leave", badgeKey: "pending" },
   { to: "/settings", label: "Konfigurasi", icon: SettingsIcon, testId: "nav-settings" },
 ];
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [pendingLeaves, setPendingLeaves] = useState(0);
+
+  const loadStats = async () => {
+    try {
+      const { data } = await api.get("/leave/stats");
+      setPendingLeaves(data.pending || 0);
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    loadStats();
+    const t = setInterval(loadStats, 60000);
+    return () => clearInterval(t);
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -38,6 +57,7 @@ export default function Layout() {
         <nav className="flex-1 py-4">
           {navItems.map((item) => {
             const Icon = item.icon;
+            const badgeCount = item.badgeKey === "pending" ? pendingLeaves : 0;
             return (
               <NavLink
                 key={item.to}
@@ -53,7 +73,15 @@ export default function Layout() {
                 }
               >
                 <Icon className="w-4 h-4" strokeWidth={2} />
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {badgeCount > 0 && (
+                  <span
+                    data-testid={`badge-${item.testId}`}
+                    className="bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5 min-w-[18px] text-center leading-none rounded-sm"
+                  >
+                    {badgeCount}
+                  </span>
+                )}
               </NavLink>
             );
           })}

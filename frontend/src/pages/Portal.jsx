@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, Link, useParams } from "react-router-dom";
 import { api, formatIDR, API } from "../lib/api";
 import { usePortalAuth } from "../context/PortalAuthContext";
-import { LogOut, Square, Download, FileText, Gift, ChevronLeft, Printer, Receipt } from "lucide-react";
+import { LogOut, Square, Download, FileText, Gift, ChevronLeft, Printer, Receipt, CalendarDays } from "lucide-react";
 
 export function PortalDashboard() {
   const { employee, logout } = usePortalAuth();
@@ -79,6 +79,15 @@ export function PortalDashboard() {
               <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">NIK</div>
               <div className="font-mono text-lg text-zinc-900">{employee.nik}</div>
             </div>
+          </div>
+          <div className="mt-6 pt-6 border-t border-zinc-200 flex flex-wrap gap-2">
+            <Link
+              data-testid="link-portal-leave"
+              to="/portal/leave"
+              className="inline-flex items-center gap-2 bg-[#002FA7] text-white px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-[#002FA7]/90"
+            >
+              <CalendarDays className="w-3.5 h-3.5" /> Ajukan Cuti & Izin
+            </Link>
           </div>
         </div>
 
