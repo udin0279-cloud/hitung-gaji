@@ -119,11 +119,32 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
             raise HTTPException(status_code=401, detail="User not found")
         user.pop("_id", None)
         user.pop("password_hash", None)
+        # Backwards compatibility: legacy "admin" role acts as super_admin
+        if user.get("role") == "admin":
+            user["role"] = "super_admin"
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# Role-based access helpers
+ROLE_SUPER_ADMIN = "super_admin"
+ROLE_HR_LEAVE = "hr_leave"
+VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_HR_LEAVE}
+
+
+async def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != ROLE_SUPER_ADMIN:
+        raise HTTPException(status_code=403, detail="Akses ditolak: Super Admin only")
+    return user
+
+
+async def require_leave_access(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") not in {ROLE_SUPER_ADMIN, ROLE_HR_LEAVE}:
+        raise HTTPException(status_code=403, detail="Akses ditolak")
+    return user
 
 
 # ---------------- Models ----------------
@@ -732,7 +753,7 @@ async def portal_bukti_potong(year: int, emp: dict = Depends(get_current_employe
 
 # Admin can also download bukti potong for any employee
 @api_router.get("/payroll/bukti-potong/{employee_id}/{year}/pdf")
-async def admin_bukti_potong(employee_id: str, year: int, user: dict = Depends(get_current_user)):
+async def admin_bukti_potong(employee_id: str, year: int, user: dict = Depends(require_super_admin)):
     emp = await db.employees.find_one({"id": employee_id}, {"_id": 0})
     if not emp:
         raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
@@ -866,14 +887,14 @@ async def portal_magic_login(token: str, response: Response):
 
 # ---------------- Employee Endpoints (Admin) ----------------
 @api_router.get("/employees")
-async def list_employees(user: dict = Depends(get_current_user)):
+async def list_employees(user: dict = Depends(require_super_admin)):
     cursor = db.employees.find({}, {"_id": 0}).sort("created_at", -1)
     items = await cursor.to_list(length=2000)
     return items
 
 
 @api_router.post("/employees")
-async def create_employee(payload: EmployeeIn, user: dict = Depends(get_current_user)):
+async def create_employee(payload: EmployeeIn, user: dict = Depends(require_super_admin)):
     if await db.employees.find_one({"nik": payload.nik}):
         raise HTTPException(status_code=400, detail="NIK sudah terdaftar")
     doc = payload.model_dump()
@@ -885,7 +906,7 @@ async def create_employee(payload: EmployeeIn, user: dict = Depends(get_current_
 
 
 @api_router.get("/employees/{employee_id}")
-async def get_employee(employee_id: str, user: dict = Depends(get_current_user)):
+async def get_employee(employee_id: str, user: dict = Depends(require_super_admin)):
     emp = await db.employees.find_one({"id": employee_id}, {"_id": 0})
     if not emp:
         raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
@@ -893,7 +914,7 @@ async def get_employee(employee_id: str, user: dict = Depends(get_current_user))
 
 
 @api_router.put("/employees/{employee_id}")
-async def update_employee(employee_id: str, payload: EmployeeIn, user: dict = Depends(get_current_user)):
+async def update_employee(employee_id: str, payload: EmployeeIn, user: dict = Depends(require_super_admin)):
     emp = await db.employees.find_one({"id": employee_id})
     if not emp:
         raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
@@ -908,7 +929,7 @@ async def update_employee(employee_id: str, payload: EmployeeIn, user: dict = De
 
 
 @api_router.delete("/employees/{employee_id}")
-async def delete_employee(employee_id: str, user: dict = Depends(get_current_user)):
+async def delete_employee(employee_id: str, user: dict = Depends(require_super_admin)):
     res = await db.employees.delete_one({"id": employee_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
@@ -917,7 +938,7 @@ async def delete_employee(employee_id: str, user: dict = Depends(get_current_use
 
 # ---------------- Payroll Endpoints ----------------
 @api_router.post("/payroll/preview")
-async def preview_payroll(payload: PayrollRunIn, user: dict = Depends(get_current_user)):
+async def preview_payroll(payload: PayrollRunIn, user: dict = Depends(require_super_admin)):
     employees = await db.employees.find({"active": True}, {"_id": 0}).to_list(length=2000)
     slips = []
     for emp in employees:
@@ -946,7 +967,7 @@ async def preview_payroll(payload: PayrollRunIn, user: dict = Depends(get_curren
 
 
 @api_router.post("/payroll/run")
-async def run_payroll(payload: PayrollRunIn, user: dict = Depends(get_current_user)):
+async def run_payroll(payload: PayrollRunIn, user: dict = Depends(require_super_admin)):
     existing = await db.payroll_runs.find_one({"period": payload.period})
     if existing:
         # overwrite previous run for same period
@@ -1012,13 +1033,13 @@ async def run_payroll(payload: PayrollRunIn, user: dict = Depends(get_current_us
 
 
 @api_router.get("/payroll/runs")
-async def list_runs(user: dict = Depends(get_current_user)):
+async def list_runs(user: dict = Depends(require_super_admin)):
     runs = await db.payroll_runs.find({}, {"_id": 0}).sort("period", -1).to_list(length=500)
     return runs
 
 
 @api_router.get("/payroll/runs/{period}/slips")
-async def list_run_slips(period: str, user: dict = Depends(get_current_user)):
+async def list_run_slips(period: str, user: dict = Depends(require_super_admin)):
     slips = await db.payslips.find({"period": period}, {"_id": 0}).sort("name", 1).to_list(length=2000)
     if not slips:
         raise HTTPException(status_code=404, detail="Payroll untuk periode ini belum dijalankan")
@@ -1026,7 +1047,7 @@ async def list_run_slips(period: str, user: dict = Depends(get_current_user)):
 
 
 @api_router.get("/payroll/payslip/{slip_id}")
-async def get_payslip(slip_id: str, user: dict = Depends(get_current_user)):
+async def get_payslip(slip_id: str, user: dict = Depends(require_super_admin)):
     slip = await db.payslips.find_one({"id": slip_id}, {"_id": 0})
     if not slip:
         raise HTTPException(status_code=404, detail="Slip gaji tidak ditemukan")
@@ -1034,7 +1055,7 @@ async def get_payslip(slip_id: str, user: dict = Depends(get_current_user)):
 
 
 @api_router.delete("/payroll/runs/{period}")
-async def delete_run(period: str, user: dict = Depends(get_current_user)):
+async def delete_run(period: str, user: dict = Depends(require_super_admin)):
     await db.payroll_runs.delete_one({"period": period})
     await db.payslips.delete_many({"period": period})
     return {"ok": True}
@@ -1199,7 +1220,7 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
 
 
 @api_router.get("/payroll/payslip/{slip_id}/pdf")
-async def export_payslip_pdf(slip_id: str, user: dict = Depends(get_current_user)):
+async def export_payslip_pdf(slip_id: str, user: dict = Depends(require_super_admin)):
     slip = await db.payslips.find_one({"id": slip_id}, {"_id": 0})
     if not slip:
         raise HTTPException(status_code=404, detail="Slip gaji tidak ditemukan")
@@ -1227,7 +1248,7 @@ def _parse_bool(v: str, default: bool = True) -> bool:
 
 
 @api_router.get("/employees-template.csv")
-async def employee_template(user: dict = Depends(get_current_user)):
+async def employee_template(user: dict = Depends(require_super_admin)):
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(EMPLOYEE_CSV_HEADERS)
@@ -1246,7 +1267,7 @@ async def employee_template(user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/employees-import")
-async def employees_import(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+async def employees_import(file: UploadFile = File(...), user: dict = Depends(require_super_admin)):
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="File harus berformat .csv")
     raw = await file.read()
@@ -1335,7 +1356,7 @@ def _find_col(cols, candidates):
 async def attendance_import(
     period: str,
     file: UploadFile = File(...),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_super_admin),
 ):
     """Import fingerprint export (xlsx/xls/csv).
 
@@ -1476,7 +1497,7 @@ async def attendance_import(
 
 
 @api_router.get("/attendance/{period}")
-async def get_attendance(period: str, user: dict = Depends(get_current_user)):
+async def get_attendance(period: str, user: dict = Depends(require_super_admin)):
     rec = await db.attendance_imports.find_one({"period": period}, {"_id": 0})
     if not rec:
         return {"period": period, "summary": {}, "matched_employees": 0, "total_scans": 0, "unmatched_niks": []}
@@ -1485,7 +1506,7 @@ async def get_attendance(period: str, user: dict = Depends(get_current_user)):
 
 # ---------------- Dashboard ----------------
 @api_router.get("/dashboard/stats")
-async def dashboard_stats(user: dict = Depends(get_current_user)):
+async def dashboard_stats(user: dict = Depends(require_super_admin)):
     total_employees = await db.employees.count_documents({"active": True})
     runs = await db.payroll_runs.find({}, {"_id": 0}).sort("period", -1).to_list(length=12)
     latest = runs[0] if runs else None
@@ -1503,7 +1524,7 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
 
 # ---------------- Config ----------------
 @api_router.get("/config/constants")
-async def config_constants(user: dict = Depends(get_current_user)):
+async def config_constants(user: dict = Depends(require_super_admin)):
     return {
         "ptkp_table": CONFIG["ptkp_table"],
         "pph21_brackets": [{"limit": b[0], "rate": b[1]} for b in CONFIG["pph21_brackets"]],
@@ -1546,7 +1567,7 @@ class ConfigUpdateIn(BaseModel):
 
 
 @api_router.put("/config/constants")
-async def update_config(payload: ConfigUpdateIn, user: dict = Depends(get_current_user)):
+async def update_config(payload: ConfigUpdateIn, user: dict = Depends(require_super_admin)):
     update = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not update:
         return {"updated": 0}
@@ -1634,7 +1655,7 @@ def _calculate_thr(employee: Dict[str, Any], reference_dt: datetime) -> Dict[str
 
 
 @api_router.post("/payroll/thr/preview")
-async def thr_preview(payload: THRRunIn, user: dict = Depends(get_current_user)):
+async def thr_preview(payload: THRRunIn, user: dict = Depends(require_super_admin)):
     try:
         ref = datetime.strptime(payload.period + "-01", "%Y-%m-%d")
     except Exception:
@@ -1671,7 +1692,7 @@ async def thr_preview(payload: THRRunIn, user: dict = Depends(get_current_user))
 
 
 @api_router.post("/payroll/thr/run")
-async def thr_run(payload: THRRunIn, user: dict = Depends(get_current_user)):
+async def thr_run(payload: THRRunIn, user: dict = Depends(require_super_admin)):
     try:
         ref = datetime.strptime(payload.period + "-01", "%Y-%m-%d")
     except Exception:
@@ -1722,12 +1743,12 @@ async def thr_run(payload: THRRunIn, user: dict = Depends(get_current_user)):
 
 
 @api_router.get("/payroll/thr/runs")
-async def list_thr_runs(user: dict = Depends(get_current_user)):
+async def list_thr_runs(user: dict = Depends(require_super_admin)):
     return await db.thr_runs.find({}, {"_id": 0}).sort("period", -1).to_list(length=200)
 
 
 @api_router.get("/payroll/thr/{period}/slips")
-async def thr_slips(period: str, user: dict = Depends(get_current_user)):
+async def thr_slips(period: str, user: dict = Depends(require_super_admin)):
     rows = await db.thr_slips.find({"period": period}, {"_id": 0}).sort("name", 1).to_list(length=2000)
     if not rows:
         raise HTTPException(status_code=404, detail="THR untuk periode ini belum dijalankan")
@@ -1817,7 +1838,7 @@ def _send_simple_email(to_email: str, subject: str, html: str) -> Dict[str, Any]
 
 
 @api_router.post("/payroll/payslip/{slip_id}/email")
-async def email_single_payslip(slip_id: str, user: dict = Depends(get_current_user)):
+async def email_single_payslip(slip_id: str, user: dict = Depends(require_super_admin)):
     slip = await db.payslips.find_one({"id": slip_id}, {"_id": 0})
     if not slip:
         raise HTTPException(status_code=404, detail="Slip tidak ditemukan")
@@ -1843,7 +1864,7 @@ async def email_single_payslip(slip_id: str, user: dict = Depends(get_current_us
 
 
 @api_router.post("/payroll/runs/{period}/email-all")
-async def email_all_payslips(period: str, user: dict = Depends(get_current_user)):
+async def email_all_payslips(period: str, user: dict = Depends(require_super_admin)):
     slips = await db.payslips.find({"period": period}, {"_id": 0}).to_list(length=2000)
     if not slips:
         raise HTTPException(status_code=404, detail="Tidak ada slip untuk periode ini")
@@ -1934,7 +1955,7 @@ def _format_bank_export(slips: List[Dict[str, Any]], emp_by_id: Dict[str, Dict[s
 
 
 @api_router.get("/payroll/runs/{period}/bank-export")
-async def bank_export(period: str, format: str = "generic", user: dict = Depends(get_current_user)):
+async def bank_export(period: str, format: str = "generic", user: dict = Depends(require_super_admin)):
     fmt = format.lower()
     if fmt not in {"generic", "bca", "mandiri", "bni", "bri"}:
         raise HTTPException(status_code=400, detail="Format tidak valid")
@@ -1976,7 +1997,7 @@ def _json_default(o):
 
 
 @api_router.get("/admin/export-database")
-async def export_database(user: dict = Depends(get_current_user)):
+async def export_database(user: dict = Depends(require_super_admin)):
     """Download a full JSON backup of all collections (admin only)."""
     import json as _json
 
@@ -2007,7 +2028,7 @@ async def export_database(user: dict = Depends(get_current_user)):
 async def import_database(
     file: UploadFile = File(...),
     mode: str = "merge",  # 'replace' or 'merge' (default: safer 'merge')
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_super_admin),
 ):
     """Restore database from a JSON backup created via export-database.
     mode='replace': drop existing data in each collection then insert from backup.
@@ -2130,7 +2151,7 @@ async def _send_whatsapp(phone: str, message: str) -> Dict[str, Any]:
 
 
 @api_router.post("/payroll/payslip/{slip_id}/whatsapp")
-async def whatsapp_single_payslip(slip_id: str, user: dict = Depends(get_current_user)):
+async def whatsapp_single_payslip(slip_id: str, user: dict = Depends(require_super_admin)):
     slip = await db.payslips.find_one({"id": slip_id}, {"_id": 0})
     if not slip:
         raise HTTPException(status_code=404, detail="Slip tidak ditemukan")
@@ -2153,7 +2174,7 @@ async def whatsapp_single_payslip(slip_id: str, user: dict = Depends(get_current
 
 
 @api_router.post("/payroll/runs/{period}/whatsapp-all")
-async def whatsapp_all_payslips(period: str, user: dict = Depends(get_current_user)):
+async def whatsapp_all_payslips(period: str, user: dict = Depends(require_super_admin)):
     slips = await db.payslips.find({"period": period}, {"_id": 0}).to_list(length=2000)
     if not slips:
         raise HTTPException(status_code=404, detail="Tidak ada slip untuk periode ini")
@@ -2194,7 +2215,7 @@ async def whatsapp_all_payslips(period: str, user: dict = Depends(get_current_us
 
 
 @api_router.get("/admin/whatsapp/status")
-async def whatsapp_status(user: dict = Depends(get_current_user)):
+async def whatsapp_status(user: dict = Depends(require_super_admin)):
     has_token = bool(os.environ.get("FONNTE_TOKEN", "").strip())
     return {
         "configured": has_token,
@@ -2368,7 +2389,7 @@ async def portal_leave_attachment(leave_id: str, emp: dict = Depends(get_current
 async def admin_leave_list(
     status: Optional[str] = None,
     type: Optional[str] = None,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_leave_access),
 ):
     q: Dict[str, Any] = {}
     if status:
@@ -2380,7 +2401,7 @@ async def admin_leave_list(
 
 
 @api_router.get("/leave/stats")
-async def admin_leave_stats(user: dict = Depends(get_current_user)):
+async def admin_leave_stats(user: dict = Depends(require_leave_access)):
     pending = await db.leave_requests.count_documents({"status": "pending"})
     approved = await db.leave_requests.count_documents({"status": "approved"})
     rejected = await db.leave_requests.count_documents({"status": "rejected"})
@@ -2388,7 +2409,7 @@ async def admin_leave_stats(user: dict = Depends(get_current_user)):
 
 
 @api_router.get("/leave/{leave_id}")
-async def admin_leave_detail(leave_id: str, user: dict = Depends(get_current_user)):
+async def admin_leave_detail(leave_id: str, user: dict = Depends(require_leave_access)):
     doc = await db.leave_requests.find_one({"id": leave_id}, {"_id": 0, "attachment.data_base64": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
@@ -2396,7 +2417,7 @@ async def admin_leave_detail(leave_id: str, user: dict = Depends(get_current_use
 
 
 @api_router.get("/leave/{leave_id}/attachment")
-async def admin_leave_attachment(leave_id: str, user: dict = Depends(get_current_user)):
+async def admin_leave_attachment(leave_id: str, user: dict = Depends(require_leave_access)):
     doc = await db.leave_requests.find_one({"id": leave_id})
     if not doc or not doc.get("attachment"):
         raise HTTPException(status_code=404, detail="Lampiran tidak ditemukan")
@@ -2414,7 +2435,7 @@ class LeaveReviewIn(BaseModel):
 
 
 @api_router.put("/leave/{leave_id}/approve")
-async def admin_leave_approve(leave_id: str, payload: LeaveReviewIn, user: dict = Depends(get_current_user)):
+async def admin_leave_approve(leave_id: str, payload: LeaveReviewIn, user: dict = Depends(require_leave_access)):
     doc = await db.leave_requests.find_one({"id": leave_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
@@ -2433,7 +2454,7 @@ async def admin_leave_approve(leave_id: str, payload: LeaveReviewIn, user: dict 
 
 
 @api_router.put("/leave/{leave_id}/reject")
-async def admin_leave_reject(leave_id: str, payload: LeaveReviewIn, user: dict = Depends(get_current_user)):
+async def admin_leave_reject(leave_id: str, payload: LeaveReviewIn, user: dict = Depends(require_leave_access)):
     doc = await db.leave_requests.find_one({"id": leave_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
@@ -2517,7 +2538,7 @@ async def _fetch_monthly_leave(period: str):
 
 
 @api_router.get("/leave/report/{period}/excel")
-async def leave_report_excel(period: str, user: dict = Depends(get_current_user)):
+async def leave_report_excel(period: str, user: dict = Depends(require_leave_access)):
     items, start, end, year, month = await _fetch_monthly_leave(period)
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -2606,7 +2627,7 @@ async def leave_report_excel(period: str, user: dict = Depends(get_current_user)
 
 
 @api_router.get("/leave/report/{period}/pdf")
-async def leave_report_pdf(period: str, user: dict = Depends(get_current_user)):
+async def leave_report_pdf(period: str, user: dict = Depends(require_leave_access)):
     items, start, end, year, month = await _fetch_monthly_leave(period)
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
@@ -2731,6 +2752,103 @@ async def leave_report_pdf(period: str, user: dict = Depends(get_current_user)):
 STATUS_LABEL_MAP = {"pending": "Menunggu", "approved": "Disetujui", "rejected": "Ditolak"}
 
 
+# ---------------- User Management (Super Admin only) ----------------
+class UserCreateIn(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+    role: str  # "super_admin" or "hr_leave"
+
+
+class UserUpdateIn(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    password: Optional[str] = None
+
+
+def _user_view(u: dict) -> dict:
+    role = u.get("role")
+    if role == "admin":
+        role = ROLE_SUPER_ADMIN
+    return {
+        "id": u["id"],
+        "email": u["email"],
+        "name": u.get("name", ""),
+        "role": role,
+        "created_at": u.get("created_at"),
+    }
+
+
+@api_router.get("/users")
+async def list_users(user: dict = Depends(require_super_admin)):
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", 1).to_list(length=500)
+    return [_user_view(u) for u in users]
+
+
+@api_router.post("/users")
+async def create_user(payload: UserCreateIn, user: dict = Depends(require_super_admin)):
+    if payload.role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail=f"Role tidak valid. Pilihan: {', '.join(sorted(VALID_ROLES))}")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
+    email = payload.email.lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email sudah terdaftar")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "name": payload.name.strip(),
+        "password_hash": hash_password(payload.password),
+        "role": payload.role,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(doc)
+    return _user_view(doc)
+
+
+@api_router.put("/users/{user_id}")
+async def update_user(user_id: str, payload: UserUpdateIn, user: dict = Depends(require_super_admin)):
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    update: Dict[str, Any] = {}
+    if payload.name is not None:
+        update["name"] = payload.name.strip()
+    if payload.role is not None:
+        if payload.role not in VALID_ROLES:
+            raise HTTPException(status_code=400, detail="Role tidak valid")
+        # Prevent demoting the last super_admin
+        if target.get("role") in {ROLE_SUPER_ADMIN, "admin"} and payload.role != ROLE_SUPER_ADMIN:
+            super_admins = await db.users.count_documents({"role": {"$in": [ROLE_SUPER_ADMIN, "admin"]}})
+            if super_admins <= 1:
+                raise HTTPException(status_code=400, detail="Tidak dapat mengubah role: minimal harus ada 1 Super Admin")
+        update["role"] = payload.role
+    if payload.password:
+        if len(payload.password) < 6:
+            raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
+        update["password_hash"] = hash_password(payload.password)
+    if update:
+        await db.users.update_one({"id": user_id}, {"$set": update})
+    updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return _user_view(updated)
+
+
+@api_router.delete("/users/{user_id}")
+async def delete_user(user_id: str, user: dict = Depends(require_super_admin)):
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    if target["id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="Tidak dapat menghapus akun sendiri")
+    if target.get("role") in {ROLE_SUPER_ADMIN, "admin"}:
+        super_admins = await db.users.count_documents({"role": {"$in": [ROLE_SUPER_ADMIN, "admin"]}})
+        if super_admins <= 1:
+            raise HTTPException(status_code=400, detail="Tidak dapat menghapus: minimal harus ada 1 Super Admin")
+    await db.users.delete_one({"id": user_id})
+    return {"ok": True}
+
+
 # ---------------- Health ----------------
 @api_router.get("/")
 async def root():
@@ -2763,16 +2881,21 @@ async def startup():
             "email": admin_email,
             "password_hash": hash_password(admin_password),
             "name": "Admin HR",
-            "role": "admin",
+            "role": ROLE_SUPER_ADMIN,
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
-        logger.info(f"Seeded admin user: {admin_email}")
+        logger.info(f"Seeded super admin user: {admin_email}")
     elif not verify_password(admin_password, existing["password_hash"]):
         await db.users.update_one(
             {"email": admin_email},
             {"$set": {"password_hash": hash_password(admin_password)}},
         )
         logger.info("Updated admin password from .env")
+
+    # Migrate legacy "admin" role -> "super_admin"
+    migrated = await db.users.update_many({"role": "admin"}, {"$set": {"role": ROLE_SUPER_ADMIN}})
+    if migrated.modified_count:
+        logger.info(f"Migrated {migrated.modified_count} legacy 'admin' role(s) to '{ROLE_SUPER_ADMIN}'")
 
 
 @app.on_event("shutdown")

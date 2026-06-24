@@ -12,6 +12,7 @@ import Payslip from "@/pages/Payslip";
 import THR from "@/pages/THR";
 import Settings from "@/pages/Settings";
 import LeaveAdmin from "@/pages/LeaveAdmin";
+import Users from "@/pages/Users";
 import Layout from "@/components/Layout";
 import PortalLogin from "@/pages/PortalLogin";
 import PortalForgot from "@/pages/PortalForgot";
@@ -19,11 +20,23 @@ import PortalMagicLogin from "@/pages/PortalMagicLogin";
 import { PortalDashboard, PortalPayslip } from "@/pages/Portal";
 import PortalLeave from "@/pages/PortalLeave";
 
-function ProtectedRoute({ children }) {
+function ProtectedRoute({ children, allowedRoles }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center text-zinc-400 font-mono text-sm">Memuat…</div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    // Redirect role to their primary screen
+    return <Navigate to={user.role === "hr_leave" ? "/leave" : "/"} replace />;
+  }
   return children;
+}
+
+function HomeRedirect() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-zinc-400 font-mono text-sm">Memuat…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role === "hr_leave") return <Navigate to="/leave" replace />;
+  return <Dashboard />;
 }
 
 function PortalProtected({ children }) {
@@ -43,14 +56,15 @@ function App() {
             {/* Admin */}
             <Route path="/login" element={<Login />} />
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/employees" element={<Employees />} />
-              <Route path="/payroll" element={<Payroll />} />
-              <Route path="/payroll/:period" element={<PayrollDetail />} />
-              <Route path="/payslip/:slipId" element={<Payslip />} />
-              <Route path="/thr" element={<THR />} />
-              <Route path="/leave" element={<LeaveAdmin />} />
-              <Route path="/settings" element={<Settings />} />
+              <Route path="/" element={<HomeRedirect />} />
+              <Route path="/employees" element={<ProtectedRoute allowedRoles={["super_admin"]}><Employees /></ProtectedRoute>} />
+              <Route path="/payroll" element={<ProtectedRoute allowedRoles={["super_admin"]}><Payroll /></ProtectedRoute>} />
+              <Route path="/payroll/:period" element={<ProtectedRoute allowedRoles={["super_admin"]}><PayrollDetail /></ProtectedRoute>} />
+              <Route path="/payslip/:slipId" element={<ProtectedRoute allowedRoles={["super_admin"]}><Payslip /></ProtectedRoute>} />
+              <Route path="/thr" element={<ProtectedRoute allowedRoles={["super_admin"]}><THR /></ProtectedRoute>} />
+              <Route path="/leave" element={<ProtectedRoute allowedRoles={["super_admin", "hr_leave"]}><LeaveAdmin /></ProtectedRoute>} />
+              <Route path="/users" element={<ProtectedRoute allowedRoles={["super_admin"]}><Users /></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute allowedRoles={["super_admin"]}><Settings /></ProtectedRoute>} />
             </Route>
 
             {/* Employee Portal */}
