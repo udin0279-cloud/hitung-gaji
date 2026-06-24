@@ -82,3 +82,36 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 ## Next Action Items
 - User to test the live demo and provide feedback
 - If feedback positive: prioritize PDF export + CSV bulk import (highest HR pain points)
+
+---
+## Update: 2026-02 — Leave & Permission Module
+
+### Implemented
+- 4 leave types: Datang Terlambat, Pulang Awal, Tidak Masuk, Sakit
+- Employee Portal page `/portal/leave` with submit form + history
+- HR Admin page `/leave` with stats, filters (status/type), approve/reject modal
+- Sidebar nav badge with live pending count (polls /api/leave/stats every 60s)
+- Optional file upload (PDF/JPG/PNG, max 2MB) stored as base64 in MongoDB
+- Email notifications: HR gets new request alert; Employee gets approval/rejection status (via existing Resend)
+- HR manual deduction during payroll (no auto-deduct from approved leaves)
+
+### API Endpoints
+- POST/GET/DELETE `/api/portal/leave`
+- GET `/api/portal/leave/{id}/attachment`
+- GET `/api/leave?status=&type=`, GET `/api/leave/stats`, GET `/api/leave/{id}`
+- PUT `/api/leave/{id}/approve`, PUT `/api/leave/{id}/reject` (requires hr_note)
+- GET `/api/leave/{id}/attachment` (admin)
+
+### Files Changed
+- backend/server.py — added Leave module section + _send_simple_email helper
+- frontend/src/pages/PortalLeave.jsx (new)
+- frontend/src/pages/LeaveAdmin.jsx (new)
+- frontend/src/components/Layout.jsx (nav + badge)
+- frontend/src/App.js (routes)
+- frontend/src/pages/Portal.jsx (link to portal/leave)
+
+### Backlog (deferred)
+- Cuti Tahunan with annual quota tracking
+- Auto-deduct from payroll based on approved leaves
+- 2-level approval (manager → HR)
+- WhatsApp notification (in addition to email)
