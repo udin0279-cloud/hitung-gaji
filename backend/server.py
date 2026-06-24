@@ -435,7 +435,10 @@ async def portal_me(emp: dict = Depends(get_current_employee)):
 
 @api_router.get("/portal/payslips")
 async def portal_payslips(emp: dict = Depends(get_current_employee)):
-    slips = await db.payslips.find({"employee_id": emp["id"]}, {"_id": 0}).sort("period", -1).to_list(length=240)
+    slips = await db.payslips.find(
+        {"employee_id": emp["id"]},
+        {"_id": 0, "id": 1, "period": 1, "net_salary": 1, "earnings.gross": 1, "deductions.pph21": 1},
+    ).sort("period", -1).to_list(length=240)
     return [
         {
             "id": s["id"],
