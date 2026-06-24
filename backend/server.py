@@ -1963,6 +1963,7 @@ BACKUP_COLLECTIONS = [
     "app_config",
     "email_logs",
     "portal_reset_tokens",
+    "leave_requests",
 ]
 
 
@@ -2490,6 +2491,244 @@ async def _send_leave_status_email(leave_doc: dict, status: str):
         _send_simple_email(emp["email"], f"[Payroll] Pengajuan Izin {label_status}", html)
     except Exception as ex:
         logger.warning(f"Failed to send leave status email: {ex}")
+
+
+# ----- Leave Monthly Report Export (Excel + PDF) -----
+def _parse_month(period: str):
+    """period format: YYYY-MM. Returns (start_date, end_date) as YYYY-MM-DD strings."""
+    try:
+        year, month = period.split("-")
+        year, month = int(year), int(month)
+        from calendar import monthrange
+        last_day = monthrange(year, month)[1]
+        return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last_day:02d}", year, month
+    except Exception:
+        raise HTTPException(status_code=400, detail="Format periode tidak valid (gunakan YYYY-MM)")
+
+
+async def _fetch_monthly_leave(period: str):
+    start, end, year, month = _parse_month(period)
+    # Get leaves where the request date range overlaps the month
+    items = await db.leave_requests.find(
+        {"date_start": {"$lte": end}, "date_end": {"$gte": start}},
+        {"_id": 0, "attachment.data_base64": 0},
+    ).sort([("date_start", 1), ("employee_name", 1)]).to_list(length=5000)
+    return items, start, end, year, month
+
+
+@api_router.get("/leave/report/{period}/excel")
+async def leave_report_excel(period: str, user: dict = Depends(get_current_user)):
+    items, start, end, year, month = await _fetch_monthly_leave(period)
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Laporan {period}"
+
+    # Title
+    ws["A1"] = f"LAPORAN IZIN KARYAWAN — Periode {period}"
+    ws["A1"].font = Font(bold=True, size=14, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor="002FA7")
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.merge_cells("A1:I1")
+    ws.row_dimensions[1].height = 28
+
+    ws["A2"] = f"Perusahaan: {os.environ.get('COMPANY_NAME', 'Payroll Indonesia')}"
+    ws["A2"].font = Font(italic=True, size=10, color="666666")
+    ws.merge_cells("A2:I2")
+
+    # Header row
+    headers = ["No", "NIK", "Nama", "Departemen", "Jenis Izin", "Tanggal Mulai", "Tanggal Selesai", "Durasi (menit)", "Alasan"]
+    header_row = 4
+    for col, h in enumerate(headers, start=1):
+        c = ws.cell(row=header_row, column=col, value=h)
+        c.font = Font(bold=True, color="FFFFFF", size=10)
+        c.fill = PatternFill("solid", fgColor="27272A")
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = Border(bottom=Side(style="thin", color="888888"))
+
+    # Status column added at the end
+    ws.cell(row=header_row, column=10, value="Status").font = Font(bold=True, color="FFFFFF", size=10)
+    ws.cell(row=header_row, column=10).fill = PatternFill("solid", fgColor="27272A")
+    ws.cell(row=header_row, column=10).alignment = Alignment(horizontal="center")
+    ws.cell(row=header_row, column=11, value="Catatan HR").font = Font(bold=True, color="FFFFFF", size=10)
+    ws.cell(row=header_row, column=11).fill = PatternFill("solid", fgColor="27272A")
+    ws.cell(row=header_row, column=11).alignment = Alignment(horizontal="center")
+
+    status_colors = {"pending": "FEF3C7", "approved": "D1FAE5", "rejected": "FEE2E2"}
+
+    for idx, x in enumerate(items, start=1):
+        row = header_row + idx
+        ws.cell(row=row, column=1, value=idx).alignment = Alignment(horizontal="center")
+        ws.cell(row=row, column=2, value=x.get("employee_nik") or "")
+        ws.cell(row=row, column=3, value=x.get("employee_name") or "")
+        ws.cell(row=row, column=4, value=x.get("department") or "")
+        ws.cell(row=row, column=5, value=LEAVE_TYPE_LABELS.get(x.get("type"), x.get("type")))
+        ws.cell(row=row, column=6, value=x.get("date_start"))
+        ws.cell(row=row, column=7, value=x.get("date_end"))
+        ws.cell(row=row, column=8, value=x.get("time_minutes") or "")
+        ws.cell(row=row, column=9, value=x.get("reason") or "")
+        status_cell = ws.cell(row=row, column=10, value=STATUS_LABEL_MAP.get(x.get("status"), x.get("status")))
+        status_cell.fill = PatternFill("solid", fgColor=status_colors.get(x.get("status"), "FFFFFF"))
+        status_cell.alignment = Alignment(horizontal="center")
+        status_cell.font = Font(bold=True, size=9)
+        ws.cell(row=row, column=11, value=x.get("hr_note") or "")
+
+    # Summary at the bottom
+    summary_row = header_row + len(items) + 2
+    pending = sum(1 for x in items if x.get("status") == "pending")
+    approved = sum(1 for x in items if x.get("status") == "approved")
+    rejected = sum(1 for x in items if x.get("status") == "rejected")
+    ws.cell(row=summary_row, column=1, value="RINGKASAN").font = Font(bold=True, size=11)
+    ws.cell(row=summary_row + 1, column=1, value="Total Pengajuan")
+    ws.cell(row=summary_row + 1, column=2, value=len(items)).font = Font(bold=True)
+    ws.cell(row=summary_row + 2, column=1, value="Menunggu")
+    ws.cell(row=summary_row + 2, column=2, value=pending)
+    ws.cell(row=summary_row + 3, column=1, value="Disetujui")
+    ws.cell(row=summary_row + 3, column=2, value=approved)
+    ws.cell(row=summary_row + 4, column=1, value="Ditolak")
+    ws.cell(row=summary_row + 4, column=2, value=rejected)
+
+    # Column widths
+    widths = [5, 14, 24, 18, 20, 14, 14, 12, 36, 12, 28]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="laporan-izin-{period}.xlsx"'},
+    )
+
+
+@api_router.get("/leave/report/{period}/pdf")
+async def leave_report_pdf(period: str, user: dict = Depends(get_current_user)):
+    items, start, end, year, month = await _fetch_monthly_leave(period)
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=15 * mm, rightMargin=15 * mm, topMargin=15 * mm, bottomMargin=15 * mm)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("Title", parent=styles["Title"], fontSize=14, textColor=colors.HexColor("#002FA7"), spaceAfter=4)
+    sub_style = ParagraphStyle("Sub", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#666666"))
+    cell_style = ParagraphStyle("Cell", parent=styles["Normal"], fontSize=8, leading=10)
+
+    story = []
+    story.append(Paragraph("LAPORAN IZIN KARYAWAN", title_style))
+    story.append(Paragraph(f"Periode: <b>{period}</b> &nbsp;|&nbsp; Perusahaan: {os.environ.get('COMPANY_NAME', 'Payroll Indonesia')}", sub_style))
+    story.append(Paragraph(f"Dicetak: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", sub_style))
+    story.append(Spacer(1, 8))
+
+    # Table
+    table_data = [["No", "NIK", "Nama", "Departemen", "Jenis", "Tgl Mulai", "Tgl Selesai", "Menit", "Status", "Alasan / Catatan HR"]]
+    for idx, x in enumerate(items, start=1):
+        note_parts = []
+        if x.get("reason"):
+            note_parts.append(x["reason"])
+        if x.get("hr_note"):
+            note_parts.append(f"<i>HR: {x['hr_note']}</i>")
+        note_html = "<br/>".join(note_parts) or "-"
+        table_data.append([
+            str(idx),
+            x.get("employee_nik") or "",
+            Paragraph(x.get("employee_name") or "", cell_style),
+            x.get("department") or "",
+            LEAVE_TYPE_LABELS.get(x.get("type"), x.get("type")),
+            x.get("date_start") or "",
+            x.get("date_end") or "",
+            str(x.get("time_minutes") or ""),
+            STATUS_LABEL_MAP.get(x.get("status"), x.get("status")),
+            Paragraph(note_html, cell_style),
+        ])
+
+    col_widths = [10 * mm, 20 * mm, 38 * mm, 28 * mm, 32 * mm, 22 * mm, 22 * mm, 14 * mm, 22 * mm, 60 * mm]
+    table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#27272A")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("ALIGN", (5, 0), (8, -1), "CENTER"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FAFAFA")]),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CCCCCC")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ])
+    # Color status column
+    for ridx, x in enumerate(items, start=1):
+        st = x.get("status")
+        if st == "pending":
+            style.add("BACKGROUND", (8, ridx), (8, ridx), colors.HexColor("#FEF3C7"))
+        elif st == "approved":
+            style.add("BACKGROUND", (8, ridx), (8, ridx), colors.HexColor("#D1FAE5"))
+        elif st == "rejected":
+            style.add("BACKGROUND", (8, ridx), (8, ridx), colors.HexColor("#FEE2E2"))
+    table.setStyle(style)
+    story.append(table)
+
+    # Summary
+    pending = sum(1 for x in items if x.get("status") == "pending")
+    approved = sum(1 for x in items if x.get("status") == "approved")
+    rejected = sum(1 for x in items if x.get("status") == "rejected")
+    story.append(Spacer(1, 12))
+    summary_data = [
+        ["RINGKASAN", "", "", ""],
+        ["Total Pengajuan", str(len(items)), "Menunggu", str(pending)],
+        ["Disetujui", str(approved), "Ditolak", str(rejected)],
+    ]
+    summary_table = Table(summary_data, colWidths=[40 * mm, 25 * mm, 40 * mm, 25 * mm])
+    summary_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#002FA7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("SPAN", (0, 0), (3, 0)),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CCCCCC")),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(summary_table)
+
+    # Signature
+    story.append(Spacer(1, 30))
+    sig_data = [
+        ["Diketahui,", "", "Dibuat oleh,"],
+        ["", "", ""],
+        ["", "", ""],
+        ["(_______________________)", "", "(_______________________)"],
+        ["Direktur", "", "HR Department"],
+    ]
+    sig_table = Table(sig_data, colWidths=[80 * mm, 80 * mm, 80 * mm])
+    sig_table.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+    ]))
+    story.append(sig_table)
+
+    doc.build(story)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="laporan-izin-{period}.pdf"'},
+    )
+
+
+STATUS_LABEL_MAP = {"pending": "Menunggu", "approved": "Disetujui", "rejected": "Ditolak"}
 
 
 # ---------------- Health ----------------
