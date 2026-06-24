@@ -2225,12 +2225,13 @@ async def whatsapp_status(user: dict = Depends(require_super_admin)):
 
 
 # ---------------- Leave & Permission Module ----------------
-LEAVE_TYPES = {"terlambat", "pulang_awal", "tidak_masuk", "sakit"}
+LEAVE_TYPES = {"terlambat", "pulang_awal", "tidak_masuk", "sakit", "lembur"}
 LEAVE_TYPE_LABELS = {
     "terlambat": "Izin Datang Terlambat",
     "pulang_awal": "Izin Pulang Awal",
     "tidak_masuk": "Izin Tidak Masuk",
     "sakit": "Izin Sakit",
+    "lembur": "Izin Lembur",
 }
 MAX_ATTACHMENT_SIZE = 2 * 1024 * 1024  # 2 MB
 ALLOWED_ATTACHMENT_MIME = {"application/pdf", "image/jpeg", "image/jpg", "image/png"}
@@ -2248,6 +2249,8 @@ def _leave_view(doc: dict, include_attachment_meta: bool = True) -> dict:
         "date_start": doc["date_start"],
         "date_end": doc["date_end"],
         "time_minutes": doc.get("time_minutes"),
+        "time_start": doc.get("time_start"),
+        "time_end": doc.get("time_end"),
         "reason": doc.get("reason", ""),
         "status": doc.get("status", "pending"),
         "hr_note": doc.get("hr_note"),
@@ -2273,6 +2276,8 @@ async def portal_leave_create(
     date_start: str = Form(...),
     date_end: Optional[str] = Form(None),
     time_minutes: Optional[int] = Form(None),
+    time_start: Optional[str] = Form(None),
+    time_end: Optional[str] = Form(None),
     reason: str = Form(""),
     file: Optional[UploadFile] = File(None),
     emp: dict = Depends(get_current_employee),
@@ -2289,6 +2294,27 @@ async def portal_leave_create(
         if not time_minutes or time_minutes <= 0:
             raise HTTPException(status_code=400, detail="Durasi (menit) wajib diisi")
         end = date_start  # single day for these types
+
+    if type == "lembur":
+        if not time_start or not time_end:
+            raise HTTPException(status_code=400, detail="Jam mulai dan jam selesai wajib diisi")
+        try:
+            sh, sm = [int(x) for x in time_start.split(":")[:2]]
+            eh, em = [int(x) for x in time_end.split(":")[:2]]
+            start_m = sh * 60 + sm
+            end_m = eh * 60 + em
+            if end_m <= start_m:
+                # Allow next-day overtime (e.g. 22:00 → 02:00)
+                end_m += 24 * 60
+            duration = end_m - start_m
+            if duration <= 0 or duration > 16 * 60:
+                raise HTTPException(status_code=400, detail="Durasi lembur tidak valid (maks 16 jam)")
+            time_minutes = duration
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format jam tidak valid (gunakan HH:MM)")
+        end = date_start  # single day
 
     attachment = None
     if file is not None and file.filename:
@@ -2318,7 +2344,9 @@ async def portal_leave_create(
         "type": type,
         "date_start": date_start,
         "date_end": end,
-        "time_minutes": time_minutes if type in {"terlambat", "pulang_awal"} else None,
+        "time_minutes": time_minutes if type in {"terlambat", "pulang_awal", "lembur"} else None,
+        "time_start": time_start if type == "lembur" else None,
+        "time_end": time_end if type == "lembur" else None,
         "reason": reason.strip(),
         "attachment": attachment,
         "status": "pending",
@@ -2340,6 +2368,7 @@ async def portal_leave_create(
               <table style="border-collapse:collapse;width:100%;font-size:14px">
                 <tr><td style="padding:6px 0;color:#666">Jenis</td><td><b>{LEAVE_TYPE_LABELS.get(doc['type'])}</b></td></tr>
                 <tr><td style="padding:6px 0;color:#666">Tanggal</td><td>{doc['date_start']}{(' s/d ' + doc['date_end']) if doc['date_end'] != doc['date_start'] else ''}</td></tr>
+                {('<tr><td style=padding:6px;color:#666>Jam</td><td>' + str(doc.get('time_start', '')) + ' - ' + str(doc.get('time_end', '')) + '</td></tr>') if doc.get('time_start') else ''}
                 {('<tr><td style=padding:6px;color:#666>Durasi</td><td>' + str(doc['time_minutes']) + ' menit</td></tr>') if doc.get('time_minutes') else ''}
                 <tr><td style="padding:6px 0;color:#666">Alasan</td><td>{doc['reason']}</td></tr>
               </table>
@@ -2588,7 +2617,13 @@ async def leave_report_excel(period: str, user: dict = Depends(require_leave_acc
         ws.cell(row=row, column=5, value=LEAVE_TYPE_LABELS.get(x.get("type"), x.get("type")))
         ws.cell(row=row, column=6, value=x.get("date_start"))
         ws.cell(row=row, column=7, value=x.get("date_end"))
-        ws.cell(row=row, column=8, value=x.get("time_minutes") or "")
+        # Durasi cell: show "240 menit (18:00-22:00)" for lembur, else just minutes
+        dur_text = ""
+        if x.get("time_minutes"):
+            dur_text = f"{x['time_minutes']} menit"
+            if x.get("time_start") and x.get("time_end"):
+                dur_text += f" ({x['time_start']}-{x['time_end']})"
+        ws.cell(row=row, column=8, value=dur_text)
         ws.cell(row=row, column=9, value=x.get("reason") or "")
         status_cell = ws.cell(row=row, column=10, value=STATUS_LABEL_MAP.get(x.get("status"), x.get("status")))
         status_cell.fill = PatternFill("solid", fgColor=status_colors.get(x.get("status"), "FFFFFF"))
@@ -2649,7 +2684,7 @@ async def leave_report_pdf(period: str, user: dict = Depends(require_leave_acces
     story.append(Spacer(1, 8))
 
     # Table
-    table_data = [["No", "NIK", "Nama", "Departemen", "Jenis", "Tgl Mulai", "Tgl Selesai", "Menit", "Status", "Alasan / Catatan HR"]]
+    table_data = [["No", "NIK", "Nama", "Departemen", "Jenis", "Tgl Mulai", "Tgl Selesai", "Durasi", "Status", "Alasan / Catatan HR"]]
     for idx, x in enumerate(items, start=1):
         note_parts = []
         if x.get("reason"):
@@ -2657,6 +2692,12 @@ async def leave_report_pdf(period: str, user: dict = Depends(require_leave_acces
         if x.get("hr_note"):
             note_parts.append(f"<i>HR: {x['hr_note']}</i>")
         note_html = "<br/>".join(note_parts) or "-"
+        dur_text = ""
+        if x.get("time_minutes"):
+            if x.get("time_start") and x.get("time_end"):
+                dur_text = f"{x['time_start']}-{x['time_end']}<br/>{x['time_minutes']}m"
+            else:
+                dur_text = f"{x['time_minutes']}m"
         table_data.append([
             str(idx),
             x.get("employee_nik") or "",
@@ -2665,12 +2706,12 @@ async def leave_report_pdf(period: str, user: dict = Depends(require_leave_acces
             LEAVE_TYPE_LABELS.get(x.get("type"), x.get("type")),
             x.get("date_start") or "",
             x.get("date_end") or "",
-            str(x.get("time_minutes") or ""),
+            Paragraph(dur_text, cell_style),
             STATUS_LABEL_MAP.get(x.get("status"), x.get("status")),
             Paragraph(note_html, cell_style),
         ])
 
-    col_widths = [10 * mm, 20 * mm, 38 * mm, 28 * mm, 32 * mm, 22 * mm, 22 * mm, 14 * mm, 22 * mm, 60 * mm]
+    col_widths = [10 * mm, 20 * mm, 38 * mm, 28 * mm, 32 * mm, 22 * mm, 22 * mm, 22 * mm, 22 * mm, 52 * mm]
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
     style = TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#27272A")),

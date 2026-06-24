@@ -16,6 +16,7 @@ const TYPE_OPTIONS = [
   { value: "pulang_awal", label: "Pulang Awal" },
   { value: "tidak_masuk", label: "Tidak Masuk" },
   { value: "sakit", label: "Sakit" },
+  { value: "lembur", label: "Lembur" },
 ];
 
 export default function LeaveAdmin() {
@@ -153,7 +154,12 @@ export default function LeaveAdmin() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="text-zinc-900">{x.type_label}</div>
-                  {x.time_minutes ? <div className="text-[11px] text-zinc-500 font-mono">{x.time_minutes} menit</div> : null}
+                  {x.time_minutes && !x.time_start ? <div className="text-[11px] text-zinc-500 font-mono">{x.time_minutes} menit</div> : null}
+                  {x.time_start && x.time_end ? (
+                    <div className="text-[11px] text-zinc-500 font-mono">
+                      {x.time_start}–{x.time_end} ({Math.floor((x.time_minutes || 0) / 60)}j {(x.time_minutes || 0) % 60}m)
+                    </div>
+                  ) : null}
                 </td>
                 <td className="px-4 py-3 font-mono text-zinc-700 text-xs">
                   {x.date_start}

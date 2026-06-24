@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, API } from "../lib/api";
 import { usePortalAuth } from "../context/PortalAuthContext";
-import { LogOut, Square, ChevronLeft, Upload, X, Clock, CalendarOff, LogOut as LogOutIcon, Heart, Paperclip, Trash2 } from "lucide-react";
+import { LogOut, Square, ChevronLeft, Upload, X, Clock, CalendarOff, LogOut as LogOutIcon, Heart, Zap, Paperclip, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const LEAVE_TYPES = [
   { value: "terlambat", label: "Datang Terlambat", icon: Clock, desc: "Izin masuk lebih lambat dari jam kerja" },
   { value: "pulang_awal", label: "Pulang Awal", icon: LogOutIcon, desc: "Izin pulang lebih awal dari jam kerja" },
   { value: "tidak_masuk", label: "Tidak Masuk", icon: CalendarOff, desc: "Izin tidak hadir tanpa keterangan sakit" },
-  { value: "sakit", label: "Sakit", icon: Heart, desc: "Izin sakit (wajib lampirkan surat dokter)" },
+  { value: "sakit", label: "Sakit", icon: Heart, desc: "Izin sakit (disarankan lampirkan surat dokter)" },
+  { value: "lembur", label: "Lembur", icon: Zap, desc: "Pengajuan kerja lembur di luar jam kerja" },
 ];
 
 const STATUS_STYLE = {
@@ -122,7 +123,12 @@ export default function PortalLeave() {
                 <tr key={x.id} data-testid={`leave-row-${x.id}`} className="border-b border-zinc-100 hover:bg-zinc-50/80 align-top">
                   <td className="px-4 py-3">
                     <div className="font-semibold text-zinc-900">{x.type_label}</div>
-                    {x.time_minutes ? <div className="text-[11px] text-zinc-500 font-mono mt-0.5">{x.time_minutes} menit</div> : null}
+                    {x.time_minutes && !x.time_start ? <div className="text-[11px] text-zinc-500 font-mono mt-0.5">{x.time_minutes} menit</div> : null}
+                    {x.time_start && x.time_end ? (
+                      <div className="text-[11px] text-zinc-500 font-mono mt-0.5">
+                        {x.time_start}–{x.time_end} ({Math.floor((x.time_minutes || 0) / 60)}j {(x.time_minutes || 0) % 60}m)
+                      </div>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 font-mono text-zinc-700 text-xs">
                     {x.date_start}
@@ -179,21 +185,43 @@ function LeaveFormModal({ onClose, onSuccess }) {
   const [dateStart, setDateStart] = useState(new Date().toISOString().slice(0, 10));
   const [dateEnd, setDateEnd] = useState("");
   const [timeMinutes, setTimeMinutes] = useState(30);
+  const [timeStart, setTimeStart] = useState("18:00");
+  const [timeEnd, setTimeEnd] = useState("20:00");
   const [reason, setReason] = useState("");
   const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const singleDay = type === "terlambat" || type === "pulang_awal";
+  const isSimpleSingleDay = type === "terlambat" || type === "pulang_awal";
+  const isLembur = type === "lembur";
+  const singleDay = isSimpleSingleDay || isLembur;
+
+  const computedLemburMinutes = (() => {
+    if (!isLembur) return 0;
+    try {
+      const [sh, sm] = timeStart.split(":").map(Number);
+      const [eh, em] = timeEnd.split(":").map(Number);
+      let diff = (eh * 60 + em) - (sh * 60 + sm);
+      if (diff <= 0) diff += 24 * 60;
+      return diff;
+    } catch {
+      return 0;
+    }
+  })();
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!reason.trim()) { toast.error("Alasan wajib diisi"); return; }
+    if (!reason.trim()) { toast.error("Alasan / deskripsi wajib diisi"); return; }
+    if (isLembur && computedLemburMinutes <= 0) { toast.error("Jam selesai harus lebih besar dari jam mulai"); return; }
 
     const fd = new FormData();
     fd.append("type", type);
     fd.append("date_start", dateStart);
     if (!singleDay && dateEnd) fd.append("date_end", dateEnd);
-    if (singleDay) fd.append("time_minutes", String(timeMinutes));
+    if (isSimpleSingleDay) fd.append("time_minutes", String(timeMinutes));
+    if (isLembur) {
+      fd.append("time_start", timeStart);
+      fd.append("time_end", timeEnd);
+    }
     fd.append("reason", reason);
     if (file) fd.append("file", file);
 
@@ -274,7 +302,7 @@ function LeaveFormModal({ onClose, onSuccess }) {
                 />
               </div>
             )}
-            {singleDay && (
+            {isSimpleSingleDay && (
               <div>
                 <label className="block text-[11px] uppercase tracking-widest font-semibold text-zinc-600 mb-1.5">Durasi (menit)</label>
                 <input
@@ -291,16 +319,52 @@ function LeaveFormModal({ onClose, onSuccess }) {
             )}
           </div>
 
+          {isLembur && (
+            <div>
+              <label className="block text-[11px] uppercase tracking-widest font-semibold text-zinc-600 mb-1.5">Jam Lembur</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <input
+                    type="time"
+                    data-testid="leave-time-start"
+                    value={timeStart}
+                    onChange={(e) => setTimeStart(e.target.value)}
+                    required
+                    className="w-full border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+                  />
+                  <div className="text-[10px] text-zinc-500 mt-1 font-mono">Mulai</div>
+                </div>
+                <div>
+                  <input
+                    type="time"
+                    data-testid="leave-time-end"
+                    value={timeEnd}
+                    onChange={(e) => setTimeEnd(e.target.value)}
+                    required
+                    className="w-full border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+                  />
+                  <div className="text-[10px] text-zinc-500 mt-1 font-mono">Selesai</div>
+                </div>
+              </div>
+              <div className="mt-2 text-xs text-zinc-600 font-mono">
+                Durasi: <span className="font-semibold text-[#002FA7]">{Math.floor(computedLemburMinutes / 60)}j {computedLemburMinutes % 60}m</span>
+                {computedLemburMinutes > 0 && <span className="ml-2 text-zinc-400">({computedLemburMinutes} menit)</span>}
+              </div>
+            </div>
+          )}
+
           {/* Reason */}
           <div>
-            <label className="block text-[11px] uppercase tracking-widest font-semibold text-zinc-600 mb-1.5">Alasan</label>
+            <label className="block text-[11px] uppercase tracking-widest font-semibold text-zinc-600 mb-1.5">
+              {isLembur ? "Deskripsi Pekerjaan" : "Alasan"}
+            </label>
             <textarea
               data-testid="leave-reason"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
               required
-              placeholder="Jelaskan alasan pengajuan..."
+              placeholder={isLembur ? "Jelaskan pekerjaan yang akan dilembur..." : "Jelaskan alasan pengajuan..."}
               className="w-full border border-zinc-300 px-3 py-2 text-sm focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
             />
           </div>
