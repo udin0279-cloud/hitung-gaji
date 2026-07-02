@@ -303,9 +303,12 @@ export function PortalPayslip() {
           <div>
             <div className="text-[11px] uppercase tracking-widest font-bold text-[#008A00] pb-2 border-b border-zinc-300">Pendapatan</div>
             <Row label="Gaji Pokok" value={e.basic_salary} />
-            <Row label="Tunjangan" value={e.fixed_allowance} />
-            <Row label="Lembur" value={e.overtime} />
-            <Row label="Bonus" value={e.bonus} />
+            {e.fixed_allowance > 0 && <Row label="Tunjangan Tetap" value={e.fixed_allowance} />}
+            {e.tunjangan_jabatan > 0 && <Row label="Tj. Jabatan" value={e.tunjangan_jabatan} />}
+            {e.tunjangan_transport > 0 && <Row label="Tj. Transport" value={e.tunjangan_transport} />}
+            {e.tunjangan_lainnya > 0 && <Row label="Tj. Lain-lain" value={e.tunjangan_lainnya} />}
+            {e.overtime > 0 && <Row label="Lembur" value={e.overtime} />}
+            {e.bonus > 0 && <Row label="Bonus" value={e.bonus} />}
             <Row label="Total Bruto" value={e.gross} bold border />
           </div>
           <div>
@@ -314,6 +317,7 @@ export function PortalPayslip() {
             <Row label="JHT" value={d.jht_employee} />
             <Row label="JP" value={d.jp_employee} />
             <Row label="PPh 21" value={d.pph21} />
+            {d.loan > 0 && <Row label="Angsuran Pinjaman" value={d.loan} />}
             <Row label="Total Potongan" value={d.total} bold border />
           </div>
         </div>

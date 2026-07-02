@@ -1,0 +1,34 @@
+{
+  "summary": "Tested new payroll components (Tj. Jabatan/Transport/Lain-lain) + Loan tracking end-to-end. 10/10 backend pytest cases PASS covering schema, calculation (gross=18.9M, BPJS base excludes transport, JHT=370k, BPJS Kes=120k capped), loan deduction, auto-stop when tenor_paid>=total, auto-increment on run, rollback on delete-run, rollback on re-run, PDF generation, and backwards compat. Frontend Employee Add modal has all 6 new data-testids (emp-tj-jabatan, emp-tj-transport, emp-tj-lainnya, emp-loan-installment, emp-loan-tenor-total, emp-loan-tenor-paid) with proper Indonesian labels and helper text ('Masuk base BPJS & PPh21', 'Non-taxable benefit', 'Auto-increment saat payroll'). Siti Aminah data preserved with expected values (gross=18,900,000; net=16,436,914.50; loan=500,000).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_allowance_loan.py",
+    "/app/test_reports/pytest/pytest_allowance_loan.xml"
+  ],
+  "action_items": [
+    "Existing payroll runs (2026-06, 2026-01, 2025-11) were generated BEFORE new components were added, so their payslips do NOT show the new rows. This is expected because Payslip display is conditional (only shows if value > 0). To verify UI display of new rows, main agent should run payroll for a NEW period (e.g. 2026-04 or 2026-07) — Siti Aminah's slip will then show Tj. Jabatan (500k), Tj. Transport (300k), Tj. Lain-lain (100k), and Angsuran Pinjaman (500k) rows."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 2960+ lines — still monolithic; splitting into routers remains a maintainability improvement.",
+    "Loan rollback logic (server.py:1007-1013 & 1101-1109) correctly decrements loan_tenor_paid based on loan_info.active recorded in stored slip — robust against config changes between runs.",
+    "calculate_payslip loan_info.tenor_paid_after computed for preview even when loan_active is false uses `loan_tenor_paid` directly (line 371) — correct. remaining_after=0 when tenor_total==0 (unlimited) is a slight information loss but acceptable given design.",
+    "EmployeeIn defaults for new fields all default to 0 → backwards compat verified.",
+    "BPJS/JHT/JP/PPh21 correctly exclude tunjangan_transport & tunjangan_lainnya from taxable base (line 296-298, 302, 309-310, 320) — matches user choice 2=b.",
+    "PDF payslip conditionally renders new rows only when value > 0 (line 1179-1184, 1198) — matches spec."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_allowance_loan.py (created)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (form data-testids present + save flow works)"},
+  "test_credentials": "unchanged — admin@payroll.id/admin123, hrcuti@payroll.id/cuti123, portal udin0279@gmail.com+NIK 211",
+  "seed_data_creation": "Test employees created with TEST_/UI_ prefixed NIKs are cleaned up in test teardown. Siti Aminah (57679bfb-...) state snapshot+restored via module-scoped fixture. 2099-04/05/06/07 payroll runs created & deleted per test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Payroll component features complete & verified. New Employee fields: tunjangan_jabatan/transport/lainnya, loan_installment/tenor_total/tenor_paid. Payslip earnings block now returns tunjangan_jabatan/transport/lainnya; deductions.loan present; loan_info block with active/tenor_paid_before/after/remaining_after. Loan auto-increments on POST /payroll/run and rolls back on DELETE /payroll/runs/{period} or on re-run (delete-then-re-insert). Frontend Employees.jsx modal has data-testid'd inputs for all 6 new fields. Payslip.jsx & Portal.jsx render new rows conditionally when value > 0. Existing pre-feature runs (2026-06 etc) won't display new rows — that's by design.",
+  "rca of the issue": "N/A — no failures."
+}

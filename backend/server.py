@@ -176,7 +176,13 @@ class EmployeeIn(BaseModel):
     department: str
     join_date: str  # ISO date
     basic_salary: float
-    fixed_allowance: float = 0  # tunjangan tetap (transportasi, makan, dll)
+    fixed_allowance: float = 0  # tunjangan tetap (dianggap sebagai tunjangan taxable / legacy)
+    tunjangan_jabatan: float = 0  # taxable, masuk base BPJS & PPh21
+    tunjangan_transport: float = 0  # non-taxable benefit
+    tunjangan_lainnya: float = 0  # non-taxable benefit
+    loan_installment: float = 0  # angsuran pinjaman bulanan
+    loan_tenor_total: int = 0  # total bulan tenor pinjaman
+    loan_tenor_paid: int = 0  # sudah dibayar berapa bulan
     ptkp_status: str = "TK/0"  # TK/0, K/0, K/1, K/2, K/3
     npwp: Optional[str] = None
     has_npwp: bool = True
@@ -266,6 +272,12 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     """
     basic = float(employee.get("basic_salary", 0))
     fixed_allowance = float(employee.get("fixed_allowance", 0))
+    tj_jabatan = float(employee.get("tunjangan_jabatan", 0))
+    tj_transport = float(employee.get("tunjangan_transport", 0))
+    tj_lainnya = float(employee.get("tunjangan_lainnya", 0))
+    loan_installment = float(employee.get("loan_installment", 0))
+    loan_tenor_total = int(employee.get("loan_tenor_total", 0) or 0)
+    loan_tenor_paid = int(employee.get("loan_tenor_paid", 0) or 0)
     overtime_hours = float(attendance.get("overtime_hours", 0) or 0)
     bonus = float(attendance.get("bonus", 0) or 0)
     other_deduction = float(attendance.get("deduction", 0) or 0)
@@ -280,17 +292,22 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     prorate_factor = min(days_worked / standard_days, 1.0) if standard_days > 0 else 1.0
     basic_paid = basic * prorate_factor
 
-    gross = basic_paid + fixed_allowance + overtime_pay + bonus
+    # Taxable = tunjangan yang masuk BPJS & PPh21 base
+    taxable_allowance = fixed_allowance + tj_jabatan
+    # Non-taxable = benefit (transport, lain-lain) — masuk gross tapi tidak masuk base
+    non_taxable_allowance = tj_transport + tj_lainnya
 
-    # BPJS Kesehatan (capped)
-    bpjs_kes_base = min(basic_paid + fixed_allowance, CONFIG["bpjs_kesehatan_max_base"]) if employee.get("bpjs_kesehatan") else 0
+    gross = basic_paid + taxable_allowance + non_taxable_allowance + overtime_pay + bonus
+
+    # BPJS Kesehatan (capped) — base = basic + taxable allowance only
+    bpjs_kes_base = min(basic_paid + taxable_allowance, CONFIG["bpjs_kesehatan_max_base"]) if employee.get("bpjs_kesehatan") else 0
     bpjs_kes_employee = bpjs_kes_base * CONFIG["bpjs_kesehatan_employee"]
     bpjs_kes_employer = bpjs_kes_base * CONFIG["bpjs_kesehatan_employer"]
 
     # BPJS Ketenagakerjaan
     has_btk = employee.get("bpjs_ketenagakerjaan", True)
-    jht_base = basic_paid + fixed_allowance if has_btk else 0
-    jp_base = min(basic_paid + fixed_allowance, CONFIG["jp_max_base"]) if has_btk else 0
+    jht_base = basic_paid + taxable_allowance if has_btk else 0
+    jp_base = min(basic_paid + taxable_allowance, CONFIG["jp_max_base"]) if has_btk else 0
 
     jht_employee = jht_base * CONFIG["jht_employee"]
     jht_employer = jht_base * CONFIG["jht_employer"]
@@ -299,8 +316,9 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     jkk_employer = jht_base * CONFIG["jkk_employer"]
     jkm_employer = jht_base * CONFIG["jkm_employer"]
 
-    # Annual PPh21 calculation (gross-up method simplified)
-    bruto_monthly = gross + bpjs_kes_employer + jkk_employer + jkm_employer
+    # Annual PPh21 calculation — only taxable earnings contribute
+    taxable_gross_monthly = basic_paid + taxable_allowance + overtime_pay + bonus
+    bruto_monthly = taxable_gross_monthly + bpjs_kes_employer + jkk_employer + jkm_employer
     bruto_yearly = bruto_monthly * 12
 
     biaya_jabatan_yearly = min(bruto_yearly * CONFIG["biaya_jabatan_rate"], CONFIG["biaya_jabatan_max_year"])
@@ -318,13 +336,20 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
         pph21_yearly *= 1.2
     pph21_monthly = pph21_yearly / 12
 
-    total_deductions = bpjs_kes_employee + jht_employee + jp_employee + pph21_monthly + other_deduction
+    # Loan deduction: only if tenor still active
+    loan_active = loan_installment > 0 and (loan_tenor_total == 0 or loan_tenor_paid < loan_tenor_total)
+    loan_deduction = loan_installment if loan_active else 0
+
+    total_deductions = bpjs_kes_employee + jht_employee + jp_employee + pph21_monthly + other_deduction + loan_deduction
     net_salary = gross - total_deductions
 
     return {
         "earnings": {
             "basic_salary": round(basic_paid, 2),
             "fixed_allowance": round(fixed_allowance, 2),
+            "tunjangan_jabatan": round(tj_jabatan, 2),
+            "tunjangan_transport": round(tj_transport, 2),
+            "tunjangan_lainnya": round(tj_lainnya, 2),
             "overtime": round(overtime_pay, 2),
             "bonus": round(bonus, 2),
             "gross": round(gross, 2),
@@ -334,8 +359,17 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
             "jht_employee": round(jht_employee, 2),
             "jp_employee": round(jp_employee, 2),
             "pph21": round(pph21_monthly, 2),
+            "loan": round(loan_deduction, 2),
             "other_deduction": round(other_deduction, 2),
             "total": round(total_deductions, 2),
+        },
+        "loan_info": {
+            "active": loan_active,
+            "installment": round(loan_installment, 2),
+            "tenor_total": loan_tenor_total,
+            "tenor_paid_before": loan_tenor_paid,
+            "tenor_paid_after": loan_tenor_paid + 1 if loan_active else loan_tenor_paid,
+            "remaining_after": max(0, loan_tenor_total - (loan_tenor_paid + 1)) if loan_active and loan_tenor_total else 0,
         },
         "employer_contributions": {
             "bpjs_kesehatan_employer": round(bpjs_kes_employer, 2),
@@ -970,7 +1004,11 @@ async def preview_payroll(payload: PayrollRunIn, user: dict = Depends(require_su
 async def run_payroll(payload: PayrollRunIn, user: dict = Depends(require_super_admin)):
     existing = await db.payroll_runs.find_one({"period": payload.period})
     if existing:
-        # overwrite previous run for same period
+        # overwrite previous run for same period — first rollback loan_tenor increments
+        old_slips = await db.payslips.find({"period": payload.period}, {"_id": 0, "employee_id": 1, "loan_info": 1}).to_list(length=5000)
+        for os_ in old_slips:
+            if os_.get("loan_info", {}).get("active"):
+                await db.employees.update_one({"id": os_["employee_id"]}, {"$inc": {"loan_tenor_paid": -1}})
         await db.payroll_runs.delete_one({"period": payload.period})
         await db.payslips.delete_many({"period": payload.period})
 
@@ -1013,6 +1051,12 @@ async def run_payroll(payload: PayrollRunIn, user: dict = Depends(require_super_
             + slip["deductions"]["jht_employee"]
             + slip["deductions"]["jp_employee"]
         )
+        # Auto-increment loan tenor when this run deducted loan
+        if slip.get("loan_info", {}).get("active"):
+            await db.employees.update_one(
+                {"id": emp["id"]},
+                {"$inc": {"loan_tenor_paid": 1}},
+            )
 
     if slips_to_insert:
         await db.payslips.insert_many(slips_to_insert)
@@ -1056,6 +1100,11 @@ async def get_payslip(slip_id: str, user: dict = Depends(require_super_admin)):
 
 @api_router.delete("/payroll/runs/{period}")
 async def delete_run(period: str, user: dict = Depends(require_super_admin)):
+    # Rollback loan_tenor increments for any active loan deductions in this run
+    old_slips = await db.payslips.find({"period": period}, {"_id": 0, "employee_id": 1, "loan_info": 1}).to_list(length=5000)
+    for os_ in old_slips:
+        if os_.get("loan_info", {}).get("active"):
+            await db.employees.update_one({"id": os_["employee_id"]}, {"$inc": {"loan_tenor_paid": -1}})
     await db.payroll_runs.delete_one({"period": period})
     await db.payslips.delete_many({"period": period})
     return {"ok": True}
@@ -1124,20 +1173,33 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
     earn_rows = [
         ["PENDAPATAN", ""],
         ["Gaji Pokok", _format_idr(e["basic_salary"])],
-        ["Tunjangan Tetap", _format_idr(e["fixed_allowance"])],
-        ["Lembur", _format_idr(e["overtime"])],
-        ["Bonus", _format_idr(e["bonus"])],
-        ["Total Bruto", _format_idr(e["gross"])],
     ]
+    if e.get("fixed_allowance", 0):
+        earn_rows.append(["Tunjangan Tetap", _format_idr(e["fixed_allowance"])])
+    if e.get("tunjangan_jabatan", 0):
+        earn_rows.append(["Tj. Jabatan", _format_idr(e["tunjangan_jabatan"])])
+    if e.get("tunjangan_transport", 0):
+        earn_rows.append(["Tj. Transport", _format_idr(e["tunjangan_transport"])])
+    if e.get("tunjangan_lainnya", 0):
+        earn_rows.append(["Tj. Lain-lain", _format_idr(e["tunjangan_lainnya"])])
+    if e.get("overtime", 0):
+        earn_rows.append(["Lembur", _format_idr(e["overtime"])])
+    if e.get("bonus", 0):
+        earn_rows.append(["Bonus", _format_idr(e["bonus"])])
+    earn_rows.append(["Total Bruto", _format_idr(e["gross"])])
+
     deduct_rows = [
         ["POTONGAN", ""],
         ["BPJS Kesehatan (1%)", _format_idr(d["bpjs_kesehatan_employee"])],
         ["JHT (2%)", _format_idr(d["jht_employee"])],
         ["JP (1%)", _format_idr(d["jp_employee"])],
         ["PPh 21", _format_idr(d["pph21"])],
-        ["Potongan Lain", _format_idr(d["other_deduction"])],
-        ["Total Potongan", _format_idr(d["total"])],
     ]
+    if d.get("loan", 0):
+        deduct_rows.append(["Angsuran Pinjaman", _format_idr(d["loan"])])
+    if d.get("other_deduction", 0):
+        deduct_rows.append(["Potongan Lain", _format_idr(d["other_deduction"])])
+    deduct_rows.append(["Total Potongan", _format_idr(d["total"])])
     # Pad to same length
     max_len = max(len(earn_rows), len(deduct_rows))
     while len(earn_rows) < max_len:

@@ -13,6 +13,12 @@ const EMPTY = {
   join_date: new Date().toISOString().slice(0, 10),
   basic_salary: 0,
   fixed_allowance: 0,
+  tunjangan_jabatan: 0,
+  tunjangan_transport: 0,
+  tunjangan_lainnya: 0,
+  loan_installment: 0,
+  loan_tenor_total: 0,
+  loan_tenor_paid: 0,
   ptkp_status: "TK/0",
   npwp: "",
   has_npwp: true,
@@ -75,6 +81,12 @@ export default function Employees() {
         ...form,
         basic_salary: Number(form.basic_salary) || 0,
         fixed_allowance: Number(form.fixed_allowance) || 0,
+        tunjangan_jabatan: Number(form.tunjangan_jabatan) || 0,
+        tunjangan_transport: Number(form.tunjangan_transport) || 0,
+        tunjangan_lainnya: Number(form.tunjangan_lainnya) || 0,
+        loan_installment: Number(form.loan_installment) || 0,
+        loan_tenor_total: Number(form.loan_tenor_total) || 0,
+        loan_tenor_paid: Number(form.loan_tenor_paid) || 0,
       };
       if (editing) {
         await api.put(`/employees/${editing.id}`, payload);
@@ -349,8 +361,30 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
             <Field label="Gaji Pokok (Rp)">
               <input data-testid="emp-basic-salary" type="number" min="0" required value={form.basic_salary} onChange={setNum("basic_salary")} className={inputCls + " font-mono"} />
             </Field>
-            <Field label="Tunjangan Tetap (Rp)">
+            <Field label="Tunjangan Tetap (Rp)" hint="Legacy — dianggap taxable">
               <input data-testid="emp-allowance" type="number" min="0" value={form.fixed_allowance} onChange={setNum("fixed_allowance")} className={inputCls + " font-mono"} />
+            </Field>
+            <Field label="Tunjangan Jabatan (Rp)" hint="Masuk base BPJS & PPh21">
+              <input data-testid="emp-tj-jabatan" type="number" min="0" value={form.tunjangan_jabatan} onChange={setNum("tunjangan_jabatan")} className={inputCls + " font-mono"} />
+            </Field>
+            <Field label="Tunjangan Transport (Rp)" hint="Non-taxable benefit">
+              <input data-testid="emp-tj-transport" type="number" min="0" value={form.tunjangan_transport} onChange={setNum("tunjangan_transport")} className={inputCls + " font-mono"} />
+            </Field>
+            <Field label="Tunjangan Lain-lain (Rp)" hint="Non-taxable benefit">
+              <input data-testid="emp-tj-lainnya" type="number" min="0" value={form.tunjangan_lainnya} onChange={setNum("tunjangan_lainnya")} className={inputCls + " font-mono"} />
+            </Field>
+          </div>
+
+          <SectionTitle>Potongan Pinjaman (Opsional)</SectionTitle>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Field label="Angsuran / Bulan (Rp)">
+              <input data-testid="emp-loan-installment" type="number" min="0" value={form.loan_installment} onChange={setNum("loan_installment")} className={inputCls + " font-mono"} />
+            </Field>
+            <Field label="Tenor Total (bulan)" hint="0 = pinjaman tanpa batas / manual stop">
+              <input data-testid="emp-loan-tenor-total" type="number" min="0" value={form.loan_tenor_total} onChange={setNum("loan_tenor_total")} className={inputCls + " font-mono"} />
+            </Field>
+            <Field label="Tenor Sudah Dibayar" hint="Auto-increment saat payroll">
+              <input data-testid="emp-loan-tenor-paid" type="number" min="0" value={form.loan_tenor_paid} onChange={setNum("loan_tenor_paid")} className={inputCls + " font-mono"} />
             </Field>
           </div>
 
@@ -398,11 +432,12 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
 
 const inputCls = "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none w-full";
 
-function Field({ label, children }) {
+function Field({ label, children, hint }) {
   return (
     <label className="block">
       <span className="block text-xs font-semibold text-zinc-900 uppercase tracking-wider mb-1.5">{label}</span>
       {children}
+      {hint && <span className="block text-[10px] text-zinc-500 mt-1 font-mono normal-case">{hint}</span>}
     </label>
   );
 }
