@@ -22,7 +22,7 @@ export default function Dashboard() {
   const latest = stats?.latest_run;
 
   return (
-    <div className="px-6 lg:px-10 py-8 max-w-7xl">
+    <div className="px-4 sm:px-6 lg:px-10 py-6 sm:py-8 max-w-7xl">
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-4 pb-6 border-b border-zinc-200">
         <div>

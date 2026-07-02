@@ -66,7 +66,7 @@ export default function PayrollDetail() {
   };
 
   return (
-    <div className="px-6 lg:px-10 py-8 max-w-7xl">
+    <div className="px-4 sm:px-6 lg:px-10 py-6 sm:py-8 max-w-7xl">
       <Link to="/payroll" className="inline-flex items-center gap-1 text-xs uppercase tracking-widest text-zinc-500 hover:text-zinc-900 font-semibold">
         <ChevronLeft className="w-3.5 h-3.5" /> Kembali ke Payroll
       </Link>

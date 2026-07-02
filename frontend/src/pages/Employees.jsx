@@ -149,7 +149,7 @@ export default function Employees() {
   });
 
   return (
-    <div className="px-6 lg:px-10 py-8 max-w-7xl">
+    <div className="px-4 sm:px-6 lg:px-10 py-6 sm:py-8 max-w-7xl">
       <div className="flex flex-wrap items-end justify-between gap-4 pb-6 border-b border-zinc-200">
         <div>
           <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Master Data</div>

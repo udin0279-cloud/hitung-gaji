@@ -37,7 +37,7 @@ export default function Users() {
   };
 
   return (
-    <div className="min-h-screen p-8 lg:p-10">
+    <div className="min-h-screen p-4 sm:p-6 lg:p-10">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Pengaturan</div>

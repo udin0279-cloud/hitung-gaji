@@ -51,33 +51,33 @@ export default function LeaveAdmin() {
   useEffect(() => { load(); }, [filterStatus, filterType]);
 
   return (
-    <div className="min-h-screen p-8 lg:p-10">
-      <div className="mb-8">
+    <div className="min-h-screen p-4 sm:p-6 lg:p-10">
+      <div className="mb-6 lg:mb-8">
         <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Manajemen</div>
-        <h1 className="font-heading text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Pengajuan Izin Karyawan</h1>
+        <h1 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Pengajuan Izin Karyawan</h1>
         <p className="text-sm text-zinc-500 mt-2">Tinjau dan setujui/tolak pengajuan izin dari karyawan.</p>
       </div>
 
       {/* Monthly Report Export */}
-      <div className="mb-6 border border-zinc-200 bg-white p-4 flex flex-wrap items-end justify-between gap-3">
+      <div className="mb-6 border border-zinc-200 bg-white p-4 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Export Laporan Bulanan</div>
           <p className="text-xs text-zinc-500 mt-1">Pilih periode dan unduh laporan untuk audit / lapor ke direksi.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <input
             type="month"
             data-testid="report-month-input"
             value={reportMonth}
             onChange={(e) => setReportMonth(e.target.value)}
-            className="border border-zinc-300 px-3 py-1.5 text-xs font-mono focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+            className="border border-zinc-300 px-3 py-1.5 text-xs font-mono focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none min-w-0"
           />
           <a
             data-testid="export-excel-button"
             href={`${API}/leave/report/${reportMonth}/excel`}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-2 bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold uppercase tracking-wider hover:bg-emerald-800"
+            className="inline-flex items-center gap-1.5 bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold uppercase tracking-wider hover:bg-emerald-800"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
           </a>
@@ -86,7 +86,7 @@ export default function LeaveAdmin() {
             href={`${API}/leave/report/${reportMonth}/pdf`}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-2 bg-rose-700 text-white px-3 py-1.5 text-xs font-semibold uppercase tracking-wider hover:bg-rose-800"
+            className="inline-flex items-center gap-1.5 bg-rose-700 text-white px-3 py-1.5 text-xs font-semibold uppercase tracking-wider hover:bg-rose-800"
           >
             <FileText className="w-3.5 h-3.5" /> PDF
           </a>
@@ -102,7 +102,7 @@ export default function LeaveAdmin() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
         <div className="flex items-center gap-1">
           {["pending", "approved", "rejected", ""].map((s) => (
             <button
@@ -284,12 +284,12 @@ function ReviewModal({ item, action, onClose, onSuccess }) {
 
 function StatCard({ label, value, icon: Icon, color, testId }) {
   return (
-    <div className="bg-white p-4" data-testid={testId}>
-      <div className="flex items-center gap-2">
-        <Icon className="w-3.5 h-3.5" style={{ color }} />
-        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">{label}</div>
+    <div className="bg-white p-3 sm:p-4 min-w-0" data-testid={testId}>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <Icon className="w-3.5 h-3.5 shrink-0" style={{ color }} />
+        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold truncate">{label}</div>
       </div>
-      <div className="font-mono text-2xl font-semibold mt-2" style={{ color }}>{value}</div>
+      <div className="font-mono text-xl sm:text-2xl font-semibold mt-2" style={{ color }}>{value}</div>
     </div>
   );
 }
