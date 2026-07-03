@@ -307,7 +307,7 @@ function LeaveFormModal({ onClose, onSuccess }) {
                 <label className="block text-[11px] uppercase tracking-widest font-semibold text-zinc-600 mb-1.5">Durasi (menit)</label>
                 <input
                   type="number"
-                  min="1"
+                  min="5"
                   step="5"
                   data-testid="leave-time-minutes"
                   value={timeMinutes}
@@ -315,6 +315,7 @@ function LeaveFormModal({ onClose, onSuccess }) {
                   required
                   className="w-full border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
                 />
+                <div className="text-[10px] text-zinc-500 mt-1 font-mono">Minimal 5 menit</div>
               </div>
             )}
           </div>

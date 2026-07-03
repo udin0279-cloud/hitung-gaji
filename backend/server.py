@@ -2353,8 +2353,8 @@ async def portal_leave_create(
         raise HTTPException(status_code=400, detail="Tanggal akhir tidak boleh sebelum tanggal mulai")
 
     if type in {"terlambat", "pulang_awal"}:
-        if not time_minutes or time_minutes <= 0:
-            raise HTTPException(status_code=400, detail="Durasi (menit) wajib diisi")
+        if not time_minutes or time_minutes < 5:
+            raise HTTPException(status_code=400, detail="Durasi minimal 5 menit")
         end = date_start  # single day for these types
 
     if type == "lembur":
