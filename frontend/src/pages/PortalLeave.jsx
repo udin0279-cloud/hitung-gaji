@@ -123,11 +123,16 @@ export default function PortalLeave() {
                 <tr key={x.id} data-testid={`leave-row-${x.id}`} className="border-b border-zinc-100 hover:bg-zinc-50/80 align-top">
                   <td className="px-4 py-3">
                     <div className="font-semibold text-zinc-900">{x.type_label}</div>
-                    {x.time_minutes && !x.time_start ? <div className="text-[11px] text-zinc-500 font-mono mt-0.5">{x.time_minutes} menit</div> : null}
-                    {x.time_start && x.time_end ? (
+                    {x.type === "pulang_awal" && x.time_end ? (
+                      <div className="text-[11px] text-zinc-500 font-mono mt-0.5">
+                        Pulang {x.time_end} ({x.time_minutes}m lebih awal)
+                      </div>
+                    ) : x.time_start && x.time_end ? (
                       <div className="text-[11px] text-zinc-500 font-mono mt-0.5">
                         {x.time_start}–{x.time_end} ({Math.floor((x.time_minutes || 0) / 60)}j {(x.time_minutes || 0) % 60}m)
                       </div>
+                    ) : x.time_minutes ? (
+                      <div className="text-[11px] text-zinc-500 font-mono mt-0.5">{x.time_minutes} menit</div>
                     ) : null}
                   </td>
                   <td className="px-4 py-3 font-mono text-zinc-700 text-xs">
@@ -186,14 +191,32 @@ function LeaveFormModal({ onClose, onSuccess }) {
   const [dateEnd, setDateEnd] = useState("");
   const [timeMinutes, setTimeMinutes] = useState(30);
   const [timeStart, setTimeStart] = useState("18:00");
-  const [timeEnd, setTimeEnd] = useState("20:00");
+  const [timeEnd, setTimeEnd] = useState("16:00");
   const [reason, setReason] = useState("");
   const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const isSimpleSingleDay = type === "terlambat" || type === "pulang_awal";
+  // Reset time defaults when type changes
+  useEffect(() => {
+    if (type === "lembur") { setTimeStart("18:00"); setTimeEnd("22:00"); }
+    if (type === "pulang_awal") { setTimeEnd("16:00"); }
+  }, [type]);
+
+  const isTerlambat = type === "terlambat";
+  const isPulangAwal = type === "pulang_awal";
   const isLembur = type === "lembur";
-  const singleDay = isSimpleSingleDay || isLembur;
+  const singleDay = isTerlambat || isPulangAwal || isLembur;
+
+  // For pulang_awal: compute minutes from jam pulang vs 17:00
+  const pulangAwalMinutes = (() => {
+    if (!isPulangAwal) return 0;
+    try {
+      const [eh, em] = timeEnd.split(":").map(Number);
+      return 17 * 60 - (eh * 60 + em);
+    } catch {
+      return 0;
+    }
+  })();
 
   const computedLemburMinutes = (() => {
     if (!isLembur) return 0;
@@ -212,12 +235,14 @@ function LeaveFormModal({ onClose, onSuccess }) {
     e.preventDefault();
     if (!reason.trim()) { toast.error("Alasan / deskripsi wajib diisi"); return; }
     if (isLembur && computedLemburMinutes <= 0) { toast.error("Jam selesai harus lebih besar dari jam mulai"); return; }
+    if (isPulangAwal && pulangAwalMinutes < 5) { toast.error("Jam pulang harus minimal 5 menit sebelum 17:00"); return; }
 
     const fd = new FormData();
     fd.append("type", type);
     fd.append("date_start", dateStart);
     if (!singleDay && dateEnd) fd.append("date_end", dateEnd);
-    if (isSimpleSingleDay) fd.append("time_minutes", String(timeMinutes));
+    if (isTerlambat) fd.append("time_minutes", String(timeMinutes));
+    if (isPulangAwal) fd.append("time_end", timeEnd);
     if (isLembur) {
       fd.append("time_start", timeStart);
       fd.append("time_end", timeEnd);
@@ -302,7 +327,7 @@ function LeaveFormModal({ onClose, onSuccess }) {
                 />
               </div>
             )}
-            {isSimpleSingleDay && (
+            {isTerlambat && (
               <div>
                 <label className="block text-[11px] uppercase tracking-widest font-semibold text-zinc-600 mb-1.5">Durasi (menit)</label>
                 <input
@@ -316,6 +341,23 @@ function LeaveFormModal({ onClose, onSuccess }) {
                   className="w-full border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
                 />
                 <div className="text-[10px] text-zinc-500 mt-1 font-mono">Minimal 5 menit</div>
+              </div>
+            )}
+            {isPulangAwal && (
+              <div>
+                <label className="block text-[11px] uppercase tracking-widest font-semibold text-zinc-600 mb-1.5">Jam Pulang</label>
+                <input
+                  type="time"
+                  data-testid="leave-time-pulang"
+                  value={timeEnd}
+                  onChange={(e) => setTimeEnd(e.target.value)}
+                  required
+                  className="w-full border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+                />
+                <div className="text-[10px] text-zinc-500 mt-1 font-mono">
+                  Jam kerja normal: 17:00
+                  {pulangAwalMinutes >= 5 && <span className="ml-2 text-[#002FA7] font-semibold">→ {Math.floor(pulangAwalMinutes / 60)}j {pulangAwalMinutes % 60}m lebih awal</span>}
+                </div>
               </div>
             )}
           </div>

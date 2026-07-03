@@ -2352,10 +2352,28 @@ async def portal_leave_create(
     if end < date_start:
         raise HTTPException(status_code=400, detail="Tanggal akhir tidak boleh sebelum tanggal mulai")
 
-    if type in {"terlambat", "pulang_awal"}:
+    if type == "terlambat":
         if not time_minutes or time_minutes < 5:
             raise HTTPException(status_code=400, detail="Durasi minimal 5 menit")
-        end = date_start  # single day for these types
+        end = date_start  # single day
+
+    if type == "pulang_awal":
+        # Karyawan input jam pulang; sistem hitung berapa menit lebih awal dari jam kerja normal (17:00)
+        if not time_end:
+            raise HTTPException(status_code=400, detail="Jam pulang wajib diisi")
+        try:
+            eh, em = [int(x) for x in time_end.split(":")[:2]]
+            leave_minute = eh * 60 + em
+            standard_end = 17 * 60  # 17:00 default
+            diff = standard_end - leave_minute
+            if diff < 5:
+                raise HTTPException(status_code=400, detail="Jam pulang harus minimal 5 menit sebelum 17:00")
+            time_minutes = diff
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format jam tidak valid (gunakan HH:MM)")
+        end = date_start  # single day
 
     if type == "lembur":
         if not time_start or not time_end:
@@ -2408,7 +2426,7 @@ async def portal_leave_create(
         "date_end": end,
         "time_minutes": time_minutes if type in {"terlambat", "pulang_awal", "lembur"} else None,
         "time_start": time_start if type == "lembur" else None,
-        "time_end": time_end if type == "lembur" else None,
+        "time_end": time_end if type in {"lembur", "pulang_awal"} else None,
         "reason": reason.strip(),
         "attachment": attachment,
         "status": "pending",
@@ -2679,12 +2697,15 @@ async def leave_report_excel(period: str, user: dict = Depends(require_leave_acc
         ws.cell(row=row, column=5, value=LEAVE_TYPE_LABELS.get(x.get("type"), x.get("type")))
         ws.cell(row=row, column=6, value=x.get("date_start"))
         ws.cell(row=row, column=7, value=x.get("date_end"))
-        # Durasi cell: show "240 menit (18:00-22:00)" for lembur, else just minutes
+        # Durasi cell: show detail based on type
         dur_text = ""
         if x.get("time_minutes"):
-            dur_text = f"{x['time_minutes']} menit"
-            if x.get("time_start") and x.get("time_end"):
-                dur_text += f" ({x['time_start']}-{x['time_end']})"
+            if x.get("type") == "pulang_awal" and x.get("time_end"):
+                dur_text = f"Pulang {x['time_end']} ({x['time_minutes']} menit lebih awal)"
+            elif x.get("time_start") and x.get("time_end"):
+                dur_text = f"{x['time_minutes']} menit ({x['time_start']}-{x['time_end']})"
+            else:
+                dur_text = f"{x['time_minutes']} menit"
         ws.cell(row=row, column=8, value=dur_text)
         ws.cell(row=row, column=9, value=x.get("reason") or "")
         status_cell = ws.cell(row=row, column=10, value=STATUS_LABEL_MAP.get(x.get("status"), x.get("status")))
@@ -2756,7 +2777,9 @@ async def leave_report_pdf(period: str, user: dict = Depends(require_leave_acces
         note_html = "<br/>".join(note_parts) or "-"
         dur_text = ""
         if x.get("time_minutes"):
-            if x.get("time_start") and x.get("time_end"):
+            if x.get("type") == "pulang_awal" and x.get("time_end"):
+                dur_text = f"Pulang {x['time_end']}<br/>{x['time_minutes']}m lebih awal"
+            elif x.get("time_start") and x.get("time_end"):
                 dur_text = f"{x['time_start']}-{x['time_end']}<br/>{x['time_minutes']}m"
             else:
                 dur_text = f"{x['time_minutes']}m"
