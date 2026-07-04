@@ -359,26 +359,26 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
           <SectionTitle>Gaji & Tunjangan</SectionTitle>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label="Gaji Pokok (Rp)">
-              <input data-testid="emp-basic-salary" type="number" min="0" required value={form.basic_salary} onChange={setNum("basic_salary")} className={inputCls + " font-mono"} />
+              <CurrencyInput testId="emp-basic-salary" value={form.basic_salary} onChange={(v) => setForm({ ...form, basic_salary: v })} />
             </Field>
             <Field label="Tunjangan Tetap (Rp)" hint="Legacy — dianggap taxable">
-              <input data-testid="emp-allowance" type="number" min="0" value={form.fixed_allowance} onChange={setNum("fixed_allowance")} className={inputCls + " font-mono"} />
+              <CurrencyInput testId="emp-allowance" value={form.fixed_allowance} onChange={(v) => setForm({ ...form, fixed_allowance: v })} />
             </Field>
             <Field label="Tunjangan Jabatan (Rp)" hint="Masuk base BPJS & PPh21">
-              <input data-testid="emp-tj-jabatan" type="number" min="0" value={form.tunjangan_jabatan} onChange={setNum("tunjangan_jabatan")} className={inputCls + " font-mono"} />
+              <CurrencyInput testId="emp-tj-jabatan" value={form.tunjangan_jabatan} onChange={(v) => setForm({ ...form, tunjangan_jabatan: v })} />
             </Field>
             <Field label="Tunjangan Transport (Rp)" hint="Non-taxable benefit">
-              <input data-testid="emp-tj-transport" type="number" min="0" value={form.tunjangan_transport} onChange={setNum("tunjangan_transport")} className={inputCls + " font-mono"} />
+              <CurrencyInput testId="emp-tj-transport" value={form.tunjangan_transport} onChange={(v) => setForm({ ...form, tunjangan_transport: v })} />
             </Field>
             <Field label="Tunjangan Lain-lain (Rp)" hint="Non-taxable benefit">
-              <input data-testid="emp-tj-lainnya" type="number" min="0" value={form.tunjangan_lainnya} onChange={setNum("tunjangan_lainnya")} className={inputCls + " font-mono"} />
+              <CurrencyInput testId="emp-tj-lainnya" value={form.tunjangan_lainnya} onChange={(v) => setForm({ ...form, tunjangan_lainnya: v })} />
             </Field>
           </div>
 
           <SectionTitle>Potongan Pinjaman (Opsional)</SectionTitle>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Field label="Angsuran / Bulan (Rp)">
-              <input data-testid="emp-loan-installment" type="number" min="0" value={form.loan_installment} onChange={setNum("loan_installment")} className={inputCls + " font-mono"} />
+              <CurrencyInput testId="emp-loan-installment" value={form.loan_installment} onChange={(v) => setForm({ ...form, loan_installment: v })} />
             </Field>
             <Field label="Tenor Total (bulan)" hint="0 = pinjaman tanpa batas / manual stop">
               <input data-testid="emp-loan-tenor-total" type="number" min="0" value={form.loan_tenor_total} onChange={setNum("loan_tenor_total")} className={inputCls + " font-mono"} />
@@ -431,6 +431,28 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
 }
 
 const inputCls = "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none w-full";
+
+// Currency input with Indonesian thousand separator (300000 → 300.000)
+function CurrencyInput({ value, onChange, testId, min = 0 }) {
+  const formatted = Number(value || 0).toLocaleString("id-ID");
+  const handleChange = (e) => {
+    const raw = e.target.value.replace(/\D/g, ""); // strip non-digits
+    const num = raw === "" ? 0 : Number(raw);
+    if (num < min) return;
+    onChange(num);
+  };
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      data-testid={testId}
+      value={formatted}
+      onChange={handleChange}
+      onFocus={(e) => e.target.select()}
+      className={inputCls + " font-mono"}
+    />
+  );
+}
 
 function Field({ label, children, hint }) {
   return (
