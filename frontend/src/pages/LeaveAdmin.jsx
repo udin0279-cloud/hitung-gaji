@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, API } from "../lib/api";
-import { Calendar, FileCheck, FileX, Paperclip, Filter, Check, X as XIcon, Download, FileSpreadsheet, FileText } from "lucide-react";
+import { Calendar, FileCheck, FileX, Paperclip, Filter, Check, X as XIcon, FileSpreadsheet, FileText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_STYLE = {
@@ -49,6 +49,17 @@ export default function LeaveAdmin() {
   };
 
   useEffect(() => { load(); }, [filterStatus, filterType]);
+
+  const remove = async (id, name) => {
+    if (!confirm(`Hapus pengajuan dari ${name}? Data yang dihapus tidak dapat dikembalikan.`)) return;
+    try {
+      await api.delete(`/leave/${id}`);
+      toast.success("Pengajuan dihapus");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Gagal menghapus");
+    }
+  };
 
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-10">
@@ -192,24 +203,34 @@ export default function LeaveAdmin() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {x.status === "pending" && (
-                    <div className="inline-flex items-center gap-1">
-                      <button
-                        data-testid={`approve-${x.id}`}
-                        onClick={() => setReviewing({ item: x, action: "approve" })}
-                        className="inline-flex items-center gap-1 text-[11px] bg-emerald-600 text-white hover:bg-emerald-700 px-2 py-1"
-                      >
-                        <Check className="w-3 h-3" /> Setujui
-                      </button>
-                      <button
-                        data-testid={`reject-${x.id}`}
-                        onClick={() => setReviewing({ item: x, action: "reject" })}
-                        className="inline-flex items-center gap-1 text-[11px] bg-rose-600 text-white hover:bg-rose-700 px-2 py-1"
-                      >
-                        <XIcon className="w-3 h-3" /> Tolak
-                      </button>
-                    </div>
-                  )}
+                  <div className="inline-flex items-center gap-1 flex-wrap justify-end">
+                    {x.status === "pending" && (
+                      <>
+                        <button
+                          data-testid={`approve-${x.id}`}
+                          onClick={() => setReviewing({ item: x, action: "approve" })}
+                          className="inline-flex items-center gap-1 text-[11px] bg-emerald-600 text-white hover:bg-emerald-700 px-2 py-1"
+                        >
+                          <Check className="w-3 h-3" /> Setujui
+                        </button>
+                        <button
+                          data-testid={`reject-${x.id}`}
+                          onClick={() => setReviewing({ item: x, action: "reject" })}
+                          className="inline-flex items-center gap-1 text-[11px] bg-rose-600 text-white hover:bg-rose-700 px-2 py-1"
+                        >
+                          <XIcon className="w-3 h-3" /> Tolak
+                        </button>
+                      </>
+                    )}
+                    <button
+                      data-testid={`delete-leave-${x.id}`}
+                      onClick={() => remove(x.id, x.employee_name)}
+                      className="inline-flex items-center gap-1 text-[11px] border border-rose-300 text-rose-700 hover:bg-rose-50 px-2 py-1"
+                      title="Hapus pengajuan"
+                    >
+                      <Trash2 className="w-3 h-3" /> Hapus
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

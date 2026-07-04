@@ -2539,6 +2539,15 @@ async def admin_leave_attachment(leave_id: str, user: dict = Depends(require_lea
     )
 
 
+@api_router.delete("/leave/{leave_id}")
+async def admin_leave_delete(leave_id: str, user: dict = Depends(require_leave_access)):
+    doc = await db.leave_requests.find_one({"id": leave_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
+    await db.leave_requests.delete_one({"id": leave_id})
+    return {"ok": True}
+
+
 class LeaveReviewIn(BaseModel):
     hr_note: Optional[str] = ""
 
