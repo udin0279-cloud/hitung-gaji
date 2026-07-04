@@ -181,6 +181,7 @@ class EmployeeIn(BaseModel):
     tunjangan_transport: float = 0  # non-taxable benefit
     tunjangan_lainnya: float = 0  # non-taxable benefit
     loan_installment: float = 0  # angsuran pinjaman bulanan
+    loan_total_amount: float = 0  # total nilai pinjaman
     loan_tenor_total: int = 0  # total bulan tenor pinjaman
     loan_tenor_paid: int = 0  # sudah dibayar berapa bulan
     ptkp_status: str = "TK/0"  # TK/0, K/0, K/1, K/2, K/3

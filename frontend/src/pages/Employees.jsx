@@ -17,6 +17,7 @@ const EMPTY = {
   tunjangan_transport: 0,
   tunjangan_lainnya: 0,
   loan_installment: 0,
+  loan_total_amount: 0,
   loan_tenor_total: 0,
   loan_tenor_paid: 0,
   ptkp_status: "TK/0",
@@ -85,6 +86,7 @@ export default function Employees() {
         tunjangan_transport: Number(form.tunjangan_transport) || 0,
         tunjangan_lainnya: Number(form.tunjangan_lainnya) || 0,
         loan_installment: Number(form.loan_installment) || 0,
+        loan_total_amount: Number(form.loan_total_amount) || 0,
         loan_tenor_total: Number(form.loan_tenor_total) || 0,
         loan_tenor_paid: Number(form.loan_tenor_paid) || 0,
       };
@@ -376,8 +378,11 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
           </div>
 
           <SectionTitle>Potongan Pinjaman (Opsional)</SectionTitle>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Field label="Angsuran / Bulan (Rp)">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field label="Total Pinjaman (Rp)" hint="Nilai pinjaman keseluruhan (untuk referensi)">
+              <CurrencyInput testId="emp-loan-total" value={form.loan_total_amount} onChange={(v) => setForm({ ...form, loan_total_amount: v })} />
+            </Field>
+            <Field label="Angsuran / Bulan (Rp)" hint="Dipotong tiap payroll">
               <CurrencyInput testId="emp-loan-installment" value={form.loan_installment} onChange={(v) => setForm({ ...form, loan_installment: v })} />
             </Field>
             <Field label="Tenor Total (bulan)" hint="0 = pinjaman tanpa batas / manual stop">
@@ -387,6 +392,30 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
               <input data-testid="emp-loan-tenor-paid" type="number" min="0" value={form.loan_tenor_paid} onChange={setNum("loan_tenor_paid")} className={inputCls + " font-mono"} />
             </Field>
           </div>
+          {(Number(form.loan_total_amount) > 0 || Number(form.loan_installment) > 0) && (
+            <div className="mt-2 bg-zinc-50 border border-zinc-200 p-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Total Pinjaman</div>
+                <div className="font-mono text-zinc-900 mt-1">Rp {Number(form.loan_total_amount || 0).toLocaleString("id-ID")}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Sudah Dibayar</div>
+                <div className="font-mono text-emerald-700 mt-1">Rp {(Number(form.loan_installment || 0) * Number(form.loan_tenor_paid || 0)).toLocaleString("id-ID")}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Sisa Pinjaman</div>
+                <div className="font-mono text-rose-700 mt-1">Rp {Math.max(0, Number(form.loan_total_amount || 0) - Number(form.loan_installment || 0) * Number(form.loan_tenor_paid || 0)).toLocaleString("id-ID")}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Progress</div>
+                <div className="font-mono text-[#002FA7] mt-1">
+                  {Number(form.loan_tenor_total || 0) > 0
+                    ? `${form.loan_tenor_paid}/${form.loan_tenor_total} bulan`
+                    : "—"}
+                </div>
+              </div>
+            </div>
+          )}
 
           <SectionTitle>Pajak & BPJS</SectionTitle>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
