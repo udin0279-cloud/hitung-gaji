@@ -307,6 +307,7 @@ export function PortalPayslip() {
             {e.tunjangan_jabatan > 0 && <Row label="Tj. Jabatan" value={e.tunjangan_jabatan} />}
             {e.tunjangan_transport > 0 && <Row label="Tj. Transport" value={e.tunjangan_transport} />}
             {e.tunjangan_lainnya > 0 && <Row label="Tj. Lain-lain" value={e.tunjangan_lainnya} />}
+            {e.insentif_individu > 0 && <Row label="Insentif Individu" value={e.insentif_individu} />}
             {e.overtime > 0 && <Row label="Lembur" value={e.overtime} />}
             {e.bonus > 0 && <Row label="Bonus" value={e.bonus} />}
             <Row label="Total Bruto" value={e.gross} bold border />

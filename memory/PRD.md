@@ -115,3 +115,20 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 - Auto-deduct from payroll based on approved leaves
 - 2-level approval (manager → HR)
 - WhatsApp notification (in addition to email)
+
+
+---
+## Update: 2026-07-10 — Komponen Gaji Baru: Insentif Individu
+
+### Implemented
+- Field baru `insentif_individu` di Employee master (form Karyawan → section "Gaji & Tunjangan")
+- Perlakuan payroll: **taxable** untuk PPh21 (masuk `taxable_gross_monthly`), **TIDAK** masuk base BPJS (Kesehatan/JHT/JP)
+- Muncul di:
+  - Slip gaji PDF (`server.py` — PDF earn_rows) ketika > 0
+  - Halaman slip UI (`Payslip.jsx`, `Portal.jsx`) ketika > 0
+- Backward compatible: karyawan lama tanpa field ini otomatis dianggap 0
+
+### Files Changed
+- backend/server.py — `EmployeeIn`, `calculate_payslip`, PDF slip
+- frontend/src/pages/Employees.jsx — EMPTY, submit payload, input CurrencyInput
+- frontend/src/pages/Payslip.jsx & Portal.jsx — display Row

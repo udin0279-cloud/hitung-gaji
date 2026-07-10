@@ -180,6 +180,7 @@ class EmployeeIn(BaseModel):
     tunjangan_jabatan: float = 0  # taxable, masuk base BPJS & PPh21
     tunjangan_transport: float = 0  # non-taxable benefit
     tunjangan_lainnya: float = 0  # non-taxable benefit
+    insentif_individu: float = 0  # taxable untuk PPh21, TIDAK masuk base BPJS
     loan_installment: float = 0  # angsuran pinjaman bulanan
     loan_total_amount: float = 0  # total nilai pinjaman
     loan_tenor_total: int = 0  # total bulan tenor pinjaman
@@ -276,6 +277,7 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     tj_jabatan = float(employee.get("tunjangan_jabatan", 0))
     tj_transport = float(employee.get("tunjangan_transport", 0))
     tj_lainnya = float(employee.get("tunjangan_lainnya", 0))
+    insentif_individu = float(employee.get("insentif_individu", 0))
     loan_installment = float(employee.get("loan_installment", 0))
     loan_tenor_total = int(employee.get("loan_tenor_total", 0) or 0)
     loan_tenor_paid = int(employee.get("loan_tenor_paid", 0) or 0)
@@ -298,7 +300,7 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     # Non-taxable = benefit (transport, lain-lain) — masuk gross tapi tidak masuk base
     non_taxable_allowance = tj_transport + tj_lainnya
 
-    gross = basic_paid + taxable_allowance + non_taxable_allowance + overtime_pay + bonus
+    gross = basic_paid + taxable_allowance + non_taxable_allowance + insentif_individu + overtime_pay + bonus
 
     # BPJS Kesehatan (capped) — base = basic + taxable allowance only
     bpjs_kes_base = min(basic_paid + taxable_allowance, CONFIG["bpjs_kesehatan_max_base"]) if employee.get("bpjs_kesehatan") else 0
@@ -318,7 +320,7 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     jkm_employer = jht_base * CONFIG["jkm_employer"]
 
     # Annual PPh21 calculation — only taxable earnings contribute
-    taxable_gross_monthly = basic_paid + taxable_allowance + overtime_pay + bonus
+    taxable_gross_monthly = basic_paid + taxable_allowance + insentif_individu + overtime_pay + bonus
     bruto_monthly = taxable_gross_monthly + bpjs_kes_employer + jkk_employer + jkm_employer
     bruto_yearly = bruto_monthly * 12
 
@@ -351,6 +353,7 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
             "tunjangan_jabatan": round(tj_jabatan, 2),
             "tunjangan_transport": round(tj_transport, 2),
             "tunjangan_lainnya": round(tj_lainnya, 2),
+            "insentif_individu": round(insentif_individu, 2),
             "overtime": round(overtime_pay, 2),
             "bonus": round(bonus, 2),
             "gross": round(gross, 2),
@@ -1183,6 +1186,8 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
         earn_rows.append(["Tj. Transport", _format_idr(e["tunjangan_transport"])])
     if e.get("tunjangan_lainnya", 0):
         earn_rows.append(["Tj. Lain-lain", _format_idr(e["tunjangan_lainnya"])])
+    if e.get("insentif_individu", 0):
+        earn_rows.append(["Insentif Individu", _format_idr(e["insentif_individu"])])
     if e.get("overtime", 0):
         earn_rows.append(["Lembur", _format_idr(e["overtime"])])
     if e.get("bonus", 0):

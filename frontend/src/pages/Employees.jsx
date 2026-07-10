@@ -16,6 +16,7 @@ const EMPTY = {
   tunjangan_jabatan: 0,
   tunjangan_transport: 0,
   tunjangan_lainnya: 0,
+  insentif_individu: 0,
   loan_installment: 0,
   loan_total_amount: 0,
   loan_tenor_total: 0,
@@ -85,6 +86,7 @@ export default function Employees() {
         tunjangan_jabatan: Number(form.tunjangan_jabatan) || 0,
         tunjangan_transport: Number(form.tunjangan_transport) || 0,
         tunjangan_lainnya: Number(form.tunjangan_lainnya) || 0,
+        insentif_individu: Number(form.insentif_individu) || 0,
         loan_installment: Number(form.loan_installment) || 0,
         loan_total_amount: Number(form.loan_total_amount) || 0,
         loan_tenor_total: Number(form.loan_tenor_total) || 0,
@@ -374,6 +376,9 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
             </Field>
             <Field label="Tunjangan Lain-lain (Rp)" hint="Non-taxable benefit">
               <CurrencyInput testId="emp-tj-lainnya" value={form.tunjangan_lainnya} onChange={(v) => setForm({ ...form, tunjangan_lainnya: v })} />
+            </Field>
+            <Field label="Insentif Individu (Rp)" hint="Taxable PPh21, tidak masuk base BPJS">
+              <CurrencyInput testId="emp-insentif-individu" value={form.insentif_individu} onChange={(v) => setForm({ ...form, insentif_individu: v })} />
             </Field>
           </div>
 
