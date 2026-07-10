@@ -34,6 +34,7 @@ const EMPTY = {
   bpjs_ketenagakerjaan: true,
   bank_name: "",
   bank_account: "",
+  bank_account_holder: "",
   active: true,
 };
 
@@ -480,6 +481,9 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
             </Field>
             <Field label="Nomor Rekening">
               <input value={form.bank_account || ""} onChange={set("bank_account")} className={inputCls + " font-mono"} />
+            </Field>
+            <Field label="Atas Nama">
+              <input data-testid="emp-bank-account-holder" value={form.bank_account_holder || ""} onChange={set("bank_account_holder")} className={inputCls} placeholder="Nama pemilik rekening" />
             </Field>
           </div>
 

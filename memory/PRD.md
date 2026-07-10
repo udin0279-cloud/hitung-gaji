@@ -159,3 +159,16 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 ### Verifikasi
 Test payroll Siti Aminah dgn semua komponen: Gross 20,4jt → Net 17,66jt. PPh21 ikut naik proporsional untuk taxable earnings, BPJS tidak berubah (sesuai desain).
 
+
+---
+## Update: 2026-07-10 (session 3) — Field Bank Account Holder
+
+### Implemented
+- Field baru `bank_account_holder` ("Atas Nama") di section Rekening Bank pada form Karyawan
+- Bank Transfer Export (BCA/Mandiri/BNI/BRI/generic) otomatis pakai nilai `bank_account_holder` untuk kolom "Nama Penerima" bila diisi; fallback ke nama karyawan bila kosong
+- Untuk kasus rekening atas nama istri/orangtua/keluarga
+
+### Files Changed
+- backend/server.py — `EmployeeIn` + `_format_bank_export`
+- frontend/src/pages/Employees.jsx — EMPTY + input field "Atas Nama"
+

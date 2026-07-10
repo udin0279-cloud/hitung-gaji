@@ -198,6 +198,7 @@ class EmployeeIn(BaseModel):
     bpjs_ketenagakerjaan: bool = True
     bank_name: Optional[str] = None
     bank_account: Optional[str] = None
+    bank_account_holder: Optional[str] = None
     active: bool = True
 
 
@@ -2009,9 +2010,11 @@ def _format_bank_export(slips: List[Dict[str, Any]], emp_by_id: Dict[str, Dict[s
     rows = []
     for s in slips:
         emp = emp_by_id.get(s["employee_id"], {})
+        # Gunakan bank_account_holder bila diisi (kasus rekening atas nama istri/orangtua), fallback ke nama karyawan
+        recipient_name = emp.get("bank_account_holder") or s["name"]
         rows.append({
             "nik": s["nik"],
-            "name": s["name"],
+            "name": recipient_name,
             "bank": emp.get("bank_name") or "",
             "account": emp.get("bank_account") or "",
             "amount": round(float(s["net_salary"])),
