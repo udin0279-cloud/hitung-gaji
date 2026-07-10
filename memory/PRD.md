@@ -132,3 +132,30 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 - backend/server.py — `EmployeeIn`, `calculate_payslip`, PDF slip
 - frontend/src/pages/Employees.jsx — EMPTY, submit payload, input CurrencyInput
 - frontend/src/pages/Payslip.jsx & Portal.jsx — display Row
+
+---
+## Update: 2026-07-10 (session 2) — 6 Komponen Gaji Baru
+
+### Implemented
+**Pendapatan (Earnings):**
+- `tunjangan_tidak_tetap` — taxable PPh21, TIDAK masuk base BPJS
+- `tunjangan_wfh` — non-taxable benefit (mirip tunjangan transport)
+- `insentif_kolektif` — taxable PPh21, TIDAK masuk base BPJS
+- `insentif_lain` — taxable PPh21, TIDAK masuk base BPJS
+
+**Potongan (Deductions):**
+- `potongan_terlambat` — dipotong dari gross
+- `potongan_pulang_cepat` — dipotong dari gross
+
+### UI
+- Section baru "Potongan Kehadiran (Opsional)" di form Karyawan
+- Semua field tampil di slip gaji PDF, halaman `Payslip.jsx` dan `Portal.jsx` (hanya jika > 0)
+
+### Files Changed
+- backend/server.py — `EmployeeIn` model, `calculate_payslip`, PDF generator
+- frontend/src/pages/Employees.jsx — form + section baru
+- frontend/src/pages/Payslip.jsx, Portal.jsx — display rows
+
+### Verifikasi
+Test payroll Siti Aminah dgn semua komponen: Gross 20,4jt → Net 17,66jt. PPh21 ikut naik proporsional untuk taxable earnings, BPJS tidak berubah (sesuai desain).
+

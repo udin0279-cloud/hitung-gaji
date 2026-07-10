@@ -307,7 +307,11 @@ export function PortalPayslip() {
             {e.tunjangan_jabatan > 0 && <Row label="Tj. Jabatan" value={e.tunjangan_jabatan} />}
             {e.tunjangan_transport > 0 && <Row label="Tj. Transport" value={e.tunjangan_transport} />}
             {e.tunjangan_lainnya > 0 && <Row label="Tj. Lain-lain" value={e.tunjangan_lainnya} />}
+            {e.tunjangan_tidak_tetap > 0 && <Row label="Tj. Tidak Tetap" value={e.tunjangan_tidak_tetap} />}
+            {e.tunjangan_wfh > 0 && <Row label="Tj. WFH" value={e.tunjangan_wfh} />}
             {e.insentif_individu > 0 && <Row label="Insentif Individu" value={e.insentif_individu} />}
+            {e.insentif_kolektif > 0 && <Row label="Insentif Kolektif" value={e.insentif_kolektif} />}
+            {e.insentif_lain > 0 && <Row label="Insentif Lain-lain" value={e.insentif_lain} />}
             {e.overtime > 0 && <Row label="Lembur" value={e.overtime} />}
             {e.bonus > 0 && <Row label="Bonus" value={e.bonus} />}
             <Row label="Total Bruto" value={e.gross} bold border />
@@ -319,6 +323,9 @@ export function PortalPayslip() {
             <Row label="JP" value={d.jp_employee} />
             <Row label="PPh 21" value={d.pph21} />
             {d.loan > 0 && <Row label="Angsuran Pinjaman" value={d.loan} />}
+            {d.potongan_terlambat > 0 && <Row label="Potongan Terlambat" value={d.potongan_terlambat} />}
+            {d.potongan_pulang_cepat > 0 && <Row label="Potongan Pulang Cepat" value={d.potongan_pulang_cepat} />}
+            {d.other_deduction > 0 && <Row label="Potongan Lain" value={d.other_deduction} />}
             <Row label="Total Potongan" value={d.total} bold border />
           </div>
         </div>

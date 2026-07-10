@@ -17,6 +17,12 @@ const EMPTY = {
   tunjangan_transport: 0,
   tunjangan_lainnya: 0,
   insentif_individu: 0,
+  tunjangan_tidak_tetap: 0,
+  tunjangan_wfh: 0,
+  insentif_kolektif: 0,
+  insentif_lain: 0,
+  potongan_terlambat: 0,
+  potongan_pulang_cepat: 0,
   loan_installment: 0,
   loan_total_amount: 0,
   loan_tenor_total: 0,
@@ -87,6 +93,12 @@ export default function Employees() {
         tunjangan_transport: Number(form.tunjangan_transport) || 0,
         tunjangan_lainnya: Number(form.tunjangan_lainnya) || 0,
         insentif_individu: Number(form.insentif_individu) || 0,
+        tunjangan_tidak_tetap: Number(form.tunjangan_tidak_tetap) || 0,
+        tunjangan_wfh: Number(form.tunjangan_wfh) || 0,
+        insentif_kolektif: Number(form.insentif_kolektif) || 0,
+        insentif_lain: Number(form.insentif_lain) || 0,
+        potongan_terlambat: Number(form.potongan_terlambat) || 0,
+        potongan_pulang_cepat: Number(form.potongan_pulang_cepat) || 0,
         loan_installment: Number(form.loan_installment) || 0,
         loan_total_amount: Number(form.loan_total_amount) || 0,
         loan_tenor_total: Number(form.loan_tenor_total) || 0,
@@ -379,6 +391,28 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
             </Field>
             <Field label="Insentif Individu (Rp)" hint="Taxable PPh21, tidak masuk base BPJS">
               <CurrencyInput testId="emp-insentif-individu" value={form.insentif_individu} onChange={(v) => setForm({ ...form, insentif_individu: v })} />
+            </Field>
+            <Field label="Tunjangan Tidak Tetap (Rp)" hint="Taxable PPh21, tidak masuk base BPJS">
+              <CurrencyInput testId="emp-tj-tidak-tetap" value={form.tunjangan_tidak_tetap} onChange={(v) => setForm({ ...form, tunjangan_tidak_tetap: v })} />
+            </Field>
+            <Field label="Tunjangan WFH (Rp)" hint="Non-taxable benefit">
+              <CurrencyInput testId="emp-tj-wfh" value={form.tunjangan_wfh} onChange={(v) => setForm({ ...form, tunjangan_wfh: v })} />
+            </Field>
+            <Field label="Insentif Kolektif (Rp)" hint="Taxable PPh21, tidak masuk base BPJS">
+              <CurrencyInput testId="emp-insentif-kolektif" value={form.insentif_kolektif} onChange={(v) => setForm({ ...form, insentif_kolektif: v })} />
+            </Field>
+            <Field label="Insentif Lain-lain (Rp)" hint="Taxable PPh21, tidak masuk base BPJS">
+              <CurrencyInput testId="emp-insentif-lain" value={form.insentif_lain} onChange={(v) => setForm({ ...form, insentif_lain: v })} />
+            </Field>
+          </div>
+
+          <SectionTitle>Potongan Kehadiran (Opsional)</SectionTitle>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field label="Potongan Terlambat (Rp)" hint="Dipotong dari gross setiap payroll">
+              <CurrencyInput testId="emp-potongan-terlambat" value={form.potongan_terlambat} onChange={(v) => setForm({ ...form, potongan_terlambat: v })} />
+            </Field>
+            <Field label="Potongan Pulang Cepat (Rp)" hint="Dipotong dari gross setiap payroll">
+              <CurrencyInput testId="emp-potongan-pulang-cepat" value={form.potongan_pulang_cepat} onChange={(v) => setForm({ ...form, potongan_pulang_cepat: v })} />
             </Field>
           </div>
 

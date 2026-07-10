@@ -181,6 +181,12 @@ class EmployeeIn(BaseModel):
     tunjangan_transport: float = 0  # non-taxable benefit
     tunjangan_lainnya: float = 0  # non-taxable benefit
     insentif_individu: float = 0  # taxable untuk PPh21, TIDAK masuk base BPJS
+    tunjangan_tidak_tetap: float = 0  # taxable PPh21, TIDAK masuk base BPJS
+    tunjangan_wfh: float = 0  # non-taxable benefit
+    insentif_kolektif: float = 0  # taxable PPh21, TIDAK masuk base BPJS
+    insentif_lain: float = 0  # taxable PPh21, TIDAK masuk base BPJS
+    potongan_terlambat: float = 0  # dipotong dari gross
+    potongan_pulang_cepat: float = 0  # dipotong dari gross
     loan_installment: float = 0  # angsuran pinjaman bulanan
     loan_total_amount: float = 0  # total nilai pinjaman
     loan_tenor_total: int = 0  # total bulan tenor pinjaman
@@ -278,6 +284,12 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     tj_transport = float(employee.get("tunjangan_transport", 0))
     tj_lainnya = float(employee.get("tunjangan_lainnya", 0))
     insentif_individu = float(employee.get("insentif_individu", 0))
+    tj_tidak_tetap = float(employee.get("tunjangan_tidak_tetap", 0))
+    tj_wfh = float(employee.get("tunjangan_wfh", 0))
+    insentif_kolektif = float(employee.get("insentif_kolektif", 0))
+    insentif_lain = float(employee.get("insentif_lain", 0))
+    potongan_terlambat = float(employee.get("potongan_terlambat", 0))
+    potongan_pulang_cepat = float(employee.get("potongan_pulang_cepat", 0))
     loan_installment = float(employee.get("loan_installment", 0))
     loan_tenor_total = int(employee.get("loan_tenor_total", 0) or 0)
     loan_tenor_paid = int(employee.get("loan_tenor_paid", 0) or 0)
@@ -297,10 +309,12 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
 
     # Taxable = tunjangan yang masuk BPJS & PPh21 base
     taxable_allowance = fixed_allowance + tj_jabatan
-    # Non-taxable = benefit (transport, lain-lain) — masuk gross tapi tidak masuk base
-    non_taxable_allowance = tj_transport + tj_lainnya
+    # Non-taxable = benefit (transport, lain-lain, WFH) — masuk gross tapi tidak masuk base
+    non_taxable_allowance = tj_transport + tj_lainnya + tj_wfh
+    # Taxable-only allowance (PPh21 kena, BPJS tidak) — insentif + tunjangan tidak tetap
+    taxable_only_earnings = insentif_individu + insentif_kolektif + insentif_lain + tj_tidak_tetap
 
-    gross = basic_paid + taxable_allowance + non_taxable_allowance + insentif_individu + overtime_pay + bonus
+    gross = basic_paid + taxable_allowance + non_taxable_allowance + taxable_only_earnings + overtime_pay + bonus
 
     # BPJS Kesehatan (capped) — base = basic + taxable allowance only
     bpjs_kes_base = min(basic_paid + taxable_allowance, CONFIG["bpjs_kesehatan_max_base"]) if employee.get("bpjs_kesehatan") else 0
@@ -320,7 +334,7 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     jkm_employer = jht_base * CONFIG["jkm_employer"]
 
     # Annual PPh21 calculation — only taxable earnings contribute
-    taxable_gross_monthly = basic_paid + taxable_allowance + insentif_individu + overtime_pay + bonus
+    taxable_gross_monthly = basic_paid + taxable_allowance + taxable_only_earnings + overtime_pay + bonus
     bruto_monthly = taxable_gross_monthly + bpjs_kes_employer + jkk_employer + jkm_employer
     bruto_yearly = bruto_monthly * 12
 
@@ -343,7 +357,7 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     loan_active = loan_installment > 0 and (loan_tenor_total == 0 or loan_tenor_paid < loan_tenor_total)
     loan_deduction = loan_installment if loan_active else 0
 
-    total_deductions = bpjs_kes_employee + jht_employee + jp_employee + pph21_monthly + other_deduction + loan_deduction
+    total_deductions = bpjs_kes_employee + jht_employee + jp_employee + pph21_monthly + other_deduction + loan_deduction + potongan_terlambat + potongan_pulang_cepat
     net_salary = gross - total_deductions
 
     return {
@@ -354,6 +368,10 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
             "tunjangan_transport": round(tj_transport, 2),
             "tunjangan_lainnya": round(tj_lainnya, 2),
             "insentif_individu": round(insentif_individu, 2),
+            "tunjangan_tidak_tetap": round(tj_tidak_tetap, 2),
+            "tunjangan_wfh": round(tj_wfh, 2),
+            "insentif_kolektif": round(insentif_kolektif, 2),
+            "insentif_lain": round(insentif_lain, 2),
             "overtime": round(overtime_pay, 2),
             "bonus": round(bonus, 2),
             "gross": round(gross, 2),
@@ -365,6 +383,8 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
             "pph21": round(pph21_monthly, 2),
             "loan": round(loan_deduction, 2),
             "other_deduction": round(other_deduction, 2),
+            "potongan_terlambat": round(potongan_terlambat, 2),
+            "potongan_pulang_cepat": round(potongan_pulang_cepat, 2),
             "total": round(total_deductions, 2),
         },
         "loan_info": {
@@ -1186,8 +1206,16 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
         earn_rows.append(["Tj. Transport", _format_idr(e["tunjangan_transport"])])
     if e.get("tunjangan_lainnya", 0):
         earn_rows.append(["Tj. Lain-lain", _format_idr(e["tunjangan_lainnya"])])
+    if e.get("tunjangan_tidak_tetap", 0):
+        earn_rows.append(["Tj. Tidak Tetap", _format_idr(e["tunjangan_tidak_tetap"])])
+    if e.get("tunjangan_wfh", 0):
+        earn_rows.append(["Tj. WFH", _format_idr(e["tunjangan_wfh"])])
     if e.get("insentif_individu", 0):
         earn_rows.append(["Insentif Individu", _format_idr(e["insentif_individu"])])
+    if e.get("insentif_kolektif", 0):
+        earn_rows.append(["Insentif Kolektif", _format_idr(e["insentif_kolektif"])])
+    if e.get("insentif_lain", 0):
+        earn_rows.append(["Insentif Lain-lain", _format_idr(e["insentif_lain"])])
     if e.get("overtime", 0):
         earn_rows.append(["Lembur", _format_idr(e["overtime"])])
     if e.get("bonus", 0):
@@ -1203,6 +1231,10 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
     ]
     if d.get("loan", 0):
         deduct_rows.append(["Angsuran Pinjaman", _format_idr(d["loan"])])
+    if d.get("potongan_terlambat", 0):
+        deduct_rows.append(["Potongan Terlambat", _format_idr(d["potongan_terlambat"])])
+    if d.get("potongan_pulang_cepat", 0):
+        deduct_rows.append(["Potongan Pulang Cepat", _format_idr(d["potongan_pulang_cepat"])])
     if d.get("other_deduction", 0):
         deduct_rows.append(["Potongan Lain", _format_idr(d["other_deduction"])])
     deduct_rows.append(["Total Potongan", _format_idr(d["total"])])
