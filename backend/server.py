@@ -3750,6 +3750,212 @@ async def inv_waste_report_pdf(period: str, user: dict = Depends(require_super_a
     )
 
 
+# ---------------- Customer Master ----------------
+class CustomerIn(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    npwp: Optional[str] = None
+    contact_person: Optional[str] = None
+    notes: Optional[str] = None
+    active: bool = True
+
+
+@api_router.get("/inventory/customers")
+async def cust_list(user: dict = Depends(require_super_admin)):
+    items = await db.customers.find({}, {"_id": 0}).sort("name", 1).to_list(length=5000)
+    # Enrich dengan agregat order per customer
+    orders = await db.job_orders.find({}, {"_id": 0}).to_list(length=10000)
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for o in orders:
+        key = (o.get("customer") or "").strip().lower()
+        if not key:
+            continue
+        row = by_name.setdefault(key, {"count": 0, "revenue": 0.0, "material_cost": 0.0})
+        if o.get("status") != "batal":
+            row["count"] += 1
+            row["revenue"] += float(o.get("total_price", 0))
+            row["material_cost"] += float(o.get("total_material_cost", 0))
+    for c in items:
+        agg = by_name.get(c.get("name", "").strip().lower()) or {}
+        c["order_count"] = agg.get("count", 0)
+        c["total_revenue"] = round(agg.get("revenue", 0.0), 2)
+        c["total_material_cost"] = round(agg.get("material_cost", 0.0), 2)
+    return items
+
+
+@api_router.post("/inventory/customers")
+async def cust_create(payload: CustomerIn, user: dict = Depends(require_super_admin)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Nama customer wajib diisi")
+    # Cek duplicate name (case-insensitive)
+    existing = await db.customers.find_one({"name": {"$regex": f"^{payload.name.strip()}$", "$options": "i"}})
+    if existing:
+        raise HTTPException(status_code=400, detail="Customer dengan nama tersebut sudah ada")
+    doc = payload.model_dump()
+    doc["name"] = payload.name.strip()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.customers.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/inventory/customers/{customer_id}")
+async def cust_update(customer_id: str, payload: CustomerIn, user: dict = Depends(require_super_admin)):
+    existing = await db.customers.find_one({"id": customer_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Customer tidak ditemukan")
+    upd = payload.model_dump()
+    upd["name"] = payload.name.strip()
+    upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.customers.update_one({"id": customer_id}, {"$set": upd})
+    return await db.customers.find_one({"id": customer_id}, {"_id": 0})
+
+
+@api_router.delete("/inventory/customers/{customer_id}")
+async def cust_delete(customer_id: str, user: dict = Depends(require_super_admin)):
+    existing = await db.customers.find_one({"id": customer_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Customer tidak ditemukan")
+    await db.customers.delete_one({"id": customer_id})
+    return {"ok": True}
+
+
+# ---------------- Laporan Laba/Rugi (Profit & Loss) ----------------
+async def _payroll_cost_for_month(period: str) -> tuple:
+    """Return (total_net, employee_count) untuk payroll_runs dgn period=YYYY-MM. Fallback 0."""
+    run = await db.payroll_runs.find_one({"period": period}, {"_id": 0})
+    if not run:
+        return 0.0, 0
+    return float(run.get("total_net", 0)), int(run.get("employee_count", 0))
+
+
+@api_router.get("/reports/profit-loss/{period}")
+async def profit_loss_report(period: str, user: dict = Depends(require_super_admin)):
+    """P&L bulanan: Revenue (orders selesai/aktif) − COGS − Waste − Gaji = Net Profit."""
+    start, end, year, month = _parse_month(period)
+    # Orders (revenue & material cost) — exclude batal
+    orders = await db.job_orders.find({
+        "start_date": {"$gte": start, "$lte": end},
+        "status": {"$ne": "batal"},
+    }, {"_id": 0}).to_list(length=5000)
+    revenue = sum(float(o.get("total_price", 0)) for o in orders)
+    cogs = sum(float(o.get("total_material_cost", 0)) for o in orders)
+    gross_profit = revenue - cogs
+    # Waste
+    waste_docs = await db.waste.find({"date": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(length=5000)
+    waste_loss = sum(float(w.get("estimated_loss", 0)) for w in waste_docs)
+    # Payroll
+    payroll_cost, employee_count = await _payroll_cost_for_month(period)
+    # Total expenses
+    total_expenses = waste_loss + payroll_cost
+    net_profit = gross_profit - total_expenses
+    # Breakdown top customer
+    cust_agg: Dict[str, Dict[str, Any]] = {}
+    for o in orders:
+        key = (o.get("customer") or "-").strip()
+        if not key:
+            key = "-"
+        row = cust_agg.setdefault(key, {"customer": key, "orders": 0, "revenue": 0.0, "material_cost": 0.0})
+        row["orders"] += 1
+        row["revenue"] += float(o.get("total_price", 0))
+        row["material_cost"] += float(o.get("total_material_cost", 0))
+    top_customers = sorted(cust_agg.values(), key=lambda r: r["revenue"], reverse=True)[:10]
+    for r in top_customers:
+        r["revenue"] = round(r["revenue"], 2)
+        r["material_cost"] = round(r["material_cost"], 2)
+        r["margin"] = round(r["revenue"] - r["material_cost"], 2)
+    return {
+        "period": period,
+        "revenue": round(revenue, 2),
+        "cogs": round(cogs, 2),
+        "gross_profit": round(gross_profit, 2),
+        "gross_margin_pct": round((gross_profit / revenue * 100) if revenue > 0 else 0, 2),
+        "waste_loss": round(waste_loss, 2),
+        "payroll_cost": round(payroll_cost, 2),
+        "employee_count": employee_count,
+        "total_expenses": round(total_expenses, 2),
+        "net_profit": round(net_profit, 2),
+        "net_margin_pct": round((net_profit / revenue * 100) if revenue > 0 else 0, 2),
+        "order_count": len(orders),
+        "waste_records": len(waste_docs),
+        "top_customers": top_customers,
+    }
+
+
+@api_router.get("/reports/profit-loss/{period}/pdf")
+async def profit_loss_pdf(period: str, user: dict = Depends(require_super_admin)):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    r = await profit_loss_report(period, user)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm, topMargin=15 * mm, bottomMargin=15 * mm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("H1", parent=styles["Title"], fontSize=16, spaceAfter=6)
+    elems = [
+        Paragraph("<b>LAPORAN LABA / RUGI BULANAN</b>", h1),
+        Paragraph(f"Periode: <b>{period}</b>", styles["Normal"]),
+        Spacer(1, 10),
+    ]
+    def _fmt(n):
+        return f"Rp {n:,.0f}".replace(",", ".")
+    rows = [
+        ["Uraian", "Jumlah"],
+        [f"Pendapatan Penjualan ({r['order_count']} order)", _fmt(r['revenue'])],
+        ["(-) Biaya Bahan Baku (COGS)", _fmt(r['cogs'])],
+        [f"LABA KOTOR ({r['gross_margin_pct']}%)", _fmt(r['gross_profit'])],
+        [f"(-) Kerugian Waste/Rijek ({r['waste_records']} record)", _fmt(r['waste_loss'])],
+        [f"(-) Biaya Gaji Karyawan ({r['employee_count']} karyawan)", _fmt(r['payroll_cost'])],
+        ["Total Beban Operasional", _fmt(r['total_expenses'])],
+        [f"LABA / RUGI BERSIH ({r['net_margin_pct']}%)", _fmt(r['net_profit'])],
+    ]
+    tbl = Table(rows, colWidths=[100 * mm, 60 * mm])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#002FA7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#e8f0ff")),
+        ("FONTNAME", (0, 3), (-1, 3), "Helvetica-Bold"),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#002FA7") if r["net_profit"] >= 0 else colors.HexColor("#E81123")),
+        ("TEXTCOLOR", (0, -1), (-1, -1), colors.white),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, -1), (-1, -1), 11),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elems.append(tbl)
+    if r["top_customers"]:
+        elems.append(Spacer(1, 14))
+        elems.append(Paragraph("<b>Top Customer</b>", styles["Heading3"]))
+        crows = [["#", "Customer", "Order", "Revenue", "Margin"]]
+        for i, c in enumerate(r["top_customers"], 1):
+            crows.append([str(i), c["customer"], str(c["orders"]), _fmt(c["revenue"]), _fmt(c["margin"])])
+        ctbl = Table(crows, colWidths=[10 * mm, 70 * mm, 20 * mm, 35 * mm, 35 * mm])
+        ctbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f5f5f5")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("ALIGN", (2, 1), (4, -1), "RIGHT"),
+        ]))
+        elems.append(ctbl)
+    doc.build(elems)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="laba-rugi-{period}.pdf"'},
+    )
+
+
 # Include router
 app.include_router(api_router)
 

@@ -14,6 +14,7 @@ import Settings from "@/pages/Settings";
 import LeaveAdmin from "@/pages/LeaveAdmin";
 import Users from "@/pages/Users";
 import Inventory from "@/pages/Inventory";
+import Reports from "@/pages/Reports";
 import Layout from "@/components/Layout";
 import PortalLogin from "@/pages/PortalLogin";
 import PortalForgot from "@/pages/PortalForgot";
@@ -66,6 +67,7 @@ function App() {
               <Route path="/leave" element={<ProtectedRoute allowedRoles={["super_admin", "hr_leave"]}><LeaveAdmin /></ProtectedRoute>} />
               <Route path="/users" element={<ProtectedRoute allowedRoles={["super_admin"]}><Users /></ProtectedRoute>} />
               <Route path="/inventory" element={<ProtectedRoute allowedRoles={["super_admin"]}><Inventory /></ProtectedRoute>} />
+              <Route path="/reports" element={<ProtectedRoute allowedRoles={["super_admin"]}><Reports /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute allowedRoles={["super_admin"]}><Settings /></ProtectedRoute>} />
             </Route>
 

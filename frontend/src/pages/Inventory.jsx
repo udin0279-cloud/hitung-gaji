@@ -41,18 +41,20 @@ export default function Inventory() {
   const [waste, setWaste] = useState([]);
   const [orders, setOrders] = useState([]);
   const [adjusts, setAdjusts] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [m, s, si, w, o, adj] = await Promise.all([
+      const [m, s, si, w, o, adj, c] = await Promise.all([
         api.get("/inventory/materials"),
         api.get("/inventory/stats"),
         api.get("/inventory/stock-in"),
         api.get("/inventory/waste"),
         api.get("/inventory/orders"),
         api.get("/inventory/stock-adjust"),
+        api.get("/inventory/customers"),
       ]);
       setMaterials(m.data);
       setStats(s.data);
@@ -60,6 +62,7 @@ export default function Inventory() {
       setWaste(w.data);
       setOrders(o.data);
       setAdjusts(adj.data);
+      setCustomers(c.data);
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
     } finally {
@@ -110,6 +113,7 @@ export default function Inventory() {
           <TabButton active={tab === "stock-in"} onClick={() => setTab("stock-in")} testId="tab-stock-in">Barang Masuk</TabButton>
           <TabButton active={tab === "waste"} onClick={() => setTab("waste")} testId="tab-waste">Sisa / Rijek</TabButton>
           <TabButton active={tab === "orders"} onClick={() => setTab("orders")} testId="tab-orders">Order Produksi</TabButton>
+          <TabButton active={tab === "customers"} onClick={() => setTab("customers")} testId="tab-customers">Customer</TabButton>
           <TabButton active={tab === "opname"} onClick={() => setTab("opname")} testId="tab-opname">Opname</TabButton>
         </div>
       </div>
@@ -124,7 +128,9 @@ export default function Inventory() {
         ) : tab === "waste" ? (
           <WasteTab materials={materials} waste={waste} reload={loadAll} />
         ) : tab === "orders" ? (
-          <OrdersTab materials={materials} orders={orders} reload={loadAll} />
+          <OrdersTab materials={materials} orders={orders} customers={customers} reload={loadAll} />
+        ) : tab === "customers" ? (
+          <CustomersTab customers={customers} reload={loadAll} />
         ) : (
           <OpnameTab materials={materials} adjusts={adjusts} reload={loadAll} />
         )}
@@ -721,7 +727,7 @@ const ORDER_STATUS_CLS = {
   batal: "border-zinc-400 text-zinc-500 bg-zinc-50",
 };
 
-function OrdersTab({ materials, orders, reload }) {
+function OrdersTab({ materials, orders, customers, reload }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_ORDER);
   const [saving, setSaving] = useState(false);
@@ -882,7 +888,10 @@ function OrdersTab({ materials, orders, reload }) {
             <form onSubmit={submit} className="p-5 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Field label="Customer">
-                  <input data-testid="order-customer" required value={form.customer} onChange={(e) => setForm((f) => ({ ...f, customer: e.target.value }))} className={inputCls} placeholder="PT Contoh Advertising" />
+                  <input data-testid="order-customer" required list="customers-list" value={form.customer} onChange={(e) => setForm((f) => ({ ...f, customer: e.target.value }))} className={inputCls} placeholder="Ketik atau pilih customer" />
+                  <datalist id="customers-list">
+                    {(customers || []).map((c) => <option key={c.id} value={c.name} />)}
+                  </datalist>
                 </Field>
                 <Field label="No. Order (Opsional)" hint="Auto-generate jika kosong">
                   <input data-testid="order-no" value={form.order_no || ""} onChange={(e) => setForm((f) => ({ ...f, order_no: e.target.value }))} className={inputCls + " font-mono"} />
@@ -1118,6 +1127,155 @@ function OpnameTab({ materials, adjusts, reload }) {
   );
 }
 
+
+/* ---------------- CUSTOMERS TAB ---------------- */
+const EMPTY_CUST = { name: "", phone: "", email: "", address: "", npwp: "", contact_person: "", notes: "", active: true };
+
+function CustomersTab({ customers, reload }) {
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(EMPTY_CUST);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filtered = customers.filter((c) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return c.name.toLowerCase().includes(q) || (c.phone || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q);
+  });
+
+  const openCreate = () => { setEditing(null); setForm(EMPTY_CUST); setOpen(true); };
+  const openEdit = (c) => { setEditing(c); setForm({ ...EMPTY_CUST, ...c }); setOpen(true); };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      if (editing) {
+        await api.put(`/inventory/customers/${editing.id}`, form);
+        toast.success("Customer diperbarui");
+      } else {
+        await api.post("/inventory/customers", form);
+        toast.success("Customer ditambahkan");
+      }
+      setOpen(false);
+      await reload();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal menyimpan");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (c) => {
+    if (!window.confirm(`Hapus customer "${c.name}"?`)) return;
+    try { await api.delete(`/inventory/customers/${c.id}`); toast.success("Customer dihapus"); await reload(); }
+    catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
+  };
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <input data-testid="cust-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / telepon / email…" className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none" />
+        </div>
+        <button data-testid="add-customer-button" onClick={openCreate} className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2">
+          <Plus className="w-4 h-4" /> Tambah Customer
+        </button>
+      </div>
+
+      <div className="border border-zinc-200 bg-white overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
+              <th className="px-4 py-3">Nama Customer</th>
+              <th className="px-4 py-3">Kontak</th>
+              <th className="px-4 py-3">NPWP</th>
+              <th className="px-4 py-3 text-right">Order</th>
+              <th className="px-4 py-3 text-right">Total Revenue</th>
+              <th className="px-4 py-3 text-right">Total Margin</th>
+              <th className="px-4 py-3 text-right">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada customer. Klik &ldquo;Tambah Customer&rdquo;.</td></tr>
+            )}
+            {filtered.map((c) => {
+              const margin = Number(c.total_revenue || 0) - Number(c.total_material_cost || 0);
+              return (
+                <tr key={c.id} data-testid="customer-row" className="border-b border-zinc-100 hover:bg-zinc-50/80">
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-zinc-900">{c.name}</div>
+                    {c.contact_person && <div className="text-xs text-zinc-500">CP: {c.contact_person}</div>}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {c.phone && <div className="font-mono text-zinc-700">{c.phone}</div>}
+                    {c.email && <div className="text-zinc-500">{c.email}</div>}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-zinc-500">{c.npwp || "—"}</td>
+                  <td className="px-4 py-3 font-mono text-right text-zinc-900">{c.order_count || 0}</td>
+                  <td className="px-4 py-3 font-mono text-right text-zinc-900 font-semibold">{formatIDR(c.total_revenue || 0)}</td>
+                  <td className={`px-4 py-3 font-mono text-right font-bold ${margin >= 0 ? "text-[#008A00]" : "text-[#E81123]"}`}>{formatIDR(margin)}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <button data-testid="edit-customer-button" onClick={() => openEdit(c)} className="p-1.5 hover:bg-zinc-100 text-zinc-700"><Pencil className="w-3.5 h-3.5" /></button>
+                      <button data-testid="delete-customer-button" onClick={() => remove(c)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+          <div className="bg-white border border-zinc-300 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-zinc-200 sticky top-0 bg-white">
+              <div>
+                <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">{editing ? "Edit" : "Baru"}</div>
+                <div className="font-heading text-xl font-bold text-zinc-900">{editing ? "Edit Customer" : "Tambah Customer"}</div>
+              </div>
+              <button onClick={() => setOpen(false)} className="p-1.5 hover:bg-zinc-100" data-testid="close-customer-modal"><X className="w-4 h-4" /></button>
+            </div>
+            <form onSubmit={submit} className="p-5 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="Nama Customer">
+                  <input data-testid="cust-name" required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} placeholder="PT Contoh Advertising" />
+                </Field>
+                <Field label="Contact Person">
+                  <input data-testid="cust-cp" value={form.contact_person || ""} onChange={(e) => setForm((f) => ({ ...f, contact_person: e.target.value }))} className={inputCls} placeholder="Bapak Budi" />
+                </Field>
+                <Field label="Telepon">
+                  <input data-testid="cust-phone" value={form.phone || ""} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className={inputCls + " font-mono"} placeholder="0812xxxx" />
+                </Field>
+                <Field label="Email">
+                  <input data-testid="cust-email" type="email" value={form.email || ""} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} />
+                </Field>
+                <Field label="NPWP (Opsional)">
+                  <input data-testid="cust-npwp" value={form.npwp || ""} onChange={(e) => setForm((f) => ({ ...f, npwp: e.target.value }))} className={inputCls + " font-mono"} />
+                </Field>
+                <Field label="Alamat">
+                  <input data-testid="cust-address" value={form.address || ""} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} className={inputCls} />
+                </Field>
+              </div>
+              <Field label="Catatan (Opsional)">
+                <input data-testid="cust-notes" value={form.notes || ""} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} className={inputCls} />
+              </Field>
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-zinc-200">
+                <button type="button" onClick={() => setOpen(false)} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-5 py-2.5 text-sm font-medium hover:bg-zinc-50">Batal</button>
+                <button data-testid="save-customer-button" type="submit" disabled={saving} className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 disabled:opacity-60">{saving ? "Menyimpan…" : "Simpan"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ---------------- Shared field/section ---------------- */
 function Field({ label, hint, children }) {

@@ -1,0 +1,36 @@
+{
+  "summary": "Full end-to-end verification of iteration 13 (Customer Master + Profit/Loss monthly). Backend: 15/15 pytest tests PASSED (customer create/list/update/delete + duplicate/empty name/404 guards + aggregate-from-orders + P&L structure/formula/PDF/invalid period/zero month). Frontend: Sidebar nav-reports, /reports hero net-profit with color coding, all 6 P&L breakdown fields (revenue/cogs/gross-profit/waste/payroll/expenses), top-customer table, period auto-reload, PDF download, Inventory tab-customers + add-customer flow, and Orders datalist autocomplete — ALL verified successfully via Playwright.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard", "issues": ["Recharts warning 'The width(-1) and height(-1) of chart should be greater than 0' logged when first rendering the dashboard chart. Non-blocking (chart renders fine after container measures). Existed in earlier iterations too."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_customer_pl.py",
+    "/app/test_reports/pytest/pytest_customer_pl.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L3765 cust_list scans ALL job_orders (up to 10 000 docs) and ALL customers on every GET to compute aggregates in Python. Fine for current scale but consider a Mongo aggregation pipeline ($group by lower(customer)) once orders grow to tens of thousands, or cache the aggregate in the customer doc updated on order create/complete/cancel.",
+    "server.py L3793 duplicate-name check uses a $regex with unescaped user input. Names containing regex special chars (e.g. '.', '+', '(', ')') could accidentally match unrelated docs or throw regex errors. Suggest re.escape(payload.name.strip()) before injecting into the pattern, OR add a unique case-insensitive index on customers.name_lower (denormalized field).",
+    "server.py L3826 P&L endpoint filters orders by start_date; this correctly excludes cancelled ('batal') orders but INCLUDES all others regardless of status ('aktif', 'selesai'). Confirmed matches problem statement. However, aktif orders that have not billed yet still count as revenue — worth documenting for accounting semantics (cash vs. accrual).",
+    "server.py L3848 waste_docs are filtered by 'date' field (string). Waste POST elsewhere uses 'date' field consistently — verified match. Good.",
+    "server.py L3888 profit_loss_pdf calls profit_loss_report(period, user) directly. This works but couples the two endpoints; if the report signature changes (e.g. adds a second dependency), the PDF endpoint will break silently. Consider extracting the calculation into an async helper _compute_profit_loss(period) callable by both.",
+    "Reports.jsx & Inventory.jsx CustomersTab both render decimal margins/revenue via Intl formatter. If total_revenue is 0 due to case mismatch between customers.name and job_orders.customer, no obvious hint to user. UX-improvement: add a small tooltip on the ORDER column '0' explaining that aggregation matches by lowercase name.",
+    "Non-blocking (dev-only): Emergent dev overlay logs 'option cannot be child of span' hydration warning on all <select><option> in modals (order-item-mat-*, adj-material, w-material, si-material). Already reported iterations 11 & 12; does NOT affect production build.",
+    "Reports.jsx does NOT include an Excel/CSV export button for P&L (only PDF). Users may want to import into their own spreadsheets; consider adding /api/reports/profit-loss/{period}/excel for consistency with Waste Report."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_customer_pl.py (new — 15 pytest cases across TestCustomerMaster, TestProfitLoss and a cleanup module)"
+  ],
+  "success_rate": { "backend": "100% (15/15)", "frontend": "100%" },
+  "test_credentials": "admin@payroll.id / admin123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Backend pytest: creates and hard-deletes TEST_Cust_*, TEST_AggCust_* + one TEST_AggMat_* material + 2 orders in the current month. UI test: created TEST_UI_Cust_8BBBC0 and deleted it at the end (toast 'Customer dihapus' confirmed). Manual seed 'PT Test Advertising' (with 1 order Rp 750k) left intact for main-agent verification.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 13 fully verified: (1) POST /api/inventory/customers rejects empty/duplicate names (case-insensitive), (2) GET /api/inventory/customers returns customers WITH aggregated order_count/total_revenue/total_material_cost matched by lowercase job_orders.customer, excluding 'batal'; (3) PUT/DELETE work + 404 on unknown; (4) GET /api/reports/profit-loss/{YYYY-MM} returns full P&L object; formulas verified: gross_profit=revenue-cogs, total_expenses=waste_loss+payroll_cost, net_profit=gross_profit-total_expenses, plus safe division by zero for margin pct; (5) /pdf endpoint returns valid PDF (%PDF-, 2.7KB with color-coded totals row). Frontend: /reports hero card colors green/red based on net_profit sign; all 6 breakdown fields render; datalist autocomplete works end-to-end (create customer under Inventory tab → appears immediately as option under 'Order Produksi > Customer' field).",
+  "rca of the issue": "No issues — all acceptance criteria satisfied."
+}
