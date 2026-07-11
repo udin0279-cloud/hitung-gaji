@@ -14,7 +14,7 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Form, Body
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -4039,6 +4039,362 @@ async def profit_loss_pdf(period: str, user: dict = Depends(require_super_admin)
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="laba-rugi-{period}.pdf"'},
     )
+
+
+
+# ---------------- Purchasing Module ----------------
+class SupplierIn(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    email: Optional[str] = None
+    contact_person: Optional[str] = None
+    notes: Optional[str] = None
+    active: bool = True
+
+
+class POItemIn(BaseModel):
+    material_id: str
+    quantity: float
+    unit_price: float
+
+
+class PurchaseOrderIn(BaseModel):
+    supplier_id: Optional[str] = None
+    supplier_name: Optional[str] = None  # jika supplier belum di-master
+    po_no: Optional[str] = None
+    date: str  # ISO YYYY-MM-DD
+    items: List[POItemIn] = []
+    tax_pct: float = 0
+    notes: Optional[str] = None
+    invoice_no: Optional[str] = None
+
+
+PO_STATUS = ["draft", "diterima", "batal"]
+PAY_STATUS = ["belum_lunas", "sebagian", "lunas"]
+
+
+async def _next_po_no() -> str:
+    today = datetime.now(timezone.utc).date()
+    prefix = f"PO-{today.strftime('%Y%m')}-"
+    count = await db.purchase_orders.count_documents({"po_no": {"$regex": f"^{re.escape(prefix)}"}})
+    return f"{prefix}{count + 1:04d}"
+
+
+# ----- Supplier CRUD -----
+@api_router.get("/purchasing/suppliers")
+async def sup_list(user: dict = Depends(require_super_admin)):
+    items = await db.suppliers.find({}, {"_id": 0}).sort("name", 1).to_list(length=5000)
+    # Enrich dgn agregat PO
+    pos = await db.purchase_orders.find({}, {"_id": 0, "supplier_id": 1, "total": 1, "status": 1, "payment_status": 1, "amount_paid": 1}).to_list(length=20000)
+    agg: Dict[str, Dict[str, Any]] = {}
+    for p in pos:
+        sid = p.get("supplier_id")
+        if not sid or p.get("status") == "batal":
+            continue
+        row = agg.setdefault(sid, {"po_count": 0, "total_purchase": 0.0, "outstanding": 0.0})
+        row["po_count"] += 1
+        total = float(p.get("total", 0))
+        paid = float(p.get("amount_paid", 0))
+        row["total_purchase"] += total
+        if p.get("payment_status") != "lunas":
+            row["outstanding"] += max(total - paid, 0)
+    for s in items:
+        a = agg.get(s.get("id")) or {}
+        s["po_count"] = a.get("po_count", 0)
+        s["total_purchase"] = round(a.get("total_purchase", 0), 2)
+        s["outstanding"] = round(a.get("outstanding", 0), 2)
+    return items
+
+
+@api_router.post("/purchasing/suppliers")
+async def sup_create(payload: SupplierIn, user: dict = Depends(require_super_admin)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Nama supplier wajib diisi")
+    safe = re.escape(payload.name.strip())
+    exists = await db.suppliers.find_one({"name": {"$regex": f"^{safe}$", "$options": "i"}})
+    if exists:
+        raise HTTPException(status_code=400, detail="Supplier dengan nama tersebut sudah ada")
+    doc = payload.model_dump()
+    doc["name"] = payload.name.strip()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.suppliers.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/purchasing/suppliers/{sid}")
+async def sup_update(sid: str, payload: SupplierIn, user: dict = Depends(require_super_admin)):
+    existing = await db.suppliers.find_one({"id": sid})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Supplier tidak ditemukan")
+    upd = payload.model_dump()
+    upd["name"] = payload.name.strip()
+    upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.suppliers.update_one({"id": sid}, {"$set": upd})
+    return await db.suppliers.find_one({"id": sid}, {"_id": 0})
+
+
+@api_router.delete("/purchasing/suppliers/{sid}")
+async def sup_delete(sid: str, user: dict = Depends(require_super_admin)):
+    existing = await db.suppliers.find_one({"id": sid})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Supplier tidak ditemukan")
+    has_po = await db.purchase_orders.find_one({"supplier_id": sid})
+    if has_po:
+        await db.suppliers.update_one({"id": sid}, {"$set": {"active": False, "updated_at": datetime.now(timezone.utc).isoformat()}})
+        return {"ok": True, "soft_deleted": True}
+    await db.suppliers.delete_one({"id": sid})
+    return {"ok": True, "soft_deleted": False}
+
+
+# ----- Purchase Order CRUD -----
+async def _enrich_po(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    mats = {m["id"]: m async for m in db.materials.find({}, {"_id": 0})}
+    for po in items:
+        for it in po.get("items") or []:
+            mat = mats.get(it.get("material_id")) or {}
+            it["material_name"] = mat.get("name") or "-"
+            it["material_unit"] = mat.get("unit") or ""
+    return items
+
+
+@api_router.get("/purchasing/purchase-orders")
+async def po_list(user: dict = Depends(require_super_admin), status: Optional[str] = None, payment_status: Optional[str] = None):
+    q = {}
+    if status:
+        q["status"] = status
+    if payment_status:
+        q["payment_status"] = payment_status
+    items = await db.purchase_orders.find(q, {"_id": 0}).sort("created_at", -1).to_list(length=5000)
+    return await _enrich_po(items)
+
+
+@api_router.post("/purchasing/purchase-orders")
+async def po_create(payload: PurchaseOrderIn, user: dict = Depends(require_super_admin)):
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="PO harus memiliki minimal 1 item bahan")
+    supplier_name = payload.supplier_name
+    if payload.supplier_id:
+        sup = await db.suppliers.find_one({"id": payload.supplier_id})
+        if not sup:
+            raise HTTPException(status_code=400, detail="Supplier tidak ditemukan")
+        supplier_name = sup.get("name")
+    if not supplier_name:
+        raise HTTPException(status_code=400, detail="Supplier wajib diisi")
+    items_out = []
+    subtotal = 0.0
+    for it in payload.items:
+        mat = await db.materials.find_one({"id": it.material_id})
+        if not mat:
+            raise HTTPException(status_code=400, detail=f"Bahan {it.material_id} tidak ditemukan")
+        if it.quantity <= 0 or it.unit_price < 0:
+            raise HTTPException(status_code=400, detail=f"Qty & harga bahan {mat.get('name')} tidak valid")
+        line_total = round(float(it.quantity) * float(it.unit_price), 2)
+        items_out.append({
+            "material_id": it.material_id,
+            "quantity": float(it.quantity),
+            "unit_price": float(it.unit_price),
+            "total": line_total,
+        })
+        subtotal += line_total
+    tax = round(subtotal * float(payload.tax_pct or 0) / 100, 2)
+    total = round(subtotal + tax, 2)
+    po_no = payload.po_no or await _next_po_no()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "po_no": po_no,
+        "supplier_id": payload.supplier_id,
+        "supplier_name": supplier_name,
+        "date": payload.date,
+        "items": items_out,
+        "subtotal": round(subtotal, 2),
+        "tax_pct": float(payload.tax_pct or 0),
+        "tax_amount": tax,
+        "total": total,
+        "status": "draft",
+        "payment_status": "belum_lunas",
+        "amount_paid": 0.0,
+        "invoice_no": payload.invoice_no,
+        "notes": payload.notes,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": user.get("email"),
+    }
+    await db.purchase_orders.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/purchasing/purchase-orders/{po_id}/receive")
+async def po_receive(po_id: str, user: dict = Depends(require_super_admin)):
+    """Tandai PO diterima → auto-buat stock_in entry per item + update material stok & harga beli terbaru."""
+    po = await db.purchase_orders.find_one({"id": po_id})
+    if not po:
+        raise HTTPException(status_code=404, detail="PO tidak ditemukan")
+    if po.get("status") == "diterima":
+        return {"ok": True, "already": True}
+    if po.get("status") == "batal":
+        raise HTTPException(status_code=400, detail="PO sudah dibatalkan")
+    now = datetime.now(timezone.utc).isoformat()
+    for it in po.get("items") or []:
+        mat = await db.materials.find_one({"id": it["material_id"]})
+        if not mat:
+            continue
+        qty = float(it["quantity"])
+        unit_price = float(it["unit_price"])
+        # Insert stock_in entry
+        si_doc = {
+            "id": str(uuid.uuid4()),
+            "material_id": it["material_id"],
+            "quantity": qty,
+            "unit_price": unit_price,
+            "total_price": round(qty * unit_price, 2),
+            "supplier": po.get("supplier_name"),
+            "invoice_no": po.get("invoice_no") or po.get("po_no"),
+            "date": po.get("date"),
+            "notes": f"Auto dari PO {po.get('po_no')}",
+            "po_id": po_id,
+            "po_no": po.get("po_no"),
+            "created_at": now,
+            "created_by": user.get("email"),
+        }
+        await db.stock_in.insert_one(si_doc)
+        # Update material stok & harga beli
+        new_stock = round(float(mat.get("current_stock", 0)) + qty, 4)
+        await db.materials.update_one(
+            {"id": it["material_id"]},
+            {"$set": {"current_stock": new_stock, "purchase_price": unit_price, "updated_at": now}},
+        )
+    await db.purchase_orders.update_one(
+        {"id": po_id},
+        {"$set": {"status": "diterima", "received_at": now, "received_by": user.get("email")}},
+    )
+    return {"ok": True, "received_at": now}
+
+
+@api_router.put("/purchasing/purchase-orders/{po_id}/cancel")
+async def po_cancel(po_id: str, user: dict = Depends(require_super_admin)):
+    po = await db.purchase_orders.find_one({"id": po_id})
+    if not po:
+        raise HTTPException(status_code=404, detail="PO tidak ditemukan")
+    if po.get("status") == "diterima":
+        raise HTTPException(status_code=400, detail="PO sudah diterima, batalkan penerimaan dulu bila perlu")
+    await db.purchase_orders.update_one({"id": po_id}, {"$set": {"status": "batal", "cancelled_at": datetime.now(timezone.utc).isoformat()}})
+    return {"ok": True}
+
+
+@api_router.put("/purchasing/purchase-orders/{po_id}/pay")
+async def po_pay(po_id: str, payload: Dict[str, Any] = Body(...), user: dict = Depends(require_super_admin)):
+    amount = float(payload.get("amount", 0))
+    if amount < 0:
+        raise HTTPException(status_code=400, detail="Jumlah pembayaran tidak valid")
+    po = await db.purchase_orders.find_one({"id": po_id})
+    if not po:
+        raise HTTPException(status_code=404, detail="PO tidak ditemukan")
+    new_paid = round(float(po.get("amount_paid", 0)) + amount, 2)
+    total = float(po.get("total", 0))
+    if new_paid >= total:
+        new_paid = total
+        payment_status = "lunas"
+    elif new_paid > 0:
+        payment_status = "sebagian"
+    else:
+        payment_status = "belum_lunas"
+    await db.purchase_orders.update_one(
+        {"id": po_id},
+        {"$set": {"amount_paid": new_paid, "payment_status": payment_status, "last_payment_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    doc = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/purchasing/purchase-orders/{po_id}")
+async def po_delete(po_id: str, user: dict = Depends(require_super_admin)):
+    po = await db.purchase_orders.find_one({"id": po_id})
+    if not po:
+        raise HTTPException(status_code=404, detail="PO tidak ditemukan")
+    if po.get("status") == "diterima":
+        # Rollback stock_in entries + kurangi stok
+        si_docs = await db.stock_in.find({"po_id": po_id}, {"_id": 0}).to_list(length=1000)
+        for si in si_docs:
+            mat = await db.materials.find_one({"id": si["material_id"]})
+            if mat:
+                new_stock = round(float(mat.get("current_stock", 0)) - float(si.get("quantity", 0)), 4)
+                await db.materials.update_one({"id": si["material_id"]}, {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}})
+        await db.stock_in.delete_many({"po_id": po_id})
+    await db.purchase_orders.delete_one({"id": po_id})
+    return {"ok": True}
+
+
+# ----- Price History -----
+@api_router.get("/purchasing/price-history")
+async def price_history(material_id: Optional[str] = None, user: dict = Depends(require_super_admin)):
+    """Riwayat harga beli — dari stock_in (semua sumber: manual + auto-PO)."""
+    q = {}
+    if material_id:
+        q["material_id"] = material_id
+    items = await db.stock_in.find(q, {"_id": 0}).sort("date", 1).to_list(length=10000)
+    items = await _enrich_with_material(items)
+    # Group by material — return per material terpisah bila material_id tidak diisi
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for it in items:
+        mid = it.get("material_id")
+        if not mid:
+            continue
+        g = grouped.setdefault(mid, {
+            "material_id": mid,
+            "material_name": it.get("material_name"),
+            "material_unit": it.get("material_unit"),
+            "history": [],
+        })
+        g["history"].append({
+            "date": it.get("date"),
+            "unit_price": float(it.get("unit_price", 0)),
+            "quantity": float(it.get("quantity", 0)),
+            "supplier": it.get("supplier"),
+            "po_no": it.get("po_no"),
+            "invoice_no": it.get("invoice_no"),
+        })
+    # Hitung min/max/avg + first/last
+    result = []
+    for g in grouped.values():
+        hist = g["history"]
+        prices = [h["unit_price"] for h in hist]
+        g["min_price"] = round(min(prices), 2) if prices else 0
+        g["max_price"] = round(max(prices), 2) if prices else 0
+        g["avg_price"] = round(sum(prices) / len(prices), 2) if prices else 0
+        g["current_price"] = hist[-1]["unit_price"] if hist else 0
+        g["first_price"] = hist[0]["unit_price"] if hist else 0
+        g["change_pct"] = round(((g["current_price"] - g["first_price"]) / g["first_price"] * 100), 2) if g["first_price"] > 0 else 0
+        result.append(g)
+    result.sort(key=lambda x: x.get("material_name") or "")
+    return {"count": len(result), "items": result}
+
+
+# ----- Purchasing Stats -----
+@api_router.get("/purchasing/stats")
+async def purchasing_stats(user: dict = Depends(require_super_admin)):
+    pos = await db.purchase_orders.find({}, {"_id": 0}).to_list(length=20000)
+    total_po = len(pos)
+    total_purchase = sum(float(p.get("total", 0)) for p in pos if p.get("status") != "batal")
+    outstanding = 0.0
+    unpaid_pos = 0
+    for p in pos:
+        if p.get("status") == "batal":
+            continue
+        if p.get("payment_status") != "lunas":
+            outstanding += max(float(p.get("total", 0)) - float(p.get("amount_paid", 0)), 0)
+            if p.get("payment_status") == "belum_lunas":
+                unpaid_pos += 1
+    total_suppliers = await db.suppliers.count_documents({"active": True})
+    return {
+        "total_po": total_po,
+        "total_purchase": round(total_purchase, 2),
+        "outstanding": round(outstanding, 2),
+        "unpaid_pos": unpaid_pos,
+        "total_suppliers": total_suppliers,
+    }
 
 
 # Include router
