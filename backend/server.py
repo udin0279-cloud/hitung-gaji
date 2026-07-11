@@ -1621,7 +1621,14 @@ async def dashboard_stats(user: dict = Depends(require_super_admin)):
     # Kontrak/OJT akan habis dalam 90 hari
     expiring = await _find_expiring_contracts(90)
     # Inventory summary utk widget dashboard
-    inv_summary = None
+    inv_summary = {
+        "total_materials": 0,
+        "total_stock_value": 0.0,
+        "low_stock_count": 0,
+        "total_waste_this_month": 0.0,
+        "waste_records_this_month": 0,
+        "top_waste": [],
+    }
     try:
         mats = await db.materials.find({}, {"_id": 0}).to_list(length=5000)
         total_stock_value = sum(float(m.get("current_stock", 0)) * float(m.get("purchase_price", 0)) for m in mats)

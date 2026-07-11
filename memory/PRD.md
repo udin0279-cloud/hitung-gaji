@@ -256,3 +256,45 @@ Test file: `/app/backend/tests/test_inventory.py`
 - Stock adjustment manual (koreksi opname)
 - Kaitkan waste dgn karyawan (integrasi ke `employees` collection)
 
+
+---
+## Update: 2026-07-11 (session 3) — Inventory ERP Extras (4 fitur)
+
+### 1. Order/Job Produksi dengan BOM
+- Collection `job_orders`: order_no (auto JO-YYYYMM-XXXX), customer, product_name, qty, unit_price, items (BOM), status (aktif/selesai/batal), total_material_cost, total_price, gross_margin
+- **Auto-decrement stok** saat order dibuat sesuai BOM
+- **Complete**: status → selesai (no stock change)
+- **Cancel/Delete**: rollback stok jika masih aktif/selesai
+- Validasi: qty > 0, cek stok mencukupi sebelum submit
+
+### 2. Widget Inventory di Dashboard
+- Field `inventory` di `/api/dashboard/stats`: total_materials, total_stock_value, low_stock_count, total_waste_this_month, top_waste[]
+- Komponen `InventoryWidget` di Dashboard.jsx menampilkan nilai stok + top 3 waste bulan ini + link ke /inventory
+
+### 3. Laporan Bulanan Waste (Excel + PDF)
+- `GET /api/inventory/waste/report/{YYYY-MM}/excel` — openpyxl (landscape header, IDR formatting, total row)
+- `GET /api/inventory/waste/report/{YYYY-MM}/pdf` — reportlab (landscape A4, styled table)
+- UI: date picker month + tombol Excel/PDF di WasteTab
+
+### 4. Stock Adjustment (Opname)
+- Collection `stock_adjust`: material_id, stock_before, stock_after, delta, reason (opname/koreksi/lainnya), date, notes
+- Endpoint: `GET/POST/DELETE /api/inventory/stock-adjust`
+- DELETE me-rollback stok ke stock_before
+- Tab "Opname" di Inventory dgn preview selisih real-time
+
+### API Endpoints Baru
+- `GET/POST /api/inventory/orders`, `PUT /orders/{id}/complete`, `PUT /orders/{id}/cancel`, `DELETE /orders/{id}`
+- `GET/POST/DELETE /api/inventory/stock-adjust`
+- `GET /api/inventory/waste/report/{period}/excel|pdf`
+
+### Testing
+Testing agent iteration_12: **Backend 20/20 pytest passed** + **Frontend E2E Playwright 100% passed**.
+Test file: `/app/backend/tests/test_inventory_extras.py`
+
+### Backlog Enhancement (opsional)
+- Multi-batch pricing (FIFO/LIFO) — saat ini pakai "last purchase price"
+- Concurrency-safe order_no generator (findAndModify counter)
+- Mongo transaction utk atomic order+stock update
+- Kaitkan job order ke Sales/Customer master
+- Alert stok menipis via WhatsApp/Email
+
