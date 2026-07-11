@@ -1,0 +1,33 @@
+{
+  "summary": "Full end-to-end verification of Inventory extras iteration 12: Job Order/Produksi (BOM auto-decrement + margin calc + complete/cancel/delete with stock rollback), Stock Adjustment (Opname), monthly Waste Report (Excel + PDF downloads), and Dashboard Inventory Widget. Backend: 20/20 pytest tests passed. Frontend: full UI flow verified via Playwright (login → dashboard widget → 5 inventory tabs → create material → create order with BOM → stock deducted → complete order → opname adjust → waste XLSX/PDF downloads → cancel order rollback → dashboard widget refresh).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_inventory_extras.py",
+    "/app/test_reports/pytest/pytest_inventory_extras.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L3505 _next_order_no uses count_documents() to seed the sequential order number. This is NOT concurrency-safe under simultaneous POSTs (two callers could get the same order_no). Acceptable for single-admin usage but consider Mongo findAndModify on a counter doc for future multi-user scenarios.",
+    "server.py L3577..3587 creates the order doc BEFORE decrementing stock (two-phase, non-atomic). If the server crashes between insert_one and updates the stock decrement is lost, leaving the order 'aktif' with stock still full. Suggest wrapping in a mongo transaction (requires replica set) or at minimum, upsert-log the pending decrement.",
+    "server.py L3611 (cancel endpoint) returns 200 with {status:'batal'} both when already batal and when transitioning; that is idempotent (good). Note: same endpoint does NOT reject cancelling a 'selesai' order — it will still refund stock. Confirmed acceptable per problem statement (cancel + rollback allowed on 'aktif' or 'selesai').",
+    "server.py L3673 waste report unit_price_snapshot column: waste docs use 'unit_price_snapshot'? — actually the waste POST in inventory storage stores 'unit_price_snapshot' (verified by code path around L3400s). If waste docs lack this field, Excel prints 0. Not a bug, but worth documenting; PDF report correctly formats 'Rp -' via estimated_loss.",
+    "Frontend Inventory.jsx L735/739 opens the order modal with items pre-populated with the first activeMaterials[0] (`quantity:0`). If admin forgets to change qty, the modal still lets them add empty rows or set item#0 qty=0. Backend now correctly rejects zero-quantity items (400) — verified in tests — so UX would show error toast rather than silently create bad orders.",
+    "Non-blocking: option-inside-span hydration warning from Emergent dev overlay on <select> inside modals (order-item-mat-*, adj-material). This is dev-only instrumentation and does not affect functionality (verified all POSTs succeed with correct material_id values). Same finding as iteration_11.",
+    "Dashboard widget InventoryWidget uses inv_summary from /api/dashboard/stats. If inventory collection is empty, `inv_summary` becomes None due to exception, and UI will render null. Consider defaulting to empty {} in the backend so the frontend always renders zeroes rather than hiding the widget."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_inventory_extras.py (new — 20 pytest cases: 10 job orders + 5 stock-adjust + 4 waste report + 1 dashboard widget)"
+  ],
+  "success_rate": { "backend": "100% (20/20)", "frontend": "100%" },
+  "test_credentials": "admin@payroll.id / admin123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "During test run: created TEST_UI_JobMat_743196, TEST_UI_JobMat_743301, orders TEST_UI_Cust_743301, TEST_CANC_743357, one opname adjustment. All CLEANED UP via script after tests (verified via /api/inventory/materials — no leftover TEST_UI_ items). Backend pytest also uses fresh uuid-suffixed TEST_JobMat_* materials which are hard-deleted via fixture teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Inventory iteration_12 fully verified: (1) POST /api/inventory/orders correctly decrements stock, computes total_material_cost/total_price/gross_margin, rejects qty<=0 and insufficient stock; (2) PUT /orders/{id}/complete → 'selesai' (no stock change); (3) PUT /orders/{id}/cancel → 'batal' + rollback stok (idempotent); (4) DELETE /orders/{id} rolls back stok if aktif/selesai; (5) POST /inventory/stock-adjust computes stock_before/after/delta correctly, DELETE reverses; (6) GET /inventory/waste/report/{period}/excel returns valid xlsx (PK magic), /pdf returns valid PDF (%PDF- magic); (7) GET /api/dashboard/stats returns 'inventory' block with total_stock_value, total_materials, low_stock_count, total_waste_this_month, top_waste[]. UI: all 5 tabs render, data-testids reliable, sidebar nav-inventory works. Dashboard inventory-widget + top-waste-row visible with real values (Rp 8.800.000, top waste Flexy Frontlite 3m).",
+  "rca of the issue": "No issues — all acceptance criteria satisfied."
+}

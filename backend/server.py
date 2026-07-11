@@ -1620,6 +1620,41 @@ async def dashboard_stats(user: dict = Depends(require_super_admin)):
     ]))
     # Kontrak/OJT akan habis dalam 90 hari
     expiring = await _find_expiring_contracts(90)
+    # Inventory summary utk widget dashboard
+    inv_summary = None
+    try:
+        mats = await db.materials.find({}, {"_id": 0}).to_list(length=5000)
+        total_stock_value = sum(float(m.get("current_stock", 0)) * float(m.get("purchase_price", 0)) for m in mats)
+        low_stock = [m for m in mats if m.get("active", True) and float(m.get("min_stock", 0)) > 0 and float(m.get("current_stock", 0)) <= float(m.get("min_stock", 0))]
+        today = datetime.now(timezone.utc).date()
+        month_start = today.replace(day=1).isoformat()
+        waste_month = await db.waste.find({"date": {"$gte": month_start}}, {"_id": 0}).to_list(length=5000)
+        total_waste_month = sum(float(w.get("estimated_loss", 0)) for w in waste_month)
+        # top waste
+        top_agg: Dict[str, Dict[str, Any]] = {}
+        mat_by_id = {m["id"]: m for m in mats}
+        for w in waste_month:
+            mid = w.get("material_id")
+            if not mid:
+                continue
+            mat = mat_by_id.get(mid, {})
+            row = top_agg.setdefault(mid, {"material_name": mat.get("name") or "-", "material_unit": mat.get("unit") or "", "qty": 0.0, "loss": 0.0})
+            row["qty"] += float(w.get("quantity", 0))
+            row["loss"] += float(w.get("estimated_loss", 0))
+        top_waste = sorted(top_agg.values(), key=lambda r: r["loss"], reverse=True)[:3]
+        for r in top_waste:
+            r["qty"] = round(r["qty"], 4)
+            r["loss"] = round(r["loss"], 2)
+        inv_summary = {
+            "total_materials": sum(1 for m in mats if m.get("active", True)),
+            "total_stock_value": round(total_stock_value, 2),
+            "low_stock_count": len(low_stock),
+            "total_waste_this_month": round(total_waste_month, 2),
+            "waste_records_this_month": len(waste_month),
+            "top_waste": top_waste,
+        }
+    except Exception as ex:
+        logger.warning(f"Inventory summary failed: {ex}")
     return {
         "total_employees": total_employees,
         "latest_run": latest,
@@ -1627,6 +1662,7 @@ async def dashboard_stats(user: dict = Depends(require_super_admin)):
         "total_runs": await db.payroll_runs.count_documents({}),
         "contract_expiring": expiring[:5],  # top 5 untuk widget
         "contract_expiring_count": len(expiring),
+        "inventory": inv_summary,
     }
 
 
@@ -3358,6 +3394,26 @@ async def inv_stats(user: dict = Depends(require_super_admin)):
     month_start = today.replace(day=1).isoformat()
     waste_month = await db.waste.find({"date": {"$gte": month_start}}, {"_id": 0}).to_list(length=5000)
     total_waste_this_month = sum(float(w.get("estimated_loss", 0)) for w in waste_month)
+    # Top waste bulan ini per material
+    top_agg: Dict[str, Dict[str, Any]] = {}
+    mat_by_id = {m["id"]: m for m in materials}
+    for w in waste_month:
+        mid = w.get("material_id")
+        if not mid:
+            continue
+        mat = mat_by_id.get(mid, {})
+        row = top_agg.setdefault(mid, {
+            "material_id": mid, "material_name": mat.get("name") or "-",
+            "material_unit": mat.get("unit") or "", "material_category": mat.get("category") or "",
+            "qty": 0.0, "loss": 0.0, "records": 0,
+        })
+        row["qty"] += float(w.get("quantity", 0))
+        row["loss"] += float(w.get("estimated_loss", 0))
+        row["records"] += 1
+    top_waste = sorted(top_agg.values(), key=lambda r: r["loss"], reverse=True)[:5]
+    for r in top_waste:
+        r["qty"] = round(r["qty"], 4)
+        r["loss"] = round(r["loss"], 2)
     return {
         "total_materials": sum(1 for m in materials if m.get("active", True)),
         "total_stock_value": round(total_stock_value, 2),
@@ -3365,7 +3421,326 @@ async def inv_stats(user: dict = Depends(require_super_admin)):
         "low_stock": low_stock[:10],
         "total_waste_this_month": round(total_waste_this_month, 2),
         "waste_records_this_month": len(waste_month),
+        "top_waste": top_waste,
     }
+
+
+# ---------------- Stock Adjustment (Opname) ----------------
+class StockAdjustIn(BaseModel):
+    material_id: str
+    new_stock: float  # nilai stok setelah opname
+    reason: str = "opname"  # opname | koreksi | lainnya
+    date: str
+    notes: Optional[str] = None
+
+
+@api_router.get("/inventory/stock-adjust")
+async def inv_list_stock_adjust(user: dict = Depends(require_super_admin), material_id: Optional[str] = None):
+    q = {}
+    if material_id:
+        q["material_id"] = material_id
+    items = await db.stock_adjust.find(q, {"_id": 0}).sort("date", -1).to_list(length=2000)
+    return await _enrich_with_material(items)
+
+
+@api_router.post("/inventory/stock-adjust")
+async def inv_create_stock_adjust(payload: StockAdjustIn, user: dict = Depends(require_super_admin)):
+    mat = await db.materials.find_one({"id": payload.material_id})
+    if not mat:
+        raise HTTPException(status_code=404, detail="Bahan tidak ditemukan")
+    stock_before = float(mat.get("current_stock", 0))
+    new_stock = float(payload.new_stock)
+    delta = round(new_stock - stock_before, 4)
+    doc = payload.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["stock_before"] = round(stock_before, 4)
+    doc["stock_after"] = round(new_stock, 4)
+    doc["delta"] = delta
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["created_by"] = user.get("email")
+    await db.stock_adjust.insert_one(doc)
+    await db.materials.update_one(
+        {"id": payload.material_id},
+        {"$set": {"current_stock": round(new_stock, 4), "updated_at": doc["created_at"]}},
+    )
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/inventory/stock-adjust/{adj_id}")
+async def inv_delete_stock_adjust(adj_id: str, user: dict = Depends(require_super_admin)):
+    doc = await db.stock_adjust.find_one({"id": adj_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Data opname tidak ditemukan")
+    # Kembalikan stok ke nilai sebelum adjustment
+    await db.materials.update_one(
+        {"id": doc["material_id"]},
+        {"$set": {"current_stock": float(doc.get("stock_before", 0)), "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await db.stock_adjust.delete_one({"id": adj_id})
+    return {"ok": True}
+
+
+# ---------------- Job Order (Produksi) ----------------
+class JobItemIn(BaseModel):
+    material_id: str
+    quantity: float  # qty bahan dikonsumsi total
+
+
+class JobOrderIn(BaseModel):
+    order_no: Optional[str] = None  # auto-gen bila kosong
+    customer: str
+    product_name: str
+    quantity: int = 1
+    unit_price: float = 0
+    start_date: str  # ISO
+    due_date: Optional[str] = None
+    items: List[JobItemIn] = []
+    notes: Optional[str] = None
+
+
+async def _next_order_no() -> str:
+    today = datetime.now(timezone.utc).date()
+    prefix = f"JO-{today.strftime('%Y%m')}-"
+    count = await db.job_orders.count_documents({"order_no": {"$regex": f"^{prefix}"}})
+    return f"{prefix}{count + 1:04d}"
+
+
+async def _reverse_job_stock(job: Dict[str, Any]) -> None:
+    """Kembalikan stok yg pernah dikurangi oleh job (dipakai saat cancel/delete)."""
+    for it in job.get("items") or []:
+        mid = it.get("material_id")
+        qty = float(it.get("quantity", 0))
+        if not mid or qty <= 0:
+            continue
+        mat = await db.materials.find_one({"id": mid})
+        if mat:
+            new_stock = round(float(mat.get("current_stock", 0)) + qty, 4)
+            await db.materials.update_one(
+                {"id": mid},
+                {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+
+
+@api_router.get("/inventory/orders")
+async def inv_list_orders(user: dict = Depends(require_super_admin), status: Optional[str] = None):
+    q = {}
+    if status:
+        q["status"] = status
+    items = await db.job_orders.find(q, {"_id": 0}).sort("created_at", -1).to_list(length=2000)
+    # Enrich items dgn nama material
+    all_mats = {m["id"]: m async for m in db.materials.find({}, {"_id": 0})}
+    for job in items:
+        for it in job.get("items") or []:
+            mat = all_mats.get(it.get("material_id")) or {}
+            it["material_name"] = mat.get("name") or "-"
+            it["material_unit"] = mat.get("unit") or ""
+    return items
+
+
+@api_router.post("/inventory/orders")
+async def inv_create_order(payload: JobOrderIn, user: dict = Depends(require_super_admin)):
+    if not payload.customer or not payload.product_name:
+        raise HTTPException(status_code=400, detail="Customer & nama produk wajib diisi")
+    # Validate materials + hitung total kerugian bahan snapshot
+    items_out = []
+    total_material_cost = 0.0
+    for it in payload.items:
+        mat = await db.materials.find_one({"id": it.material_id})
+        if not mat:
+            raise HTTPException(status_code=400, detail=f"Bahan {it.material_id} tidak ditemukan")
+        if it.quantity <= 0:
+            raise HTTPException(status_code=400, detail=f"Kuantitas bahan {mat.get('name')} harus > 0")
+        stock = float(mat.get("current_stock", 0))
+        if it.quantity > stock:
+            raise HTTPException(status_code=400, detail=f"Stok {mat.get('name')} tidak cukup (ada {stock}, butuh {it.quantity})")
+        unit_price = float(mat.get("purchase_price", 0))
+        items_out.append({
+            "material_id": it.material_id,
+            "quantity": float(it.quantity),
+            "unit_price_snapshot": unit_price,
+            "cost": round(float(it.quantity) * unit_price, 2),
+        })
+        total_material_cost += float(it.quantity) * unit_price
+
+    order_no = payload.order_no or await _next_order_no()
+    doc = payload.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["order_no"] = order_no
+    doc["items"] = items_out
+    doc["status"] = "aktif"
+    doc["total_material_cost"] = round(total_material_cost, 2)
+    doc["total_price"] = round(float(payload.quantity) * float(payload.unit_price), 2)
+    doc["gross_margin"] = round(doc["total_price"] - doc["total_material_cost"], 2)
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["created_by"] = user.get("email")
+    await db.job_orders.insert_one(doc)
+
+    # Kurangi stok tiap bahan
+    for it in items_out:
+        mat = await db.materials.find_one({"id": it["material_id"]})
+        if mat:
+            new_stock = round(float(mat.get("current_stock", 0)) - float(it["quantity"]), 4)
+            await db.materials.update_one(
+                {"id": it["material_id"]},
+                {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/inventory/orders/{order_id}/complete")
+async def inv_complete_order(order_id: str, user: dict = Depends(require_super_admin)):
+    job = await db.job_orders.find_one({"id": order_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
+    if job.get("status") == "batal":
+        raise HTTPException(status_code=400, detail="Order sudah dibatalkan")
+    await db.job_orders.update_one(
+        {"id": order_id},
+        {"$set": {"status": "selesai", "completed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"ok": True, "status": "selesai"}
+
+
+@api_router.put("/inventory/orders/{order_id}/cancel")
+async def inv_cancel_order(order_id: str, user: dict = Depends(require_super_admin)):
+    job = await db.job_orders.find_one({"id": order_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
+    if job.get("status") == "batal":
+        return {"ok": True, "status": "batal"}
+    # Rollback stok jika sebelumnya aktif (belum pernah dibatalkan)
+    if job.get("status") in ("aktif", "selesai"):
+        await _reverse_job_stock(job)
+    await db.job_orders.update_one(
+        {"id": order_id},
+        {"$set": {"status": "batal", "cancelled_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"ok": True, "status": "batal"}
+
+
+@api_router.delete("/inventory/orders/{order_id}")
+async def inv_delete_order(order_id: str, user: dict = Depends(require_super_admin)):
+    job = await db.job_orders.find_one({"id": order_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
+    # Rollback bila order aktif/selesai (yg pernah kurangi stok)
+    if job.get("status") in ("aktif", "selesai"):
+        await _reverse_job_stock(job)
+    await db.job_orders.delete_one({"id": order_id})
+    return {"ok": True}
+
+
+# ---------------- Waste Report (Excel + PDF) ----------------
+async def _fetch_monthly_waste(period: str):
+    start, end, year, month = _parse_month(period)
+    cursor = db.waste.find({"date": {"$gte": start, "$lte": end}}, {"_id": 0}).sort("date", 1)
+    items = await cursor.to_list(length=5000)
+    items = await _enrich_with_material(items)
+    total_loss = sum(float(x.get("estimated_loss", 0)) for x in items)
+    total_qty = sum(float(x.get("quantity", 0)) for x in items)
+    return items, total_loss, total_qty, year, month
+
+
+@api_router.get("/inventory/waste/report/{period}/excel")
+async def inv_waste_report_excel(period: str, user: dict = Depends(require_super_admin)):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    items, total_loss, total_qty, year, month = await _fetch_monthly_waste(period)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"Waste {period}"
+    ws.append([f"LAPORAN WASTE / RIJEK BULANAN — {year}-{month:02d}"])
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append([])
+    headers = ["Tanggal", "Bahan", "Kategori", "Alasan", "Qty", "Satuan", "Harga/Unit", "Kerugian (Rp)", "Pelapor", "Catatan"]
+    ws.append(headers)
+    header_fill = PatternFill(start_color="002FA7", end_color="002FA7", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    for cell in ws[3]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+    for it in items:
+        ws.append([
+            it.get("date", ""),
+            it.get("material_name", ""),
+            it.get("material_category", ""),
+            it.get("reason", ""),
+            float(it.get("quantity", 0)),
+            it.get("material_unit", ""),
+            float(it.get("unit_price_snapshot", 0)),
+            float(it.get("estimated_loss", 0)),
+            it.get("reported_by", ""),
+            it.get("notes", ""),
+        ])
+    ws.append([])
+    total_row = ["TOTAL", "", "", "", total_qty, "", "", total_loss, "", ""]
+    ws.append(total_row)
+    ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
+    ws.cell(row=ws.max_row, column=8).font = Font(bold=True)
+    for col_idx, width in enumerate([12, 30, 12, 14, 10, 10, 14, 16, 20, 30], 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = width
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="laporan-waste-{period}.xlsx"'},
+    )
+
+
+@api_router.get("/inventory/waste/report/{period}/pdf")
+async def inv_waste_report_pdf(period: str, user: dict = Depends(require_super_admin)):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    items, total_loss, total_qty, year, month = await _fetch_monthly_waste(period)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=15 * mm, rightMargin=15 * mm, topMargin=15 * mm, bottomMargin=15 * mm)
+    styles = getSampleStyleSheet()
+    elems = [
+        Paragraph(f"<b>LAPORAN WASTE / RIJEK BULANAN</b>", styles["Title"]),
+        Paragraph(f"Periode: {year}-{month:02d}", styles["Normal"]),
+        Spacer(1, 8),
+    ]
+    data = [["Tanggal", "Bahan", "Alasan", "Qty", "Satuan", "Kerugian (Rp)", "Pelapor"]]
+    for it in items:
+        data.append([
+            it.get("date", ""),
+            it.get("material_name", ""),
+            it.get("reason", ""),
+            f"{float(it.get('quantity', 0)):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+            it.get("material_unit", ""),
+            f"Rp {float(it.get('estimated_loss', 0)):,.0f}".replace(",", "."),
+            it.get("reported_by", "") or "-",
+        ])
+    data.append(["", "", "TOTAL", f"{total_qty:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), "", f"Rp {total_loss:,.0f}".replace(",", "."), ""])
+    tbl = Table(data, colWidths=[22 * mm, 60 * mm, 25 * mm, 22 * mm, 20 * mm, 40 * mm, 40 * mm])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#002FA7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("ALIGN", (3, 1), (5, -1), "RIGHT"),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f5f5f5")),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elems.append(tbl)
+    doc.build(elems)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="laporan-waste-{period}.pdf"'},
+    )
 
 
 # Include router

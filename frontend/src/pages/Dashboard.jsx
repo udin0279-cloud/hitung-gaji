@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatIDR } from "../lib/api";
 import { Link } from "react-router-dom";
-import { TrendingUp, Users, FileText, Receipt, ArrowUpRight, AlertTriangle } from "lucide-react";
+import { TrendingUp, Users, FileText, Receipt, ArrowUpRight, AlertTriangle, Package, TrendingDown } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from "recharts";
 
 export default function Dashboard() {
@@ -122,7 +122,77 @@ export default function Dashboard() {
       {/* Reminder Kontrak/OJT */}
       <ContractReminder items={stats?.contract_expiring} total={stats?.contract_expiring_count} />
 
+      {/* Inventory Widget */}
+      <InventoryWidget inv={stats?.inventory} />
+
       {loading && <div className="mt-6 text-xs text-zinc-400 font-mono">Memuat…</div>}
+    </div>
+  );
+}
+
+function InventoryWidget({ inv }) {
+  if (!inv) return null;
+  return (
+    <div data-testid="inventory-widget" className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="lg:col-span-1 border border-zinc-200 bg-white p-6">
+        <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold flex items-center gap-2">
+          <Package className="w-3.5 h-3.5" /> Inventory
+        </div>
+        <div className="mt-3 space-y-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Nilai Stok Total</div>
+            <div data-testid="inv-stock-value" className="font-mono text-2xl font-semibold text-zinc-900 mt-1">{formatIDR(inv.total_stock_value || 0)}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 pt-3 border-t border-zinc-200">
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Bahan Aktif</div>
+              <div className="font-mono text-lg font-semibold text-zinc-900 mt-1">{inv.total_materials || 0}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Stok Menipis</div>
+              <div className={`font-mono text-lg font-semibold mt-1 ${inv.low_stock_count > 0 ? "text-amber-700" : "text-zinc-900"}`}>{inv.low_stock_count || 0}</div>
+            </div>
+          </div>
+          <Link to="/inventory" className="mt-3 inline-flex items-center gap-1 text-xs text-[#002FA7] font-semibold hover:underline">
+            Buka Inventory <ArrowUpRight className="w-3 h-3" />
+          </Link>
+        </div>
+      </div>
+      <div className="lg:col-span-2 border border-zinc-200 bg-white p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold flex items-center gap-2">
+              <TrendingDown className="w-3.5 h-3.5 text-[#E81123]" /> Top Waste Bulan Ini
+            </div>
+            <div className="font-heading text-lg font-bold text-zinc-900 mt-1">
+              Total: <span className="font-mono text-[#E81123]">{formatIDR(inv.total_waste_this_month || 0)}</span>
+              <span className="text-xs text-zinc-500 font-mono ml-2">({inv.waste_records_this_month || 0} laporan)</span>
+            </div>
+          </div>
+        </div>
+        {(!inv.top_waste || inv.top_waste.length === 0) ? (
+          <div className="text-sm text-zinc-400 font-mono py-4">Belum ada laporan waste bulan ini.</div>
+        ) : (
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest border-b border-zinc-200">
+                <th className="py-2 pr-4">Bahan</th>
+                <th className="py-2 pr-4 text-right">Qty</th>
+                <th className="py-2 pr-4 text-right">Kerugian</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inv.top_waste.map((w, i) => (
+                <tr key={i} data-testid="top-waste-row" className="border-b border-zinc-100">
+                  <td className="py-2 pr-4 font-medium text-zinc-900">{w.material_name}</td>
+                  <td className="py-2 pr-4 font-mono text-right text-zinc-700">{Number(w.qty).toLocaleString("id-ID", { maximumFractionDigits: 4 })} <span className="text-[10px] text-zinc-500 uppercase ml-0.5">{w.material_unit}</span></td>
+                  <td className="py-2 pr-4 font-mono text-right text-[#E81123] font-bold">{formatIDR(w.loss)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
