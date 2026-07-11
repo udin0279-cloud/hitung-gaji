@@ -5,6 +5,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 import os
+import re
 import logging
 import uuid
 import asyncio
@@ -3789,8 +3790,9 @@ async def cust_list(user: dict = Depends(require_super_admin)):
 async def cust_create(payload: CustomerIn, user: dict = Depends(require_super_admin)):
     if not payload.name.strip():
         raise HTTPException(status_code=400, detail="Nama customer wajib diisi")
-    # Cek duplicate name (case-insensitive)
-    existing = await db.customers.find_one({"name": {"$regex": f"^{payload.name.strip()}$", "$options": "i"}})
+    # Cek duplicate name (case-insensitive) — escape regex special chars
+    safe_name = re.escape(payload.name.strip())
+    existing = await db.customers.find_one({"name": {"$regex": f"^{safe_name}$", "$options": "i"}})
     if existing:
         raise HTTPException(status_code=400, detail="Customer dengan nama tersebut sudah ada")
     doc = payload.model_dump()

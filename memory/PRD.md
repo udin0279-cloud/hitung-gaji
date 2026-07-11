@@ -298,3 +298,40 @@ Test file: `/app/backend/tests/test_inventory_extras.py`
 - Kaitkan job order ke Sales/Customer master
 - Alert stok menipis via WhatsApp/Email
 
+
+---
+## Update: 2026-07-11 (session 4) — Customer Master & Laba/Rugi Bulanan
+
+### 1. Customer Master
+- Collection `customers`: name (unik case-insensitive), phone, email, address, npwp, contact_person, notes
+- Endpoint: `GET/POST/PUT/DELETE /api/inventory/customers`
+- **Auto-aggregate** saat GET: order_count, total_revenue, total_material_cost, margin per customer (matching by lowercase job_orders.customer, exclude status batal)
+- Frontend: tab "Customer" di Inventory + form CRUD
+- **Datalist autocomplete** di Order form: customer yg sudah dibuat muncul sebagai suggestion
+- Regex injection risk di duplicate check: fixed dengan `re.escape()`
+
+### 2. Laporan Laba/Rugi Bulanan
+- Endpoint `GET /api/reports/profit-loss/{YYYY-MM}` return:
+  - **Revenue** = sum(orders.total_price) where status ≠ batal & date in month
+  - **COGS** = sum(orders.total_material_cost)
+  - **Gross Profit** = Revenue − COGS (+ gross_margin_pct)
+  - **Waste Loss** = sum(waste.estimated_loss) dalam bulan
+  - **Payroll Cost** = payroll_runs[period].total_net (fallback 0)
+  - **Total Expenses** = Waste + Payroll
+  - **Net Profit** = Gross Profit − Total Expenses (+ net_margin_pct)
+  - **Top Customers** (sort by revenue)
+- Endpoint `GET /api/reports/profit-loss/{YYYY-MM}/pdf` — laporan PDF berwarna
+- Frontend page `/reports` — Hero card (hijau/merah), waterfall breakdown, 4 stat cards, top customer table
+- Sidebar nav "Laba/Rugi" (icon TrendingUp)
+
+### Testing
+Testing agent iteration_13: **Backend 15/15 pytest passed** + **Frontend E2E Playwright 100% passed**.
+Test file: `/app/backend/tests/test_customer_pl.py`
+
+### Backlog Enhancement (opsional)
+- Excel export untuk P&L (saat ini PDF only)
+- Cache aggregate customer di document (untuk >10k orders)
+- Cash vs Accrual accounting toggle
+- Kaitkan customer_id ke Job Order (saat ini string match)
+- Multi-batch pricing (FIFO/LIFO)
+
