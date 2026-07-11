@@ -4129,8 +4129,14 @@ async def sup_update(sid: str, payload: SupplierIn, user: dict = Depends(require
     existing = await db.suppliers.find_one({"id": sid})
     if not existing:
         raise HTTPException(status_code=404, detail="Supplier tidak ditemukan")
+    new_name = payload.name.strip()
+    if new_name.lower() != (existing.get("name") or "").lower():
+        safe = re.escape(new_name)
+        dup = await db.suppliers.find_one({"name": {"$regex": f"^{safe}$", "$options": "i"}, "id": {"$ne": sid}})
+        if dup:
+            raise HTTPException(status_code=400, detail="Supplier dengan nama tersebut sudah ada")
     upd = payload.model_dump()
-    upd["name"] = payload.name.strip()
+    upd["name"] = new_name
     upd["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.suppliers.update_one({"id": sid}, {"$set": upd})
     return await db.suppliers.find_one({"id": sid}, {"_id": 0})

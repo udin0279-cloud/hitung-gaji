@@ -364,3 +364,42 @@ Manual API + UI verified. Chart rendering benar (dip 2026-06 saat payroll tanpa 
 - Toggle metrik (Revenue, Gross Profit, Net Profit)
 - Cache trend data (Redis) untuk mempercepat dashboard
 
+
+---
+## Update: 2026-07-11 (session 6) — Modul Pembelian (Purchasing)
+
+### Implemented
+**Backend (`/app/backend/server.py` section Purchasing Module):**
+- Collection `suppliers`: name (unik case-insensitive), phone, email, address, contact_person, notes, active + duplicate-guard di POST & PUT (fix code review)
+- Collection `purchase_orders`: po_no auto-gen (PO-YYYYMM-XXXX), supplier_id/name, date, items[], subtotal, tax_pct, tax_amount, total, status (draft/diterima/batal), payment_status (belum_lunas/sebagian/lunas), amount_paid, invoice_no, notes
+- **Receive flow**: PUT `/{id}/receive` → status=diterima + otomatis buat `stock_in` entries (dgn `po_id`, `po_no` untuk traceability) + update `materials.current_stock` + `purchase_price` (harga beli terbaru). Idempotent.
+- **Payment flow**: PUT `/{id}/pay` body `{amount}` → tambah amount_paid, payment_status auto-transition
+- **Delete flow**: DELETE `/{id}` — jika diterima, rollback stok (delete stock_in entries + kurangi material stock)
+- **Cancel flow**: PUT `/{id}/cancel` — reject bila sudah diterima
+- Enriched Supplier list dgn agregat: po_count, total_purchase, outstanding
+
+### API Endpoints
+- `GET/POST /api/purchasing/suppliers`, `PUT/DELETE /api/purchasing/suppliers/{id}`
+- `GET/POST /api/purchasing/purchase-orders`, `PUT /{id}/receive`, `PUT /{id}/cancel`, `PUT /{id}/pay`, `DELETE /{id}`
+- `GET /api/purchasing/price-history?material_id=X` — grouped per bahan, min/max/avg/current/first/change%
+- `GET /api/purchasing/stats` — total_po, total_purchase, outstanding, unpaid_pos, total_suppliers
+
+### Frontend
+- Page `/purchasing` (Purchasing.jsx) — 4 stat cards + 3 tabs (Purchase Order, Supplier, Histori Harga)
+- POTab: filter status, create/receive/pay/cancel/delete workflow, modal PO dgn multi-item + pajak + preview total
+- SuppliersTab: CRUD + kolom agregat (PO count, total beli, hutang)
+- PriceHistoryTab: expandable row menampilkan detail history + trend icon up/down + change%
+- Sidebar nav "Pembelian" (icon ShoppingCart) antara Inventory & Laba/Rugi
+
+### Testing
+Testing agent iteration_14: **Backend 20/20 pytest passed** + **Frontend E2E Playwright 100% passed**.
+Test file: `/app/backend/tests/test_purchasing.py`
+
+### Backlog Enhancement
+- Payments audit log collection (untuk finance tracing bila PO dihapus setelah bayar)
+- PayPOIn Pydantic model (saat ini pakai Dict body)
+- Split Purchasing.jsx (700+ lines) ke files terpisah per tab
+- Export PO ke PDF/Excel
+- Aging report hutang (0-30, 31-60, 61+ hari)
+- Auto-integrasi purchase ke Laba/Rugi report (COGS harusnya pakai PO diterima, bukan hanya Order.total_material_cost)
+
