@@ -6,7 +6,7 @@ import { api } from "../lib/api";
 
 const ALL_NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard", roles: ["super_admin"] },
-  { to: "/employees", label: "Karyawan", icon: UsersIcon, testId: "nav-employees", roles: ["super_admin"] },
+  { to: "/employees", label: "Karyawan", icon: UsersIcon, testId: "nav-employees", badgeKey: "contract_expiring", roles: ["super_admin"] },
   { to: "/payroll", label: "Payroll", icon: Calculator, testId: "nav-payroll", roles: ["super_admin"] },
   { to: "/thr", label: "THR", icon: Gift, testId: "nav-thr", roles: ["super_admin"] },
   { to: "/leave", label: "Izin & Cuti", icon: CalendarDays, testId: "nav-leave", badgeKey: "pending", roles: ["super_admin", "hr_leave"] },
@@ -23,18 +23,30 @@ export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [pendingLeaves, setPendingLeaves] = useState(0);
+  const [expiringContracts, setExpiringContracts] = useState(0);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const role = user?.role;
   const navItems = ALL_NAV.filter((n) => !n.roles || n.roles.includes(role));
 
   const loadStats = async () => {
-    if (!navItems.some((n) => n.badgeKey === "pending")) return;
-    try {
-      const { data } = await api.get("/leave/stats");
-      setPendingLeaves(data.pending || 0);
-    } catch {
-      // ignore
+    // Leave stats
+    if (navItems.some((n) => n.badgeKey === "pending")) {
+      try {
+        const { data } = await api.get("/leave/stats");
+        setPendingLeaves(data.pending || 0);
+      } catch {
+        // ignore
+      }
+    }
+    // Contract expiring (only for super_admin)
+    if (navItems.some((n) => n.badgeKey === "contract_expiring")) {
+      try {
+        const { data } = await api.get("/contracts/expiring?days=30");
+        setExpiringContracts(data.count || 0);
+      } catch {
+        // ignore
+      }
     }
   };
 
@@ -76,7 +88,13 @@ export default function Layout() {
       <nav className="flex-1 py-4 overflow-y-auto">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const badgeCount = item.badgeKey === "pending" ? pendingLeaves : 0;
+          const badgeCount =
+            item.badgeKey === "pending"
+              ? pendingLeaves
+              : item.badgeKey === "contract_expiring"
+              ? expiringContracts
+              : 0;
+          const badgeColor = item.badgeKey === "contract_expiring" ? "bg-amber-600" : "bg-rose-600";
           return (
             <NavLink
               key={item.to}
@@ -97,7 +115,7 @@ export default function Layout() {
               {badgeCount > 0 && (
                 <span
                   data-testid={`badge-${item.testId}`}
-                  className="bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5 min-w-[18px] text-center leading-none rounded-sm"
+                  className={`${badgeColor} text-white text-[10px] font-bold px-1.5 py-0.5 min-w-[18px] text-center leading-none rounded-sm`}
                 >
                   {badgeCount}
                 </span>

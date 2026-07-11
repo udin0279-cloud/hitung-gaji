@@ -36,6 +36,8 @@ const EMPTY = {
   bank_account: "",
   bank_account_holder: "",
   employment_status: "tetap",
+  status_start_date: "",
+  status_end_date: "",
   active: true,
 };
 
@@ -82,7 +84,12 @@ export default function Employees() {
 
   const openEdit = (emp) => {
     setEditing(emp);
-    setForm({ ...EMPTY, ...emp });
+    setForm({
+      ...EMPTY,
+      ...emp,
+      status_start_date: emp.status_start_date ? String(emp.status_start_date).slice(0, 10) : "",
+      status_end_date: emp.status_end_date ? String(emp.status_end_date).slice(0, 10) : "",
+    });
     setOpen(true);
   };
 
@@ -97,6 +104,8 @@ export default function Employees() {
     try {
       const payload = {
         ...form,
+        status_start_date: form.status_start_date || null,
+        status_end_date: form.status_end_date || null,
         basic_salary: Number(form.basic_salary) || 0,
         fixed_allowance: Number(form.fixed_allowance) || 0,
         tunjangan_jabatan: Number(form.tunjangan_jabatan) || 0,
@@ -260,6 +269,7 @@ export default function Employees() {
               <th className="px-4 py-3">Jabatan</th>
               <th className="px-4 py-3">Departemen</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Berakhir</th>
               <th className="px-4 py-3">PTKP</th>
               <th className="px-4 py-3 text-right">Gaji Pokok</th>
               <th className="px-4 py-3 text-right">Tunjangan</th>
@@ -269,10 +279,10 @@ export default function Employees() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>
+              <tr><td colSpan={11} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>
             )}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={10} className="px-4 py-12 text-center text-zinc-400">
+              <tr><td colSpan={11} className="px-4 py-12 text-center text-zinc-400">
                 <div className="font-mono text-xs">Belum ada karyawan. Klik &ldquo;Tambah Karyawan&rdquo; untuk mulai.</div>
               </td></tr>
             )}
@@ -297,6 +307,39 @@ export default function Employees() {
                       <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider border ${cls}`}>
                         {EMPLOYMENT_STATUS_LABEL[s] || s}
                       </span>
+                    );
+                  })()}
+                </td>
+                <td className="px-4 py-3">
+                  {(() => {
+                    const s = emp.employment_status || "tetap";
+                    if (s === "tetap" || !emp.status_end_date) {
+                      return <span className="text-zinc-300 font-mono text-xs">—</span>;
+                    }
+                    const today = new Date(); today.setHours(0, 0, 0, 0);
+                    const end = new Date(emp.status_end_date);
+                    const daysLeft = Math.round((end - today) / (1000 * 60 * 60 * 24));
+                    let cls = "border-[#008A00] text-[#008A00] bg-[#008A00]/5";
+                    let label;
+                    if (daysLeft < 0) {
+                      cls = "border-[#E81123] text-[#E81123] bg-[#E81123]/5";
+                      label = "Lewat";
+                    } else if (daysLeft <= 30) {
+                      cls = "border-[#E81123] text-[#E81123] bg-[#E81123]/5";
+                      label = `${daysLeft} hari`;
+                    } else if (daysLeft <= 60) {
+                      cls = "border-amber-500 text-amber-700 bg-amber-50";
+                      label = `${daysLeft} hari`;
+                    } else {
+                      label = `${daysLeft} hari`;
+                    }
+                    return (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-mono text-[11px] text-zinc-700">{emp.status_end_date}</span>
+                        <span className={`inline-flex w-fit items-center px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${cls}`}>
+                          {label}
+                        </span>
+                      </div>
                     );
                   })()}
                 </td>
@@ -362,6 +405,42 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
   const setNum = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setBool = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.checked }));
 
+  // Auto-calc tanggal berakhir berdasarkan status + tanggal mulai
+  const calcEndDate = (start, status) => {
+    if (!start) return "";
+    if (status !== "kontrak_6" && status !== "kontrak_12") return "";
+    const months = status === "kontrak_6" ? 6 : 12;
+    const d = new Date(start);
+    if (isNaN(d.getTime())) return "";
+    d.setMonth(d.getMonth() + months);
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const onStatusChange = (e) => {
+    const newStatus = e.target.value;
+    setForm((f) => {
+      const next = { ...f, employment_status: newStatus };
+      if (newStatus === "tetap") {
+        next.status_end_date = "";
+      } else if ((newStatus === "kontrak_6" || newStatus === "kontrak_12") && f.status_start_date) {
+        next.status_end_date = calcEndDate(f.status_start_date, newStatus);
+      }
+      return next;
+    });
+  };
+
+  const onStatusStartChange = (e) => {
+    const newStart = e.target.value;
+    setForm((f) => {
+      const next = { ...f, status_start_date: newStart };
+      if (f.employment_status === "kontrak_6" || f.employment_status === "kontrak_12") {
+        next.status_end_date = calcEndDate(newStart, f.employment_status);
+      }
+      return next;
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4 no-print">
       <div className="bg-white border border-zinc-300 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -397,10 +476,27 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
               <input data-testid="emp-department" required value={form.department} onChange={set("department")} className={inputCls} />
             </Field>
             <Field label="Status Karyawan">
-              <select data-testid="emp-employment-status" value={form.employment_status} onChange={set("employment_status")} className={inputCls}>
+              <select data-testid="emp-employment-status" value={form.employment_status} onChange={onStatusChange} className={inputCls}>
                 {EMPLOYMENT_STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
+            {form.employment_status !== "tetap" && (
+              <>
+                <Field label="Tanggal Mulai Status" hint={form.employment_status === "ojt" ? "Awal masa OJT" : "Awal masa kontrak"}>
+                  <input data-testid="emp-status-start" type="date" value={form.status_start_date || ""} onChange={onStatusStartChange} className={inputCls} />
+                </Field>
+                <Field
+                  label="Tanggal Berakhir Status"
+                  hint={
+                    form.employment_status === "ojt"
+                      ? "Isi manual sesuai durasi OJT"
+                      : "Auto-hitung dari tanggal mulai (bisa diubah manual)"
+                  }
+                >
+                  <input data-testid="emp-status-end" type="date" value={form.status_end_date || ""} onChange={set("status_end_date")} className={inputCls} />
+                </Field>
+              </>
+            )}
           </div>
 
           <SectionTitle>Gaji & Tunjangan</SectionTitle>

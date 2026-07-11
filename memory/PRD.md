@@ -190,3 +190,29 @@ Test payroll Siti Aminah dgn semua komponen: Gross 20,4jt → Net 17,66jt. PPh21
 - backend/server.py — `EmployeeIn.employment_status`
 - frontend/src/pages/Employees.jsx — EMPTY, EMPLOYMENT_STATUS_OPTIONS, dropdown, tabel kolom Status
 
+
+---
+## Update: 2026-07-11 — Tanggal OJT/Kontrak + Reminder
+
+### Implemented
+- 2 field baru di Employee: `status_start_date` & `status_end_date` (ISO YYYY-MM-DD)
+- **Auto-calc**: Ketika status "Kontrak 6/12 Bulan" dipilih & tanggal mulai diisi, tanggal berakhir otomatis = mulai + 6/12 bulan (H-1)
+- Form Karyawan hanya menampilkan date fields jika status = OJT/Kontrak (Tetap → hidden)
+- **Kolom "Berakhir"** di tabel Karyawan: tanggal + badge sisa hari (merah <30, kuning 30–60, hijau >60, merah "Lewat")
+- **Widget Dashboard "Reminder Kontrak / OJT"**: list top 5 karyawan berakhir dalam 90 hari
+- **Sidebar badge di menu "Karyawan"**: count karyawan berakhir dalam 30 hari (warna amber)
+
+### API Endpoints Baru
+- `GET /api/contracts/expiring?days=90` → `{days, count, items: [{id, nik, name, employment_status, status_start_date, status_end_date, days_left, expired}]}`
+- `GET /api/dashboard/stats` sekarang include `contract_expiring` (top 5) dan `contract_expiring_count`
+
+### Files Changed
+- backend/server.py — `EmployeeIn`, `_find_expiring_contracts`, `/contracts/expiring`, `/dashboard/stats`
+- frontend/src/pages/Employees.jsx — form fields conditional + auto-calc + kolom Berakhir
+- frontend/src/pages/Dashboard.jsx — `ContractReminder` widget
+- frontend/src/components/Layout.jsx — badge Karyawan (amber) untuk expiring dalam 30 hari
+
+### Backlog (opsional lanjutan)
+- Email/WhatsApp otomatis ke HR ketika kontrak/OJT tinggal 30 hari (butuh APScheduler — P1)
+- Halaman terpisah "Daftar Kontrak Akan Berakhir" dengan filter (all/OJT/Kontrak, sort by urgency)
+

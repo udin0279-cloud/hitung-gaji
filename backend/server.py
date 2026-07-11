@@ -200,6 +200,8 @@ class EmployeeIn(BaseModel):
     bank_account: Optional[str] = None
     bank_account_holder: Optional[str] = None
     employment_status: str = "tetap"  # ojt | kontrak_6 | kontrak_12 | tetap
+    status_start_date: Optional[str] = None  # ISO YYYY-MM-DD — tanggal mulai OJT/Kontrak
+    status_end_date: Optional[str] = None    # ISO YYYY-MM-DD — tanggal berakhir
     active: bool = True
 
 
@@ -1616,12 +1618,60 @@ async def dashboard_stats(user: dict = Depends(require_super_admin)):
         {"period": r["period"], "total_net": r["total_net"], "total_gross": r["total_gross"]}
         for r in runs
     ]))
+    # Kontrak/OJT akan habis dalam 90 hari
+    expiring = await _find_expiring_contracts(90)
     return {
         "total_employees": total_employees,
         "latest_run": latest,
         "trend": trend,
         "total_runs": await db.payroll_runs.count_documents({}),
+        "contract_expiring": expiring[:5],  # top 5 untuk widget
+        "contract_expiring_count": len(expiring),
     }
+
+
+async def _find_expiring_contracts(days_ahead: int = 60) -> List[Dict[str, Any]]:
+    """Return employees dgn status OJT/Kontrak yg status_end_date jatuh dalam N hari (termasuk sudah lewat)."""
+    today = datetime.now(timezone.utc).date()
+    cutoff = today + timedelta(days=days_ahead)
+    cursor = db.employees.find({
+        "active": True,
+        "employment_status": {"$in": ["ojt", "kontrak_6", "kontrak_12"]},
+        "status_end_date": {"$ne": None, "$exists": True},
+    }, {"_id": 0}).sort("status_end_date", 1)
+    items = await cursor.to_list(length=500)
+    result = []
+    for e in items:
+        end_str = e.get("status_end_date")
+        if not end_str:
+            continue
+        try:
+            end_date = datetime.strptime(end_str[:10], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        if end_date > cutoff:
+            continue
+        days_left = (end_date - today).days
+        result.append({
+            "id": e.get("id"),
+            "nik": e.get("nik"),
+            "name": e.get("name"),
+            "position": e.get("position"),
+            "department": e.get("department"),
+            "employment_status": e.get("employment_status"),
+            "status_start_date": e.get("status_start_date"),
+            "status_end_date": end_str,
+            "days_left": days_left,
+            "expired": days_left < 0,
+        })
+    return result
+
+
+@api_router.get("/contracts/expiring")
+async def contracts_expiring(days: int = 60, user: dict = Depends(require_super_admin)):
+    """List karyawan OJT/Kontrak yang berakhir dalam N hari (default 60)."""
+    items = await _find_expiring_contracts(days)
+    return {"days": days, "count": len(items), "items": items}
 
 
 # ---------------- Config ----------------

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatIDR } from "../lib/api";
 import { Link } from "react-router-dom";
-import { TrendingUp, Users, FileText, Receipt, ArrowUpRight } from "lucide-react";
+import { TrendingUp, Users, FileText, Receipt, ArrowUpRight, AlertTriangle } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from "recharts";
 
 export default function Dashboard() {
@@ -119,7 +119,78 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Reminder Kontrak/OJT */}
+      <ContractReminder items={stats?.contract_expiring} total={stats?.contract_expiring_count} />
+
       {loading && <div className="mt-6 text-xs text-zinc-400 font-mono">Memuat…</div>}
+    </div>
+  );
+}
+
+function ContractReminder({ items, total }) {
+  const list = items || [];
+  const STATUS_LABEL = { ojt: "OJT", kontrak_6: "Kontrak 6 Bln", kontrak_12: "Kontrak 1 Thn" };
+  return (
+    <div data-testid="contract-reminder-widget" className="mt-6 border border-zinc-200 bg-white p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Reminder Kontrak / OJT
+          </div>
+          <div className="font-heading text-lg font-bold text-zinc-900 mt-1">
+            {total > 0 ? `${total} karyawan akan berakhir dalam 90 hari` : "Tidak ada kontrak/OJT yang akan segera berakhir"}
+          </div>
+        </div>
+        {total > 5 && (
+          <Link to="/employees" className="text-xs text-[#002FA7] font-semibold hover:underline">
+            Lihat semua →
+          </Link>
+        )}
+      </div>
+      {list.length === 0 ? (
+        <div className="text-sm text-zinc-400 font-mono py-4">Belum ada data yang perlu ditindaklanjuti.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest border-b border-zinc-200">
+                <th className="py-2 pr-4">NIK</th>
+                <th className="py-2 pr-4">Nama</th>
+                <th className="py-2 pr-4">Status</th>
+                <th className="py-2 pr-4">Berakhir</th>
+                <th className="py-2 pr-4 text-right">Sisa Waktu</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((e) => {
+                const days = e.days_left;
+                let color = "text-[#008A00]";
+                if (days < 0) color = "text-[#E81123] font-bold";
+                else if (days <= 30) color = "text-[#E81123] font-bold";
+                else if (days <= 60) color = "text-amber-700 font-bold";
+                return (
+                  <tr key={e.id} data-testid="reminder-row" className="border-b border-zinc-100 hover:bg-zinc-50/60">
+                    <td className="py-2.5 pr-4 font-mono text-xs text-zinc-700">{e.nik}</td>
+                    <td className="py-2.5 pr-4">
+                      <div className="font-medium text-zinc-900">{e.name}</div>
+                      <div className="text-xs text-zinc-500">{e.position} · {e.department}</div>
+                    </td>
+                    <td className="py-2.5 pr-4">
+                      <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border border-[#002FA7] text-[#002FA7] bg-[#002FA7]/5">
+                        {STATUS_LABEL[e.employment_status] || e.employment_status}
+                      </span>
+                    </td>
+                    <td className="py-2.5 pr-4 font-mono text-xs text-zinc-700">{e.status_end_date}</td>
+                    <td className={`py-2.5 pr-4 text-right font-mono ${color}`}>
+                      {days < 0 ? `Lewat ${Math.abs(days)} hari` : `${days} hari lagi`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
