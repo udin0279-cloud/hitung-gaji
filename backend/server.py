@@ -3130,6 +3130,244 @@ async def shutdown():
     client.close()
 
 
+# ---------------- Inventory Module ----------------
+class MaterialIn(BaseModel):
+    name: str
+    category: str  # flexy | sticker | tinta | lainnya
+    unit: str  # meter | roll | liter | pcs
+    current_stock: float = 0
+    purchase_price: float = 0  # harga beli per unit
+    min_stock: float = 0
+    supplier_default: Optional[str] = None
+    notes: Optional[str] = None
+    active: bool = True
+
+
+class StockInIn(BaseModel):
+    material_id: str
+    quantity: float
+    unit_price: float
+    supplier: Optional[str] = None
+    invoice_no: Optional[str] = None
+    date: str  # ISO YYYY-MM-DD
+    notes: Optional[str] = None
+
+
+class WasteIn(BaseModel):
+    material_id: str
+    quantity: float
+    reason: str  # rusak | rijek | kadaluarsa | lainnya
+    date: str
+    reported_by: Optional[str] = None
+    notes: Optional[str] = None
+
+
+MATERIAL_CATEGORIES = ["flexy", "sticker", "tinta", "lainnya"]
+MATERIAL_UNITS = ["meter", "roll", "liter", "pcs"]
+WASTE_REASONS = ["rusak", "rijek", "kadaluarsa", "lainnya"]
+
+
+# ----- Materials CRUD -----
+@api_router.get("/inventory/materials")
+async def inv_list_materials(user: dict = Depends(require_super_admin)):
+    cursor = db.materials.find({}, {"_id": 0}).sort("created_at", -1)
+    return await cursor.to_list(length=2000)
+
+
+@api_router.post("/inventory/materials")
+async def inv_create_material(payload: MaterialIn, user: dict = Depends(require_super_admin)):
+    if payload.category not in MATERIAL_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Kategori tidak valid")
+    if payload.unit not in MATERIAL_UNITS:
+        raise HTTPException(status_code=400, detail=f"Satuan tidak valid")
+    doc = payload.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["updated_at"] = doc["created_at"]
+    await db.materials.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/inventory/materials/{material_id}")
+async def inv_update_material(material_id: str, payload: MaterialIn, user: dict = Depends(require_super_admin)):
+    if payload.category not in MATERIAL_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Kategori tidak valid")
+    if payload.unit not in MATERIAL_UNITS:
+        raise HTTPException(status_code=400, detail=f"Satuan tidak valid")
+    existing = await db.materials.find_one({"id": material_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Bahan tidak ditemukan")
+    update = payload.model_dump()
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.materials.update_one({"id": material_id}, {"$set": update})
+    return await db.materials.find_one({"id": material_id}, {"_id": 0})
+
+
+@api_router.delete("/inventory/materials/{material_id}")
+async def inv_delete_material(material_id: str, user: dict = Depends(require_super_admin)):
+    existing = await db.materials.find_one({"id": material_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Bahan tidak ditemukan")
+    has_in = await db.stock_in.find_one({"material_id": material_id})
+    has_waste = await db.waste.find_one({"material_id": material_id})
+    if has_in or has_waste:
+        await db.materials.update_one({"id": material_id}, {"$set": {"active": False, "updated_at": datetime.now(timezone.utc).isoformat()}})
+        return {"ok": True, "soft_deleted": True}
+    await db.materials.delete_one({"id": material_id})
+    return {"ok": True, "soft_deleted": False}
+
+
+# ----- Stock In (Barang Masuk) -----
+async def _enrich_with_material(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    mats = {m["id"]: m async for m in db.materials.find({}, {"_id": 0})}
+    for it in items:
+        mat = mats.get(it.get("material_id")) or {}
+        it["material_name"] = mat.get("name") or "-"
+        it["material_unit"] = mat.get("unit") or ""
+        it["material_category"] = mat.get("category") or ""
+    return items
+
+
+@api_router.get("/inventory/stock-in")
+async def inv_list_stock_in(user: dict = Depends(require_super_admin), material_id: Optional[str] = None):
+    q = {}
+    if material_id:
+        q["material_id"] = material_id
+    cursor = db.stock_in.find(q, {"_id": 0}).sort("date", -1)
+    items = await cursor.to_list(length=2000)
+    return await _enrich_with_material(items)
+
+
+@api_router.post("/inventory/stock-in")
+async def inv_create_stock_in(payload: StockInIn, user: dict = Depends(require_super_admin)):
+    mat = await db.materials.find_one({"id": payload.material_id})
+    if not mat:
+        raise HTTPException(status_code=404, detail="Bahan tidak ditemukan")
+    if payload.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Kuantitas harus > 0")
+    total = round(float(payload.quantity) * float(payload.unit_price), 2)
+    doc = payload.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["total_price"] = total
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["created_by"] = user.get("email")
+    await db.stock_in.insert_one(doc)
+    new_stock = round(float(mat.get("current_stock", 0)) + float(payload.quantity), 4)
+    await db.materials.update_one(
+        {"id": payload.material_id},
+        {"$set": {
+            "current_stock": new_stock,
+            "purchase_price": float(payload.unit_price),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    doc.pop("_id", None)
+    doc["new_stock"] = new_stock
+    return doc
+
+
+@api_router.delete("/inventory/stock-in/{stock_in_id}")
+async def inv_delete_stock_in(stock_in_id: str, user: dict = Depends(require_super_admin)):
+    doc = await db.stock_in.find_one({"id": stock_in_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Data barang masuk tidak ditemukan")
+    mat = await db.materials.find_one({"id": doc["material_id"]})
+    if mat:
+        new_stock = round(float(mat.get("current_stock", 0)) - float(doc.get("quantity", 0)), 4)
+        await db.materials.update_one(
+            {"id": doc["material_id"]},
+            {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    await db.stock_in.delete_one({"id": stock_in_id})
+    return {"ok": True}
+
+
+# ----- Waste (Sisa/Rijek) -----
+@api_router.get("/inventory/waste")
+async def inv_list_waste(user: dict = Depends(require_super_admin), material_id: Optional[str] = None):
+    q = {}
+    if material_id:
+        q["material_id"] = material_id
+    cursor = db.waste.find(q, {"_id": 0}).sort("date", -1)
+    items = await cursor.to_list(length=2000)
+    return await _enrich_with_material(items)
+
+
+@api_router.post("/inventory/waste")
+async def inv_create_waste(payload: WasteIn, user: dict = Depends(require_super_admin)):
+    mat = await db.materials.find_one({"id": payload.material_id})
+    if not mat:
+        raise HTTPException(status_code=404, detail="Bahan tidak ditemukan")
+    if payload.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Kuantitas harus > 0")
+    if payload.reason not in WASTE_REASONS:
+        raise HTTPException(status_code=400, detail=f"Alasan tidak valid")
+    unit_price = float(mat.get("purchase_price", 0))
+    estimated_loss = round(float(payload.quantity) * unit_price, 2)
+    doc = payload.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["unit_price_snapshot"] = unit_price
+    doc["estimated_loss"] = estimated_loss
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["created_by"] = user.get("email")
+    await db.waste.insert_one(doc)
+    new_stock = round(float(mat.get("current_stock", 0)) - float(payload.quantity), 4)
+    await db.materials.update_one(
+        {"id": payload.material_id},
+        {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    doc.pop("_id", None)
+    doc["new_stock"] = new_stock
+    return doc
+
+
+@api_router.delete("/inventory/waste/{waste_id}")
+async def inv_delete_waste(waste_id: str, user: dict = Depends(require_super_admin)):
+    doc = await db.waste.find_one({"id": waste_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Data waste tidak ditemukan")
+    mat = await db.materials.find_one({"id": doc["material_id"]})
+    if mat:
+        new_stock = round(float(mat.get("current_stock", 0)) + float(doc.get("quantity", 0)), 4)
+        await db.materials.update_one(
+            {"id": doc["material_id"]},
+            {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    await db.waste.delete_one({"id": waste_id})
+    return {"ok": True}
+
+
+# ----- Inventory Stats -----
+@api_router.get("/inventory/stats")
+async def inv_stats(user: dict = Depends(require_super_admin)):
+    materials = await db.materials.find({}, {"_id": 0}).to_list(length=5000)
+    total_stock_value = 0.0
+    low_stock = []
+    for m in materials:
+        stock = float(m.get("current_stock", 0))
+        price = float(m.get("purchase_price", 0))
+        total_stock_value += stock * price
+        min_stock = float(m.get("min_stock", 0))
+        if min_stock > 0 and stock <= min_stock and m.get("active", True):
+            low_stock.append({
+                "id": m["id"], "name": m["name"], "category": m.get("category"),
+                "current_stock": stock, "min_stock": min_stock, "unit": m.get("unit"),
+            })
+    today = datetime.now(timezone.utc).date()
+    month_start = today.replace(day=1).isoformat()
+    waste_month = await db.waste.find({"date": {"$gte": month_start}}, {"_id": 0}).to_list(length=5000)
+    total_waste_this_month = sum(float(w.get("estimated_loss", 0)) for w in waste_month)
+    return {
+        "total_materials": sum(1 for m in materials if m.get("active", True)),
+        "total_stock_value": round(total_stock_value, 2),
+        "low_stock_count": len(low_stock),
+        "low_stock": low_stock[:10],
+        "total_waste_this_month": round(total_waste_this_month, 2),
+        "waste_records_this_month": len(waste_month),
+    }
+
+
 # Include router
 app.include_router(api_router)
 

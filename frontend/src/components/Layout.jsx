@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Users as UsersIcon, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays, UserCog, Menu, X as XIcon } from "lucide-react";
+import { LayoutDashboard, Users as UsersIcon, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays, UserCog, Menu, X as XIcon, Package } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 
@@ -8,6 +8,7 @@ const ALL_NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard", roles: ["super_admin"] },
   { to: "/employees", label: "Karyawan", icon: UsersIcon, testId: "nav-employees", badgeKey: "contract_expiring", roles: ["super_admin"] },
   { to: "/payroll", label: "Payroll", icon: Calculator, testId: "nav-payroll", roles: ["super_admin"] },
+  { to: "/inventory", label: "Inventory", icon: Package, testId: "nav-inventory", roles: ["super_admin"] },
   { to: "/thr", label: "THR", icon: Gift, testId: "nav-thr", roles: ["super_admin"] },
   { to: "/leave", label: "Izin & Cuti", icon: CalendarDays, testId: "nav-leave", badgeKey: "pending", roles: ["super_admin", "hr_leave"] },
   { to: "/users", label: "Kelola User", icon: UserCog, testId: "nav-users", roles: ["super_admin"] },
