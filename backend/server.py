@@ -3887,6 +3887,89 @@ async def profit_loss_report(period: str, user: dict = Depends(require_super_adm
     }
 
 
+@api_router.get("/reports/profit-loss-trend")
+async def profit_loss_trend(months: int = 12, user: dict = Depends(require_super_admin)):
+    """Return P&L summary utk N bulan terakhir termasuk bulan sekarang. Plus data YoY (bulan sama tahun lalu)."""
+    if months < 1 or months > 36:
+        raise HTTPException(status_code=400, detail="months harus 1-36")
+    today = datetime.now(timezone.utc).date()
+    # Buat list periode dari (months-1) bulan lalu → sekarang
+    periods = []
+    y, m = today.year, today.month
+    for _ in range(months):
+        periods.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    periods.reverse()
+    # YoY: bulan-bulan yg sama tahun sebelumnya
+    yoy_periods = []
+    for p in periods:
+        yy, mm = int(p[:4]) - 1, int(p[5:7])
+        yoy_periods.append(f"{yy:04d}-{mm:02d}")
+
+    async def _summary(period: str):
+        start, end, _, _ = _parse_month(period)
+        orders = await db.job_orders.find({
+            "start_date": {"$gte": start, "$lte": end},
+            "status": {"$ne": "batal"},
+        }, {"_id": 0, "total_price": 1, "total_material_cost": 1}).to_list(length=5000)
+        revenue = sum(float(o.get("total_price", 0)) for o in orders)
+        cogs = sum(float(o.get("total_material_cost", 0)) for o in orders)
+        waste_docs = await db.waste.find({"date": {"$gte": start, "$lte": end}}, {"_id": 0, "estimated_loss": 1}).to_list(length=5000)
+        waste_loss = sum(float(w.get("estimated_loss", 0)) for w in waste_docs)
+        payroll_cost, _ = await _payroll_cost_for_month(period)
+        gross = revenue - cogs
+        net = gross - (waste_loss + payroll_cost)
+        return {
+            "period": period,
+            "revenue": round(revenue, 2),
+            "cogs": round(cogs, 2),
+            "waste_loss": round(waste_loss, 2),
+            "payroll_cost": round(payroll_cost, 2),
+            "gross_profit": round(gross, 2),
+            "net_profit": round(net, 2),
+            "order_count": len(orders),
+        }
+
+    # Fetch parallel
+    curr_data, yoy_data = await asyncio.gather(
+        asyncio.gather(*[_summary(p) for p in periods]),
+        asyncio.gather(*[_summary(p) for p in yoy_periods]),
+    )
+    # Gabungkan yoy ke curr_data
+    yoy_map = {y["period"]: y for y in yoy_data}
+    for i, row in enumerate(curr_data):
+        yoy_row = yoy_map.get(yoy_periods[i], {})
+        row["yoy_period"] = yoy_periods[i]
+        row["yoy_revenue"] = yoy_row.get("revenue", 0)
+        row["yoy_net_profit"] = yoy_row.get("net_profit", 0)
+        # Growth %
+        base_rev = row["yoy_revenue"]
+        base_np = row["yoy_net_profit"]
+        row["revenue_growth_pct"] = round(((row["revenue"] - base_rev) / abs(base_rev) * 100) if base_rev != 0 else 0, 2) if base_rev != 0 else None
+        row["net_profit_growth_pct"] = round(((row["net_profit"] - base_np) / abs(base_np) * 100) if base_np != 0 else 0, 2) if base_np != 0 else None
+    # Rangkuman total periode
+    total_revenue = sum(r["revenue"] for r in curr_data)
+    total_net = sum(r["net_profit"] for r in curr_data)
+    total_yoy_revenue = sum(r["yoy_revenue"] for r in curr_data)
+    total_yoy_net = sum(r["yoy_net_profit"] for r in curr_data)
+    return {
+        "months": months,
+        "periods": periods,
+        "data": curr_data,
+        "totals": {
+            "revenue": round(total_revenue, 2),
+            "net_profit": round(total_net, 2),
+            "yoy_revenue": round(total_yoy_revenue, 2),
+            "yoy_net_profit": round(total_yoy_net, 2),
+            "revenue_growth_pct": round(((total_revenue - total_yoy_revenue) / abs(total_yoy_revenue) * 100) if total_yoy_revenue != 0 else 0, 2) if total_yoy_revenue != 0 else None,
+            "net_profit_growth_pct": round(((total_net - total_yoy_net) / abs(total_yoy_net) * 100) if total_yoy_net != 0 else 0, 2) if total_yoy_net != 0 else None,
+        },
+    }
+
+
 @api_router.get("/reports/profit-loss/{period}/pdf")
 async def profit_loss_pdf(period: str, user: dict = Depends(require_super_admin)):
     from reportlab.lib.pagesizes import A4

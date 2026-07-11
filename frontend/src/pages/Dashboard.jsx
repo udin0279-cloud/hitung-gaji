@@ -2,17 +2,22 @@ import { useEffect, useState } from "react";
 import { api, formatIDR } from "../lib/api";
 import { Link } from "react-router-dom";
 import { TrendingUp, Users, FileText, Receipt, ArrowUpRight, AlertTriangle, Package, TrendingDown } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from "recharts";
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Bar, ComposedChart, Legend } from "recharts";
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
+  const [trend, setTrend] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.get("/dashboard/stats");
-        setStats(data);
+        const [s, t] = await Promise.all([
+          api.get("/dashboard/stats"),
+          api.get("/reports/profit-loss-trend?months=12").catch(() => ({ data: null })),
+        ]);
+        setStats(s.data);
+        setTrend(t.data);
       } finally {
         setLoading(false);
       }
@@ -125,7 +130,102 @@ export default function Dashboard() {
       {/* Inventory Widget */}
       <InventoryWidget inv={stats?.inventory} />
 
+      {/* Business Trend 12 bulan + YoY */}
+      <BusinessTrend trend={trend} />
+
       {loading && <div className="mt-6 text-xs text-zinc-400 font-mono">Memuat…</div>}
+    </div>
+  );
+}
+
+function BusinessTrend({ trend }) {
+  if (!trend || !trend.data?.length) return null;
+  const totals = trend.totals || {};
+  const revGrowth = totals.revenue_growth_pct;
+  const npGrowth = totals.net_profit_growth_pct;
+  return (
+    <div data-testid="business-trend-widget" className="mt-6 border border-zinc-200 bg-white p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold flex items-center gap-2">
+            <TrendingUp className="w-3.5 h-3.5" /> Tren Bisnis {trend.months} Bulan
+          </div>
+          <div className="font-heading text-lg font-bold text-zinc-900 mt-1">
+            Revenue vs Net Profit · <span className="text-zinc-500 text-sm font-normal">Otomatis dari Order, Waste, dan Payroll</span>
+          </div>
+        </div>
+        {/* YoY summary chips */}
+        <div className="flex flex-wrap gap-2">
+          <YoYChip label="Revenue" value={totals.revenue} yoy={totals.yoy_revenue} growth={revGrowth} />
+          <YoYChip label="Net Profit" value={totals.net_profit} yoy={totals.yoy_net_profit} growth={npGrowth} />
+        </div>
+      </div>
+      <div className="h-72">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={trend.data} margin={{ top: 5, right: 20, bottom: 0, left: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
+            <XAxis dataKey="period" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }} stroke="#a1a1aa" tickFormatter={(v) => v === 0 ? "0" : `${(v / 1_000_000).toFixed(1)}jt`} />
+            <Tooltip formatter={(v) => formatIDR(v)} contentStyle={{ borderRadius: 0, border: "1px solid #d4d4d8", fontFamily: "JetBrains Mono", fontSize: 12 }} />
+            <Legend wrapperStyle={{ fontSize: 11, fontFamily: "JetBrains Mono", paddingTop: 8 }} />
+            <Bar dataKey="revenue" fill="#002FA7" name="Revenue" />
+            <Bar dataKey="cogs" fill="#94a3b8" name="COGS" />
+            <Line type="monotone" dataKey="net_profit" stroke="#008A00" strokeWidth={2.5} dot={{ r: 4, fill: "#008A00" }} name="Net Profit" />
+            <Line type="monotone" dataKey="yoy_net_profit" stroke="#E81123" strokeWidth={1.5} strokeDasharray="4 4" dot={false} name="Net Profit (YoY)" />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Detail table (last 6 rows) */}
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest border-b border-zinc-200">
+              <th className="py-2 pr-3">Bulan</th>
+              <th className="py-2 pr-3 text-right">Revenue</th>
+              <th className="py-2 pr-3 text-right">Net Profit</th>
+              <th className="py-2 pr-3 text-right">YoY Revenue</th>
+              <th className="py-2 pr-3 text-right">YoY Growth</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trend.data.slice(-6).reverse().map((r) => {
+              const g = r.revenue_growth_pct;
+              const gColor = g === null || g === 0 ? "text-zinc-500" : g > 0 ? "text-[#008A00]" : "text-[#E81123]";
+              return (
+                <tr key={r.period} data-testid="trend-row" className="border-b border-zinc-100">
+                  <td className="py-2 pr-3 font-mono text-xs text-zinc-700">{r.period}</td>
+                  <td className="py-2 pr-3 font-mono text-right text-zinc-900">{formatIDR(r.revenue)}</td>
+                  <td className={`py-2 pr-3 font-mono text-right font-semibold ${r.net_profit >= 0 ? "text-[#008A00]" : "text-[#E81123]"}`}>{formatIDR(r.net_profit)}</td>
+                  <td className="py-2 pr-3 font-mono text-right text-zinc-500">{formatIDR(r.yoy_revenue)}</td>
+                  <td className={`py-2 pr-3 font-mono text-right font-semibold ${gColor}`}>
+                    {g === null ? "—" : `${g > 0 ? "+" : ""}${g}%`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function YoYChip({ label, value, yoy, growth }) {
+  const positive = growth !== null && growth > 0;
+  const negative = growth !== null && growth < 0;
+  const cls = positive ? "border-[#008A00] text-[#008A00] bg-[#008A00]/5"
+    : negative ? "border-[#E81123] text-[#E81123] bg-[#E81123]/5"
+    : "border-zinc-300 text-zinc-700 bg-zinc-50";
+  return (
+    <div className={`border ${cls} px-3 py-2`}>
+      <div className="text-[10px] uppercase tracking-widest font-semibold opacity-70">{label} YoY</div>
+      <div className="font-mono text-sm font-bold mt-0.5">
+        {growth === null ? "—" : `${growth > 0 ? "+" : ""}${growth}%`}
+      </div>
+      <div className="text-[10px] font-mono opacity-60 mt-0.5">
+        {formatIDR(value)} vs {formatIDR(yoy)}
+      </div>
     </div>
   );
 }

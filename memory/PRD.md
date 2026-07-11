@@ -335,3 +335,32 @@ Test file: `/app/backend/tests/test_customer_pl.py`
 - Kaitkan customer_id ke Job Order (saat ini string match)
 - Multi-batch pricing (FIFO/LIFO)
 
+
+---
+## Update: 2026-07-11 (session 5) — Grafik Trend 12 Bulan + YoY di Dashboard
+
+### Implemented
+**Backend endpoint**: `GET /api/reports/profit-loss-trend?months=12`
+- Return array 12 bulan (adjustable 1-36): revenue, cogs, waste_loss, payroll_cost, gross_profit, net_profit, order_count
+- Untuk setiap bulan, sertakan: yoy_period, yoy_revenue, yoy_net_profit, revenue_growth_pct, net_profit_growth_pct
+- Totals: total revenue/net_profit periode + YoY comparison
+- Parallel fetch (asyncio.gather) untuk performa
+
+**Frontend Dashboard**:
+- Komponen `BusinessTrend` — di bawah InventoryWidget
+- ComposedChart (recharts): Revenue bar biru, COGS bar abu, Net Profit line hijau, Net Profit YoY line merah putus-putus
+- YoY chips di kanan atas: Revenue YoY %, Net Profit YoY % dgn warna hijau/merah/abu
+- Table detail 6 bulan terakhir dgn YoY growth per bulan
+
+### Files Changed
+- backend/server.py — endpoint `/reports/profit-loss-trend` + inner helper `_summary()`
+- frontend/src/pages/Dashboard.jsx — `BusinessTrend`, `YoYChip` components + trend fetch
+
+### Testing
+Manual API + UI verified. Chart rendering benar (dip 2026-06 saat payroll tanpa revenue, peak 2026-07 saat order pertama).
+
+### Backlog Enhancement
+- Klik bar chart → drilldown ke halaman P&L bulan tsb
+- Toggle metrik (Revenue, Gross Profit, Net Profit)
+- Cache trend data (Redis) untuk mempercepat dashboard
+
