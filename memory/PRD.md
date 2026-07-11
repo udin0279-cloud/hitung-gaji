@@ -403,3 +403,51 @@ Test file: `/app/backend/tests/test_purchasing.py`
 - Aging report hutang (0-30, 31-60, 61+ hari)
 - Auto-integrasi purchase ke Laba/Rugi report (COGS harusnya pakai PO diterima, bukan hanya Order.total_material_cost)
 
+
+---
+## Update: 2026-07-11 (session 7) — Modul Penjualan / Kasir (POS Digital Printing)
+
+### Implemented
+**Backend (Sales/POS Module in server.py):**
+- Collection `sales`: sale_no (auto NOTA-YYYYMMDD-XXXX), customer_name/phone, cashier + cashier_name (dari JWT), items[], subtotal, discount, total, cash_paid, change, payment_method="tunai", status="paid"
+- Formula: `area_total = length_m × width_m × quantity` (m²), `subtotal_per_item = area_total × unit_price` (harga/m²), `total = subtotal - discount`, `change = cash_paid - total`
+- **Auto-decrement stok** material sebesar area_total per item
+- Validasi: reject bila cash < total, stok tidak cukup, atau item kosong
+- **DELETE rollback**: mengembalikan stok saat sale dihapus
+- Endpoint receipt HTML: `GET /api/sales/{id}/receipt` — thermal 80mm dgn @page size, Courier monospace, header/meta/items/total/payment/footer
+
+**Frontend (Sales.jsx):**
+- Page `/sales` — POS interface: 4 stat cards (transaksi hari ini/bulan, omset hari ini/bulan), tabel transaksi
+- Modal "Transaksi Baru": customer form + dynamic items (multi-row) + payment summary panel gelap dengan Total/Kembali besar
+- Auto-calc real-time: subtotal per item, luas total, cek stok cukup, disabled submit bila kurang bayar
+- Setelah simpan: auto-open receipt window (thermal 80mm) dengan `?auto=1` untuk trigger print dialog
+- Print button di list → re-open receipt
+- Delete button → konfirmasi + rollback stok
+
+**Material Master:**
+- Field baru `selling_price` (Rp/m²) di form Master Bahan — default value untuk POS Sales, bisa override per transaksi
+
+**Company Info (Receipt Header):**
+- Env-driven: `COMPANY_NAME`, `COMPANY_ADDRESS`, `COMPANY_PHONE` (default: Plazakreasi/Jl. Kreasi/0812-3456-7890)
+- Untuk production, set via Emergent Secrets:
+  - `payroll.plazakreasi.com`: `COMPANY_NAME=Plazakreasi`, `COMPANY_ADDRESS=<alamat>`, `COMPANY_PHONE=<telp>`
+
+### API Endpoints
+- `GET /api/sales` (dgn filter date_from/date_to), `POST /api/sales`
+- `GET /api/sales/{id}`, `DELETE /api/sales/{id}` (rollback stok)
+- `GET /api/sales/{id}/receipt` — HTMLResponse (thermal 80mm)
+- `GET /api/sales/stats/today` — count/total hari ini + bulan
+
+### Testing
+Testing agent iteration_15: **Backend 14/14 pytest passed** + **Frontend E2E Playwright 100% passed**.
+Test file: `/app/backend/tests/test_sales.py`
+
+### Known Non-Critical Observations
+- `_next_sale_no` race condition (single cashier OK; upgrade counter document utk multi-cashier)
+- Sale insert + stock update non-atomic (Mongo single-node limitation; acceptable MVP)
+- server.py 4700+ lines — modularization ke `routers/` file terpisah recommended untuk maintainability
+- window.confirm belum konsisten dgn shadcn AlertDialog pattern (existing di modul lain juga sama)
+
+### Aplikasi Sekarang (Mini-ERP Lengkap)
+👥 HR & Payroll · 📦 Inventory · 🛒 Purchasing · 💵 Sales/POS (NEW) · 💰 Job Order · 📊 Laba/Rugi + Trend YoY · 📱 WhatsApp/Email · 🏢 Multi-tenant
+

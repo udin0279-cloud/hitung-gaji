@@ -131,9 +131,16 @@ export default function Sales() {
                     <div className={s.change > 0 ? "text-[#008A00] font-semibold" : ""}>Kembali: {formatIDR(s.change)}</div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-1">
-                      <button data-testid="print-receipt-button" onClick={() => openReceipt(s)} className="p-1.5 hover:bg-[#002FA7]/10 text-[#002FA7]" title="Cetak Struk"><Printer className="w-3.5 h-3.5" /></button>
-                      <button data-testid="delete-sale-button" onClick={() => remove(s)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]" title="Hapus"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        data-testid="print-receipt-button"
+                        onClick={() => openReceipt(s)}
+                        className="inline-flex items-center gap-1.5 rounded-none border border-[#002FA7] bg-[#002FA7] text-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-[#002080] transition-colors"
+                        title="Cetak Nota Thermal 80mm"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> Cetak Nota
+                      </button>
+                      <button data-testid="delete-sale-button" onClick={() => remove(s)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123] border border-transparent hover:border-[#E81123]/30" title="Hapus"><Trash2 className="w-3.5 h-3.5" /></button>
                     </div>
                   </td>
                 </tr>

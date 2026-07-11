@@ -4589,44 +4589,54 @@ async def sales_receipt_html(sale_id: str, user: dict = Depends(require_super_ad
     customer_phone_row = f'<div class="line-sm">Telp: {s.get("customer_phone")}</div>' if s.get("customer_phone") else ""
     notes_row = f'<div class="notes">Catatan: {s.get("notes")}</div>' if s.get("notes") else ""
     html = f"""<!DOCTYPE html>
-<html lang="id"><head><meta charset="UTF-8"><title>Struk {s.get('sale_no')}</title>
+<html lang="id"><head><meta charset="UTF-8"><title>Nota {s.get('sale_no')}</title>
 <style>
+  /* ===== Thermal 80mm (C80BT) - printable area ~72mm =====
+     Kertas 80mm, tetapi head printer hanya bisa cetak sekitar 72mm.
+     Kita set @page 80mm dan konten 72mm (centered) supaya aman
+     & TIDAK TERPOTONG di sisi kanan. */
   @page {{ size: 80mm auto; margin: 0; }}
   * {{ box-sizing: border-box; }}
   html, body {{ margin: 0; padding: 0; }}
-  body {{ font-family: 'Courier New', 'Consolas', monospace; font-size: 12px; color: #000; background: #f5f5f5; }}
-  .receipt {{ width: 80mm; padding: 4mm 3mm; background: white; margin: 8px auto; box-shadow: 0 1px 6px rgba(0,0,0,0.08); }}
+  body {{ font-family: 'Courier New', 'Consolas', 'Lucida Console', monospace; font-size: 11px; line-height: 1.35; color: #000; background: #eee; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+  .receipt {{ width: 72mm; max-width: 72mm; padding: 3mm 3mm 4mm 3mm; background: white; margin: 8px auto; box-shadow: 0 1px 6px rgba(0,0,0,0.08); word-wrap: break-word; overflow-wrap: break-word; }}
   h1, h2, h3, p {{ margin: 0; padding: 0; }}
   .center {{ text-align: center; }}
   .strong {{ font-weight: bold; }}
+  .sep {{ border-top: 1px dashed #000; margin: 4px 0; }}
   .header {{ text-align: center; padding-bottom: 4px; border-bottom: 1px dashed #000; }}
-  .header .name {{ font-size: 15px; font-weight: bold; letter-spacing: 0.5px; }}
-  .header .addr {{ font-size: 10px; margin-top: 2px; line-height: 1.35; }}
-  .meta {{ padding: 4px 0; border-bottom: 1px dashed #000; font-size: 11px; }}
-  .meta .row {{ display: flex; justify-content: space-between; }}
-  .items {{ padding: 4px 0; border-bottom: 1px dashed #000; }}
+  .header .name {{ font-size: 13px; font-weight: bold; letter-spacing: 0.3px; word-break: break-word; }}
+  .header .addr {{ font-size: 9.5px; margin-top: 2px; line-height: 1.35; word-break: break-word; }}
+  .meta {{ padding: 3px 0; border-bottom: 1px dashed #000; font-size: 10.5px; }}
+  .meta .row {{ display: flex; justify-content: space-between; gap: 4px; }}
+  .meta .row > span:last-child {{ text-align: right; word-break: break-all; }}
+  .items {{ padding: 3px 0; border-bottom: 1px dashed #000; }}
   .item {{ padding: 3px 0; }}
-  .item .prod {{ font-weight: bold; font-size: 12px; }}
-  .item .mat {{ font-size: 10px; color: #333; }}
-  .item .row {{ display: flex; justify-content: space-between; font-size: 11px; margin-top: 1px; }}
-  .totals {{ padding: 4px 0; border-bottom: 1px dashed #000; font-size: 12px; }}
+  .item + .item {{ border-top: 1px dotted #999; }}
+  .item .prod {{ font-weight: bold; font-size: 11px; word-break: break-word; }}
+  .item .mat {{ font-size: 9.5px; color: #222; word-break: break-word; }}
+  .item .row {{ display: flex; justify-content: space-between; font-size: 10.5px; margin-top: 1px; gap: 4px; }}
+  .item .row > span:last-child {{ text-align: right; white-space: nowrap; }}
+  .totals {{ padding: 3px 0; border-bottom: 1px dashed #000; font-size: 11px; }}
   .totals .row {{ display: flex; justify-content: space-between; padding: 1px 0; }}
-  .totals .grand {{ font-size: 14px; font-weight: bold; padding: 2px 0; border-top: 1px solid #000; margin-top: 2px; }}
-  .pay {{ padding: 4px 0; border-bottom: 1px dashed #000; }}
-  .pay .row {{ display: flex; justify-content: space-between; font-size: 12px; padding: 1px 0; }}
-  .footer {{ padding-top: 6px; text-align: center; font-size: 10px; }}
-  .notes {{ font-size: 10px; padding: 3px 0; border-bottom: 1px dashed #000; font-style: italic; }}
-  .toolbar {{ max-width: 80mm; margin: 0 auto 8px; text-align: center; padding-top: 8px; }}
-  .toolbar button {{ background: #002FA7; color: white; border: 0; padding: 8px 20px; font-family: inherit; font-size: 12px; font-weight: bold; letter-spacing: 0.5px; cursor: pointer; text-transform: uppercase; }}
+  .totals .grand {{ font-size: 13px; font-weight: bold; padding: 3px 0; border-top: 1px solid #000; margin-top: 2px; }}
+  .pay {{ padding: 3px 0; border-bottom: 1px dashed #000; }}
+  .pay .row {{ display: flex; justify-content: space-between; font-size: 11px; padding: 1px 0; }}
+  .footer {{ padding-top: 6px; text-align: center; font-size: 9.5px; line-height: 1.4; }}
+  .notes {{ font-size: 9.5px; padding: 3px 0; border-bottom: 1px dashed #000; font-style: italic; word-break: break-word; }}
+  .toolbar {{ max-width: 72mm; margin: 0 auto 8px; text-align: center; padding-top: 10px; }}
+  .toolbar button {{ background: #002FA7; color: white; border: 0; padding: 10px 22px; font-family: inherit; font-size: 12px; font-weight: bold; letter-spacing: 0.6px; cursor: pointer; text-transform: uppercase; }}
   .toolbar button:hover {{ background: #002080; }}
+  .toolbar .hint {{ font-size: 10px; color: #666; margin-top: 6px; font-family: 'Courier New', monospace; }}
   @media print {{
-    body {{ background: white; }}
-    .receipt {{ margin: 0; box-shadow: none; padding: 2mm 2mm; }}
+    html, body {{ background: white; width: 80mm; }}
+    .receipt {{ margin: 0 auto; box-shadow: none; padding: 2mm 3mm 3mm 3mm; width: 72mm; }}
     .toolbar {{ display: none; }}
   }}
 </style></head><body>
 <div class="toolbar">
-  <button onclick="window.print()">🖨 Cetak Struk</button>
+  <button onclick="window.print()">🖨 Cetak Nota</button>
+  <div class="hint">Pilih printer thermal 80mm • Margin: None • Skala: 100%</div>
 </div>
 <div class="receipt">
   <div class="header">
