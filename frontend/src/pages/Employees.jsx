@@ -35,10 +35,19 @@ const EMPTY = {
   bank_name: "",
   bank_account: "",
   bank_account_holder: "",
+  employment_status: "tetap",
   active: true,
 };
 
 const PTKP_OPTIONS = ["TK/0", "TK/1", "TK/2", "TK/3", "K/0", "K/1", "K/2", "K/3"];
+
+const EMPLOYMENT_STATUS_OPTIONS = [
+  { value: "ojt", label: "OJT" },
+  { value: "kontrak_6", label: "Kontrak 6 Bulan" },
+  { value: "kontrak_12", label: "Kontrak 1 Tahun" },
+  { value: "tetap", label: "Tetap" },
+];
+const EMPLOYMENT_STATUS_LABEL = Object.fromEntries(EMPLOYMENT_STATUS_OPTIONS.map((o) => [o.value, o.label]));
 
 export default function Employees() {
   const [list, setList] = useState([]);
@@ -250,6 +259,7 @@ export default function Employees() {
               <th className="px-4 py-3">Nama</th>
               <th className="px-4 py-3">Jabatan</th>
               <th className="px-4 py-3">Departemen</th>
+              <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">PTKP</th>
               <th className="px-4 py-3 text-right">Gaji Pokok</th>
               <th className="px-4 py-3 text-right">Tunjangan</th>
@@ -259,10 +269,10 @@ export default function Employees() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>
             )}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400">
+              <tr><td colSpan={10} className="px-4 py-12 text-center text-zinc-400">
                 <div className="font-mono text-xs">Belum ada karyawan. Klik &ldquo;Tambah Karyawan&rdquo; untuk mulai.</div>
               </td></tr>
             )}
@@ -275,6 +285,21 @@ export default function Employees() {
                 </td>
                 <td className="px-4 py-3 text-zinc-700">{emp.position}</td>
                 <td className="px-4 py-3 text-zinc-700">{emp.department}</td>
+                <td className="px-4 py-3">
+                  {(() => {
+                    const s = emp.employment_status || "tetap";
+                    const cls = s === "tetap"
+                      ? "border-[#008A00] text-[#008A00] bg-[#008A00]/5"
+                      : s === "ojt"
+                      ? "border-[#E81123] text-[#E81123] bg-[#E81123]/5"
+                      : "border-[#002FA7] text-[#002FA7] bg-[#002FA7]/5";
+                    return (
+                      <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider border ${cls}`}>
+                        {EMPLOYMENT_STATUS_LABEL[s] || s}
+                      </span>
+                    );
+                  })()}
+                </td>
                 <td className="px-4 py-3">
                   <span className="inline-flex items-center px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider border border-zinc-300 text-zinc-700 bg-zinc-50">{emp.ptkp_status}</span>
                 </td>
@@ -370,6 +395,11 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
             </Field>
             <Field label="Departemen">
               <input data-testid="emp-department" required value={form.department} onChange={set("department")} className={inputCls} />
+            </Field>
+            <Field label="Status Karyawan">
+              <select data-testid="emp-employment-status" value={form.employment_status} onChange={set("employment_status")} className={inputCls}>
+                {EMPLOYMENT_STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             </Field>
           </div>
 

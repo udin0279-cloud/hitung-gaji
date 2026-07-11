@@ -199,6 +199,7 @@ class EmployeeIn(BaseModel):
     bank_name: Optional[str] = None
     bank_account: Optional[str] = None
     bank_account_holder: Optional[str] = None
+    employment_status: str = "tetap"  # ojt | kontrak_6 | kontrak_12 | tetap
     active: bool = True
 
 

@@ -172,3 +172,21 @@ Test payroll Siti Aminah dgn semua komponen: Gross 20,4jt → Net 17,66jt. PPh21
 - backend/server.py — `EmployeeIn` + `_format_bank_export`
 - frontend/src/pages/Employees.jsx — EMPTY + input field "Atas Nama"
 
+
+---
+## Update: 2026-07-11 — Field Status Karyawan (Employment Status)
+
+### Implemented
+- Field baru `employment_status` di Employee model dengan 4 opsi:
+  - `ojt` — OJT (badge merah)
+  - `kontrak_6` — Kontrak 6 Bulan (badge biru)
+  - `kontrak_12` — Kontrak 1 Tahun (badge biru)
+  - `tetap` — Tetap (default, badge hijau)
+- Dropdown di form Karyawan (section Identitas, di bawah Departemen)
+- Kolom "Status" di tabel daftar Karyawan dengan color-coded badge
+- Backward compatible (default `tetap` untuk data lama)
+
+### Files Changed
+- backend/server.py — `EmployeeIn.employment_status`
+- frontend/src/pages/Employees.jsx — EMPTY, EMPLOYMENT_STATUS_OPTIONS, dropdown, tabel kolom Status
+
