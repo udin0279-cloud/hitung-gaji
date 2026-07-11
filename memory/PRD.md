@@ -216,3 +216,43 @@ Test payroll Siti Aminah dgn semua komponen: Gross 20,4jt → Net 17,66jt. PPh21
 - Email/WhatsApp otomatis ke HR ketika kontrak/OJT tinggal 30 hari (butuh APScheduler — P1)
 - Halaman terpisah "Daftar Kontrak Akan Berakhir" dengan filter (all/OJT/Kontrak, sort by urgency)
 
+
+---
+## Update: 2026-07-11 (session 2) — Modul Inventory (ERP Step 1)
+
+### Implemented
+User meminta pengembangan aplikasi dari HR-only ke arah ERP. Modul Inventory pertama dibangun:
+
+**Backend (`/app/backend/server.py` section "Inventory Module"):**
+- Collection: `materials`, `stock_in`, `waste`
+- Model `MaterialIn`: name, category (flexy/sticker/tinta/lainnya), unit (meter/roll/liter/pcs), current_stock (float — desimal), purchase_price, min_stock, supplier_default, active
+- Model `StockInIn`: material_id, quantity, unit_price, supplier, invoice_no, date, notes → **auto-update material.current_stock (+qty) & purchase_price** (harga beli terbaru)
+- Model `WasteIn`: material_id, quantity, reason (rusak/rijek/kadaluarsa/lainnya), date, reported_by → **auto-kurangi stok + estimated_loss = qty × purchase_price**
+- Rollback stok saat delete stock-in/waste
+- Soft-delete material bila sudah ada history
+- Endpoint stats: total_stock_value, total_waste_this_month, low_stock, low_stock_count
+
+**Frontend:**
+- Page `/inventory` (Inventory.jsx) — 4 stat cards + 3 tabs (Master Bahan, Barang Masuk, Sisa/Rijek)
+- Modal form untuk create/edit + validasi client
+- Preview kerugian real-time saat mengisi form waste
+- Design konsisten dengan modul lain (Swiss high-contrast, #002FA7)
+- Sidebar nav: "Inventory" (icon Package) di antara Payroll & THR
+
+### API Endpoints
+- `GET/POST /api/inventory/materials`, `PUT/DELETE /api/inventory/materials/{id}`
+- `GET/POST /api/inventory/stock-in`, `DELETE /api/inventory/stock-in/{id}`
+- `GET/POST /api/inventory/waste`, `DELETE /api/inventory/waste/{id}`
+- `GET /api/inventory/stats`
+
+### Testing
+Testing agent iteration_11: **Backend 20/20 pytest passed** + **Frontend E2E Playwright 100% passed**.
+Test file: `/app/backend/tests/test_inventory.py`
+
+### Backlog Enhancement (opsional)
+- Widget Inventory di Dashboard utama (mirroring contract reminder)
+- Multi-batch pricing (FIFO/LIFO) — saat ini pakai "last purchase price"
+- Laporan bulanan waste dalam PDF/Excel
+- Stock adjustment manual (koreksi opname)
+- Kaitkan waste dgn karyawan (integrasi ke `employees` collection)
+
