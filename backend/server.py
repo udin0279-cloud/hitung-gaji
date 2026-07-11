@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Form, Body
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
@@ -3181,6 +3181,7 @@ class MaterialIn(BaseModel):
     unit: str  # meter | roll | liter | pcs
     current_stock: float = 0
     purchase_price: float = 0  # harga beli per unit
+    selling_price: float = 0  # harga jual per m² (untuk POS Sales)
     min_stock: float = 0
     supplier_default: Optional[str] = None
     notes: Optional[str] = None
@@ -4402,6 +4403,288 @@ async def purchasing_stats(user: dict = Depends(require_super_admin)):
         "total_suppliers": total_suppliers,
     }
 
+
+
+# ---------------- Sales / POS Module ----------------
+class SaleItemIn(BaseModel):
+    material_id: str
+    product_name: str  # nama produk/jasa (mis. "Banner 3x2m", "Sticker Vinyl")
+    length_m: float  # panjang meter
+    width_m: float  # lebar meter
+    quantity: int = 1
+    unit_price: float  # harga per m² (bisa override dari material.selling_price)
+
+
+class SaleIn(BaseModel):
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    items: List[SaleItemIn] = []
+    discount: float = 0
+    cash_paid: float = 0
+    payment_method: str = "tunai"
+    notes: Optional[str] = None
+
+
+async def _next_sale_no() -> str:
+    today = datetime.now(timezone.utc).date()
+    prefix = f"NOTA-{today.strftime('%Y%m%d')}-"
+    count = await db.sales.count_documents({"sale_no": {"$regex": f"^{re.escape(prefix)}"}})
+    return f"{prefix}{count + 1:04d}"
+
+
+def _company_info() -> Dict[str, str]:
+    return {
+        "name": os.environ.get("COMPANY_NAME", "Plazakreasi"),
+        "address": os.environ.get("COMPANY_ADDRESS", "Jl. Kreasi No. 1, Jakarta"),
+        "phone": os.environ.get("COMPANY_PHONE", "0812-3456-7890"),
+    }
+
+
+@api_router.get("/sales")
+async def sales_list(user: dict = Depends(require_super_admin), limit: int = 200, date_from: Optional[str] = None, date_to: Optional[str] = None):
+    q = {}
+    if date_from or date_to:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            rng["$lte"] = date_to
+        q["date"] = rng
+    items = await db.sales.find(q, {"_id": 0}).sort("created_at", -1).to_list(length=max(1, min(limit, 2000)))
+    return items
+
+
+@api_router.get("/sales/{sale_id}")
+async def sales_get(sale_id: str, user: dict = Depends(require_super_admin)):
+    s = await db.sales.find_one({"id": sale_id}, {"_id": 0})
+    if not s:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    return s
+
+
+@api_router.post("/sales")
+async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin)):
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Item transaksi tidak boleh kosong")
+    # Validate + hitung + kurangi stok
+    items_out = []
+    subtotal = 0.0
+    for it in payload.items:
+        mat = await db.materials.find_one({"id": it.material_id})
+        if not mat:
+            raise HTTPException(status_code=400, detail=f"Bahan tidak ditemukan")
+        if it.length_m <= 0 or it.width_m <= 0 or it.quantity <= 0:
+            raise HTTPException(status_code=400, detail=f"Ukuran & qty {it.product_name} harus > 0")
+        area_per_pc = float(it.length_m) * float(it.width_m)
+        area_total = round(area_per_pc * int(it.quantity), 4)  # dalam m² (juga jumlah stok yg dipakai)
+        line_subtotal = round(area_total * float(it.unit_price), 2)
+        # Cek stok
+        current_stock = float(mat.get("current_stock", 0))
+        if area_total > current_stock:
+            raise HTTPException(status_code=400, detail=f"Stok {mat.get('name')} tidak cukup (butuh {area_total}, tersedia {current_stock})")
+        items_out.append({
+            "material_id": it.material_id,
+            "material_name": mat.get("name"),
+            "material_unit": mat.get("unit"),
+            "product_name": it.product_name,
+            "length_m": float(it.length_m),
+            "width_m": float(it.width_m),
+            "quantity": int(it.quantity),
+            "area_per_pc": round(area_per_pc, 4),
+            "area_total": area_total,
+            "unit_price": float(it.unit_price),
+            "subtotal": line_subtotal,
+        })
+        subtotal += line_subtotal
+    discount = float(payload.discount or 0)
+    total = round(subtotal - discount, 2)
+    cash_paid = float(payload.cash_paid or 0)
+    if cash_paid < total:
+        raise HTTPException(status_code=400, detail=f"Uang tunai kurang. Total Rp {total:,.0f}, dibayar Rp {cash_paid:,.0f}")
+    change = round(cash_paid - total, 2)
+    now = datetime.now(timezone.utc)
+    sale_no = await _next_sale_no()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "sale_no": sale_no,
+        "date": now.date().isoformat(),
+        "customer_name": (payload.customer_name or "Umum").strip() or "Umum",
+        "customer_phone": (payload.customer_phone or "").strip(),
+        "cashier": user.get("email"),
+        "cashier_name": user.get("name") or user.get("email"),
+        "items": items_out,
+        "subtotal": round(subtotal, 2),
+        "discount": round(discount, 2),
+        "total": total,
+        "cash_paid": round(cash_paid, 2),
+        "change": change,
+        "payment_method": payload.payment_method or "tunai",
+        "notes": payload.notes,
+        "status": "paid",
+        "created_at": now.isoformat(),
+    }
+    await db.sales.insert_one(doc)
+    # Kurangi stok
+    for it in items_out:
+        mat = await db.materials.find_one({"id": it["material_id"]})
+        if mat:
+            new_stock = round(float(mat.get("current_stock", 0)) - float(it["area_total"]), 4)
+            await db.materials.update_one(
+                {"id": it["material_id"]},
+                {"$set": {"current_stock": new_stock, "updated_at": now.isoformat()}},
+            )
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/sales/{sale_id}")
+async def sales_delete(sale_id: str, user: dict = Depends(require_super_admin)):
+    s = await db.sales.find_one({"id": sale_id})
+    if not s:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    # Rollback stok
+    for it in s.get("items") or []:
+        mat = await db.materials.find_one({"id": it.get("material_id")})
+        if mat:
+            new_stock = round(float(mat.get("current_stock", 0)) + float(it.get("area_total", 0)), 4)
+            await db.materials.update_one(
+                {"id": it["material_id"]},
+                {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+    await db.sales.delete_one({"id": sale_id})
+    return {"ok": True}
+
+
+@api_router.get("/sales/{sale_id}/receipt", response_class=HTMLResponse)
+async def sales_receipt_html(sale_id: str, user: dict = Depends(require_super_admin)):
+    s = await db.sales.find_one({"id": sale_id}, {"_id": 0})
+    if not s:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    ci = _company_info()
+    def _idr(n):
+        return f"Rp {float(n or 0):,.0f}".replace(",", ".")
+    def _num(n):
+        return f"{float(n or 0):.4f}".rstrip("0").rstrip(".") or "0"
+    items_rows = ""
+    for it in s.get("items") or []:
+        items_rows += f"""
+        <div class="item">
+          <div class="prod">{it.get('product_name', '')}</div>
+          <div class="mat">{it.get('material_name', '')}</div>
+          <div class="row">
+            <span>{_num(it.get('length_m'))}m × {_num(it.get('width_m'))}m × {int(it.get('quantity', 1))}</span>
+            <span>= {_num(it.get('area_total'))}m²</span>
+          </div>
+          <div class="row">
+            <span>@ {_idr(it.get('unit_price'))}/m²</span>
+            <span class="strong">{_idr(it.get('subtotal'))}</span>
+          </div>
+        </div>
+        """
+    discount_row = ""
+    if float(s.get("discount", 0)) > 0:
+        discount_row = f"""<div class="row"><span>Diskon</span><span>- {_idr(s['discount'])}</span></div>"""
+    date_str = s.get("date", "")
+    created = s.get("created_at", "")[:19].replace("T", " ")
+    customer_phone_row = f'<div class="line-sm">Telp: {s.get("customer_phone")}</div>' if s.get("customer_phone") else ""
+    notes_row = f'<div class="notes">Catatan: {s.get("notes")}</div>' if s.get("notes") else ""
+    html = f"""<!DOCTYPE html>
+<html lang="id"><head><meta charset="UTF-8"><title>Struk {s.get('sale_no')}</title>
+<style>
+  @page {{ size: 80mm auto; margin: 0; }}
+  * {{ box-sizing: border-box; }}
+  html, body {{ margin: 0; padding: 0; }}
+  body {{ font-family: 'Courier New', 'Consolas', monospace; font-size: 12px; color: #000; background: #f5f5f5; }}
+  .receipt {{ width: 80mm; padding: 4mm 3mm; background: white; margin: 8px auto; box-shadow: 0 1px 6px rgba(0,0,0,0.08); }}
+  h1, h2, h3, p {{ margin: 0; padding: 0; }}
+  .center {{ text-align: center; }}
+  .strong {{ font-weight: bold; }}
+  .header {{ text-align: center; padding-bottom: 4px; border-bottom: 1px dashed #000; }}
+  .header .name {{ font-size: 15px; font-weight: bold; letter-spacing: 0.5px; }}
+  .header .addr {{ font-size: 10px; margin-top: 2px; line-height: 1.35; }}
+  .meta {{ padding: 4px 0; border-bottom: 1px dashed #000; font-size: 11px; }}
+  .meta .row {{ display: flex; justify-content: space-between; }}
+  .items {{ padding: 4px 0; border-bottom: 1px dashed #000; }}
+  .item {{ padding: 3px 0; }}
+  .item .prod {{ font-weight: bold; font-size: 12px; }}
+  .item .mat {{ font-size: 10px; color: #333; }}
+  .item .row {{ display: flex; justify-content: space-between; font-size: 11px; margin-top: 1px; }}
+  .totals {{ padding: 4px 0; border-bottom: 1px dashed #000; font-size: 12px; }}
+  .totals .row {{ display: flex; justify-content: space-between; padding: 1px 0; }}
+  .totals .grand {{ font-size: 14px; font-weight: bold; padding: 2px 0; border-top: 1px solid #000; margin-top: 2px; }}
+  .pay {{ padding: 4px 0; border-bottom: 1px dashed #000; }}
+  .pay .row {{ display: flex; justify-content: space-between; font-size: 12px; padding: 1px 0; }}
+  .footer {{ padding-top: 6px; text-align: center; font-size: 10px; }}
+  .notes {{ font-size: 10px; padding: 3px 0; border-bottom: 1px dashed #000; font-style: italic; }}
+  .toolbar {{ max-width: 80mm; margin: 0 auto 8px; text-align: center; padding-top: 8px; }}
+  .toolbar button {{ background: #002FA7; color: white; border: 0; padding: 8px 20px; font-family: inherit; font-size: 12px; font-weight: bold; letter-spacing: 0.5px; cursor: pointer; text-transform: uppercase; }}
+  .toolbar button:hover {{ background: #002080; }}
+  @media print {{
+    body {{ background: white; }}
+    .receipt {{ margin: 0; box-shadow: none; padding: 2mm 2mm; }}
+    .toolbar {{ display: none; }}
+  }}
+</style></head><body>
+<div class="toolbar">
+  <button onclick="window.print()">🖨 Cetak Struk</button>
+</div>
+<div class="receipt">
+  <div class="header">
+    <div class="name">{ci['name'].upper()}</div>
+    <div class="addr">{ci['address']}<br>Telp: {ci['phone']}</div>
+  </div>
+  <div class="meta">
+    <div class="row"><span>No. Nota</span><span class="strong">{s.get('sale_no', '')}</span></div>
+    <div class="row"><span>Tanggal</span><span>{created}</span></div>
+    <div class="row"><span>Kasir</span><span>{s.get('cashier_name', '')}</span></div>
+    <div class="row"><span>Pelanggan</span><span>{s.get('customer_name', 'Umum')}</span></div>
+    {customer_phone_row}
+  </div>
+  <div class="items">
+    {items_rows}
+  </div>
+  <div class="totals">
+    <div class="row"><span>Subtotal</span><span>{_idr(s.get('subtotal'))}</span></div>
+    {discount_row}
+    <div class="row grand"><span>TOTAL</span><span>{_idr(s.get('total'))}</span></div>
+  </div>
+  <div class="pay">
+    <div class="row"><span>Metode</span><span class="strong">{(s.get('payment_method') or 'tunai').upper()}</span></div>
+    <div class="row"><span>Bayar</span><span>{_idr(s.get('cash_paid'))}</span></div>
+    <div class="row strong"><span>Kembali</span><span>{_idr(s.get('change'))}</span></div>
+  </div>
+  {notes_row}
+  <div class="footer">
+    Terima kasih atas kunjungan Anda<br>
+    <span style="font-size:9px;">Simpan struk ini sebagai bukti pembayaran.</span>
+  </div>
+</div>
+<script>
+  // Auto-focus print dialog jika ada query ?auto=1
+  if (new URLSearchParams(location.search).get('auto') === '1') {{
+    setTimeout(() => window.print(), 400);
+  }}
+</script>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+
+@api_router.get("/sales/stats/today")
+async def sales_stats_today(user: dict = Depends(require_super_admin)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    items = await db.sales.find({"date": today}, {"_id": 0}).to_list(length=5000)
+    total_today = sum(float(s.get("total", 0)) for s in items)
+    # This month
+    month_start = datetime.now(timezone.utc).date().replace(day=1).isoformat()
+    month_items = await db.sales.find({"date": {"$gte": month_start}}, {"_id": 0, "total": 1}).to_list(length=20000)
+    total_month = sum(float(s.get("total", 0)) for s in month_items)
+    return {
+        "date": today,
+        "count_today": len(items),
+        "total_today": round(total_today, 2),
+        "count_month": len(month_items),
+        "total_month": round(total_month, 2),
+    }
 
 # Include router
 app.include_router(api_router)

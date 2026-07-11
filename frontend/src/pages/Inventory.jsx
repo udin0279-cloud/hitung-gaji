@@ -173,7 +173,7 @@ function TabButton({ active, onClick, children, testId }) {
 /* ---------------- MATERIALS TAB ---------------- */
 const EMPTY_MAT = {
   name: "", category: "flexy", unit: "meter",
-  current_stock: 0, purchase_price: 0, min_stock: 0,
+  current_stock: 0, purchase_price: 0, selling_price: 0, min_stock: 0,
   supplier_default: "", notes: "", active: true,
 };
 
@@ -204,6 +204,7 @@ function MaterialsTab({ materials, reload }) {
         ...form,
         current_stock: Number(form.current_stock) || 0,
         purchase_price: Number(form.purchase_price) || 0,
+        selling_price: Number(form.selling_price) || 0,
         min_stock: Number(form.min_stock) || 0,
       };
       if (editing) {
@@ -340,6 +341,9 @@ function MaterialForm({ editing, form, setForm, onClose, onSubmit, saving }) {
             </Field>
             <Field label="Harga Beli / Satuan (Rp)">
               <input data-testid="mat-price" type="number" step="0.01" min="0" value={form.purchase_price} onChange={set("purchase_price")} className={inputCls + " font-mono"} />
+            </Field>
+            <Field label="Harga Jual / m² (Rp)" hint="Untuk POS Penjualan (bila 0, isi manual saat transaksi)">
+              <input data-testid="mat-selling-price" type="number" step="0.01" min="0" value={form.selling_price} onChange={set("selling_price")} className={inputCls + " font-mono"} />
             </Field>
             <Field label="Stok Awal" hint="Mendukung angka desimal (mis. 2.5 roll)">
               <input data-testid="mat-stock" type="number" step="0.0001" min="0" value={form.current_stock} onChange={set("current_stock")} className={inputCls + " font-mono"} />
