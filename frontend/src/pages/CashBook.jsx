@@ -351,7 +351,7 @@ function SummaryStat({ label, value, positive, negative, big }) {
 function TxModal({ initial, accounts, onClose, onSaved }) {
   const isEdit = initial && initial.id;
   const forcedType = initial?.type;
-  const eligible = accounts.filter((a) => a.active && a.type === forcedType);
+  const eligible = accounts.filter((a) => a.active !== false && a.type === forcedType);
   const [form, setForm] = useState({
     date: initial?.date || todayISO(),
     account_code: initial?.account_code || (eligible[0]?.code || ""),

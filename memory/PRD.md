@@ -451,3 +451,52 @@ Test file: `/app/backend/tests/test_sales.py`
 ### Aplikasi Sekarang (Mini-ERP Lengkap)
 👥 HR & Payroll · 📦 Inventory · 🛒 Purchasing · 💵 Sales/POS (NEW) · 💰 Job Order · 📊 Laba/Rugi + Trend YoY · 📱 WhatsApp/Email · 🏢 Multi-tenant
 
+
+---
+
+## Session Update — Feb 2026
+
+### Fitur Baru
+1. **Tombol "Cetak Nota" di Sales List** — button jelas dengan text (bukan icon kecil), warna biru.
+2. **Optimasi Struk Thermal C80BT (80mm)** — font Arial bold #000 pekat, ukuran 12-16px, tidak pudar di head printer. `@page 80mm` + konten 72mm (safe printable area).
+3. **Autocomplete Master Pelanggan di Kasir** — datalist `<input list>`, auto-fill No. Telepon jika match master. Pelanggan baru auto-save ke Master (`/api/inventory/customers`).
+4. **Broadcast WhatsApp ke Pelanggan** — endpoint `POST /api/inventory/customers/broadcast-whatsapp` + modal di tab Customer. Support variabel `{name}` & `{phone}`, pacing 0.3s, logging ke `db.whatsapp_logs`.
+5. **Kas Operasional (Cash Book)** — modul baru lengkap:
+   - Sidebar nav "Kas Operasional" (icon Wallet)
+   - Chart of Accounts default: 4 income (301-304) + 16 expense (201/401-403/501-512/599). System accounts (301, 201) auto dari Sales/PO.
+   - CRUD transaksi manual (pemasukan/pengeluaran) dengan running balance
+   - Saldo real-time (Saldo Awal + In - Out)
+   - Setting Saldo Awal + tanggal mulai
+   - Tab "Buku Kas" (transaction ledger dengan filter bulan + search) & "Ringkasan Kategori" (breakdown per akun dengan progress bar)
+   - Export Excel per periode (`GET /api/cashbook/export?month=YYYY-MM`) — struktur mengikuti format Excel user
+   - **Integrasi Otomatis**: POST /sales → auto cash tx (code 301, in); DELETE /sales → rollback; PUT /purchase-orders/{id}/pay → auto cash tx (code 201, out)
+   - Auto-transactions ditandai amber bg + badge LOCK, tombol edit/delete disabled
+
+### API Endpoints Baru
+- `GET/POST/PUT/DELETE /api/cashbook/accounts` — chart of accounts CRUD
+- `GET/PUT /api/cashbook/settings` — opening balance
+- `GET/POST/PUT/DELETE /api/cashbook/transactions` — CRUD tx (auto=true protected)
+- `GET /api/cashbook/balance` — saldo real-time
+- `GET /api/cashbook/summary?month=YYYY-MM` — ringkasan + breakdown
+- `GET /api/cashbook/export?month=YYYY-MM` — download Excel
+- `POST /api/inventory/customers/broadcast-whatsapp` — kirim WA massal
+
+### Testing (Iterations 16-19)
+- iteration_16: Thermal receipt thermal-friendly (20/20 pytest)
+- iteration_17: Sales autocomplete + auto-save master (11/11 pytest)
+- iteration_18: Broadcast WhatsApp (14/14 pytest)
+- iteration_19: **Kas Operasional (26/26 pytest)** + full frontend E2E
+
+### Backlog Prioritized
+- 🟢 P1: Scheduled Auto-Send Payslip (APScheduler)
+- 🟢 P2: Auto-add Lembur approved ke Payroll
+- 🟢 P2: Cuti Tahunan Kuota per Karyawan
+- 🟢 P2: Notif WA Izin/Cuti approved (Fonnte)
+- 🟡 P2: Halaman Daftar Pinjaman Aktif
+- 🟡 P2: Audit Log HR
+- 🟡 P3: Halaman Log Broadcast WhatsApp (view history)
+- 🟡 P3: Notif WA PO tertunda / stok menipis
+- 🔴 CRITICAL: Refactor `server.py` (>5200 baris) → pecah ke `/app/backend/routers/*.py`
+
+### Aplikasi Sekarang (Full ERP)
+👥 HR & Payroll · 📦 Inventory · 🛒 Purchasing · 💵 Sales/POS · 💰 Kas Operasional (NEW) · 📊 Laba/Rugi + Trend YoY · 📱 WhatsApp Broadcast · 🏢 Multi-tenant
