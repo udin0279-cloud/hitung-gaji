@@ -4398,6 +4398,20 @@ async def po_pay(po_id: str, payload: Dict[str, Any] = Body(...), user: dict = D
         {"id": po_id},
         {"$set": {"amount_paid": new_paid, "payment_status": payment_status, "last_payment_at": datetime.now(timezone.utc).isoformat()}},
     )
+    # Auto-insert ke Kas Operasional (Pengeluaran Bayar Utang Usaha)
+    if amount > 0:
+        try:
+            await _insert_cash_transaction(
+                account_code="201",
+                description=f"Bayar PO {po.get('po_no', po_id)} — {po.get('supplier_name', '')}".strip(" —"),
+                amount=amount,
+                reference=po.get("po_no") or po_id,
+                date_iso=datetime.now(timezone.utc).date().isoformat(),
+                auto=True,
+                created_by=user.get("email"),
+            )
+        except Exception as ex:
+            logger.warning(f"Cashbook auto-insert (PO payment) failed: {ex}")
     doc = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
     return doc
 
@@ -4610,6 +4624,19 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
         "created_at": now.isoformat(),
     }
     await db.sales.insert_one(doc)
+    # Auto-insert ke Kas Operasional (Pemasukan Penjualan Tunai)
+    try:
+        await _insert_cash_transaction(
+            account_code="301",
+            description=f"Penjualan {sale_no} — {doc['customer_name']}",
+            amount=total,
+            reference=sale_no,
+            date_iso=doc["date"],
+            auto=True,
+            created_by=user.get("email"),
+        )
+    except Exception as ex:
+        logger.warning(f"Cashbook auto-insert (sale) failed: {ex}")
     # Kurangi stok
     for it in items_out:
         mat = await db.materials.find_one({"id": it["material_id"]})
@@ -4638,6 +4665,11 @@ async def sales_delete(sale_id: str, user: dict = Depends(require_super_admin)):
                 {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}},
             )
     await db.sales.delete_one({"id": sale_id})
+    # Hapus auto cash transaction terkait
+    try:
+        await db.cash_transactions.delete_many({"reference": s.get("sale_no"), "auto": True, "account_code": "301"})
+    except Exception as ex:
+        logger.warning(f"Cashbook rollback (sale delete) failed: {ex}")
     return {"ok": True}
 
 
@@ -4782,6 +4814,454 @@ async def sales_stats_today(user: dict = Depends(require_super_admin)):
         "count_month": len(month_items),
         "total_month": round(total_month, 2),
     }
+
+
+# ================================================================
+# ==================== KAS OPERASIONAL (Cash Book) ================
+# ================================================================
+# Chart of Accounts default (bisa di-extend via UI)
+DEFAULT_CASH_ACCOUNTS = [
+    # Pemasukan (income)
+    {"code": "301", "name": "Penjualan Tunai", "type": "in", "system": True},
+    {"code": "302", "name": "Terima Piutang", "type": "in", "system": False},
+    {"code": "303", "name": "Modal / Setoran Kas", "type": "in", "system": False},
+    {"code": "304", "name": "Pendapatan Lain-lain", "type": "in", "system": False},
+    # Pengeluaran (expense)
+    {"code": "201", "name": "Bayar Utang Usaha", "type": "out", "system": True},
+    {"code": "401", "name": "Pembelian Bahan Baku", "type": "out", "system": False},
+    {"code": "402", "name": "Perlengkapan Kantor", "type": "out", "system": False},
+    {"code": "403", "name": "Alat Tulis Kantor", "type": "out", "system": False},
+    {"code": "501", "name": "BBM, Parkir & Maintenance Kendaraan", "type": "out", "system": False},
+    {"code": "502", "name": "Listrik, Air, Telepon, Internet", "type": "out", "system": False},
+    {"code": "503", "name": "Sewa Kendaraan", "type": "out", "system": False},
+    {"code": "504", "name": "Sewa Bangunan / Mess", "type": "out", "system": False},
+    {"code": "505", "name": "Gaji Karyawan", "type": "out", "system": False},
+    {"code": "506", "name": "Makan & Entertainment", "type": "out", "system": False},
+    {"code": "507", "name": "Pengiriman Dokumen / Barang", "type": "out", "system": False},
+    {"code": "508", "name": "Promosi & Iklan", "type": "out", "system": False},
+    {"code": "509", "name": "Percetakan", "type": "out", "system": False},
+    {"code": "510", "name": "Jasa Freelancer", "type": "out", "system": False},
+    {"code": "511", "name": "Biaya Administrasi Bank", "type": "out", "system": False},
+    {"code": "512", "name": "Kasbon Karyawan", "type": "out", "system": False},
+    {"code": "599", "name": "Lain-lain", "type": "out", "system": False},
+]
+
+
+async def _ensure_cash_accounts():
+    """Seed default chart of accounts once."""
+    count = await db.cash_accounts.count_documents({})
+    if count == 0:
+        for a in DEFAULT_CASH_ACCOUNTS:
+            await db.cash_accounts.insert_one({
+                "id": str(uuid.uuid4()),
+                "code": a["code"],
+                "name": a["name"],
+                "type": a["type"],
+                "system": a["system"],
+                "active": True,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+
+class CashAccountIn(BaseModel):
+    code: str
+    name: str
+    type: str  # "in" | "out"
+    active: bool = True
+
+
+class CashTransactionIn(BaseModel):
+    date: str  # YYYY-MM-DD
+    account_code: str
+    description: str
+    amount: float
+    # type di-derive dari account. Kalau bertentangan → validasi
+    reference: Optional[str] = None  # e.g. "NOTA-xxx", "PO-xxx"
+
+
+class CashSettingIn(BaseModel):
+    opening_balance: float
+    opening_date: Optional[str] = None  # YYYY-MM-DD (default: 1 Januari tahun ini)
+
+
+async def _cash_setting() -> Dict[str, Any]:
+    doc = await db.cash_settings.find_one({"key": "main"}, {"_id": 0})
+    if not doc:
+        default = {
+            "key": "main",
+            "opening_balance": 0.0,
+            "opening_date": datetime.now(timezone.utc).date().replace(month=1, day=1).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.cash_settings.insert_one(default)
+        default.pop("_id", None)
+        return default
+    return doc
+
+
+async def _insert_cash_transaction(
+    account_code: str,
+    description: str,
+    amount: float,
+    reference: Optional[str] = None,
+    date_iso: Optional[str] = None,
+    auto: bool = False,
+    created_by: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Insert satu transaksi kas. Return doc."""
+    await _ensure_cash_accounts()
+    acc = await db.cash_accounts.find_one({"code": account_code}, {"_id": 0})
+    if not acc:
+        raise HTTPException(status_code=404, detail=f"Akun {account_code} tidak ditemukan")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Jumlah harus > 0")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": date_iso or datetime.now(timezone.utc).date().isoformat(),
+        "account_code": acc["code"],
+        "account_name": acc["name"],
+        "type": acc["type"],  # "in" atau "out"
+        "description": description.strip(),
+        "amount": round(float(amount), 2),
+        "reference": reference,
+        "auto": auto,
+        "created_by": created_by,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.cash_transactions.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+# ---------- Endpoints ----------
+@api_router.get("/cashbook/accounts")
+async def cash_accounts_list(user: dict = Depends(require_super_admin)):
+    await _ensure_cash_accounts()
+    items = await db.cash_accounts.find({}, {"_id": 0}).sort("code", 1).to_list(length=500)
+    return items
+
+
+@api_router.post("/cashbook/accounts")
+async def cash_account_create(payload: CashAccountIn, user: dict = Depends(require_super_admin)):
+    if payload.type not in ("in", "out"):
+        raise HTTPException(status_code=400, detail="Type harus 'in' atau 'out'")
+    if not payload.code.strip() or not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Kode & nama akun wajib")
+    exists = await db.cash_accounts.find_one({"code": payload.code.strip()})
+    if exists:
+        raise HTTPException(status_code=400, detail="Kode akun sudah ada")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "code": payload.code.strip(),
+        "name": payload.name.strip(),
+        "type": payload.type,
+        "active": payload.active,
+        "system": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.cash_accounts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/cashbook/accounts/{account_id}")
+async def cash_account_update(account_id: str, payload: CashAccountIn, user: dict = Depends(require_super_admin)):
+    existing = await db.cash_accounts.find_one({"id": account_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Akun tidak ditemukan")
+    if existing.get("system") and payload.code != existing.get("code"):
+        raise HTTPException(status_code=400, detail="Kode akun sistem tidak boleh diubah")
+    await db.cash_accounts.update_one(
+        {"id": account_id},
+        {"$set": {"code": payload.code.strip(), "name": payload.name.strip(), "type": payload.type, "active": payload.active}},
+    )
+    return await db.cash_accounts.find_one({"id": account_id}, {"_id": 0})
+
+
+@api_router.delete("/cashbook/accounts/{account_id}")
+async def cash_account_delete(account_id: str, user: dict = Depends(require_super_admin)):
+    existing = await db.cash_accounts.find_one({"id": account_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Akun tidak ditemukan")
+    if existing.get("system"):
+        raise HTTPException(status_code=400, detail="Akun sistem tidak bisa dihapus")
+    # Cek apakah masih dipakai
+    used = await db.cash_transactions.count_documents({"account_code": existing["code"]})
+    if used > 0:
+        raise HTTPException(status_code=400, detail=f"Akun masih dipakai di {used} transaksi. Non-aktifkan saja.")
+    await db.cash_accounts.delete_one({"id": account_id})
+    return {"ok": True}
+
+
+@api_router.get("/cashbook/settings")
+async def cash_settings_get(user: dict = Depends(require_super_admin)):
+    return await _cash_setting()
+
+
+@api_router.put("/cashbook/settings")
+async def cash_settings_update(payload: CashSettingIn, user: dict = Depends(require_super_admin)):
+    upd = {"opening_balance": round(float(payload.opening_balance), 2)}
+    if payload.opening_date:
+        upd["opening_date"] = payload.opening_date
+    upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.cash_settings.update_one({"key": "main"}, {"$set": upd}, upsert=True)
+    return await _cash_setting()
+
+
+@api_router.get("/cashbook/transactions")
+async def cash_transactions_list(
+    user: dict = Depends(require_super_admin),
+    month: Optional[str] = None,  # YYYY-MM
+    account_code: Optional[str] = None,
+):
+    q: Dict[str, Any] = {}
+    if month:
+        try:
+            year, m = month.split("-")
+            first = f"{year}-{int(m):02d}-01"
+            # last day of month
+            from calendar import monthrange
+            last_day = monthrange(int(year), int(m))[1]
+            last = f"{year}-{int(m):02d}-{last_day:02d}"
+            q["date"] = {"$gte": first, "$lte": last}
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format month harus YYYY-MM")
+    if account_code:
+        q["account_code"] = account_code
+    items = await db.cash_transactions.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(length=20000)
+    # Compute running balance
+    setting = await _cash_setting()
+    opening_balance = float(setting.get("opening_balance", 0))
+    opening_date = setting.get("opening_date")
+    # Kalau filter bulan, hitung saldo awal bulan dari transaksi sebelumnya + opening
+    if month:
+        first_of_month = q["date"]["$gte"]
+        prev = await db.cash_transactions.find(
+            {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1},
+        ).to_list(length=100000)
+        # Jika opening_date > first_of_month, opening tidak ikut
+        if opening_date and opening_date > first_of_month:
+            balance = 0.0
+        else:
+            balance = opening_balance
+        for p in prev:
+            balance += float(p["amount"]) if p["type"] == "in" else -float(p["amount"])
+        opening_of_period = round(balance, 2)
+    else:
+        opening_of_period = opening_balance
+        balance = opening_balance
+    running = []
+    for it in items:
+        balance += float(it["amount"]) if it["type"] == "in" else -float(it["amount"])
+        it2 = dict(it)
+        it2["balance"] = round(balance, 2)
+        running.append(it2)
+    return {
+        "opening_balance": round(opening_of_period, 2),
+        "transactions": running,
+        "closing_balance": round(balance, 2),
+    }
+
+
+@api_router.post("/cashbook/transactions")
+async def cash_transaction_create(payload: CashTransactionIn, user: dict = Depends(require_super_admin)):
+    if not payload.description.strip():
+        raise HTTPException(status_code=400, detail="Keterangan wajib diisi")
+    doc = await _insert_cash_transaction(
+        account_code=payload.account_code,
+        description=payload.description,
+        amount=payload.amount,
+        reference=payload.reference,
+        date_iso=payload.date,
+        auto=False,
+        created_by=user.get("email"),
+    )
+    return doc
+
+
+@api_router.put("/cashbook/transactions/{tx_id}")
+async def cash_transaction_update(tx_id: str, payload: CashTransactionIn, user: dict = Depends(require_super_admin)):
+    existing = await db.cash_transactions.find_one({"id": tx_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    if existing.get("auto"):
+        raise HTTPException(status_code=400, detail="Transaksi otomatis (dari Sales/PO) tidak bisa diedit. Ubah di modul sumbernya.")
+    acc = await db.cash_accounts.find_one({"code": payload.account_code}, {"_id": 0})
+    if not acc:
+        raise HTTPException(status_code=404, detail=f"Akun {payload.account_code} tidak ditemukan")
+    upd = {
+        "date": payload.date,
+        "account_code": acc["code"],
+        "account_name": acc["name"],
+        "type": acc["type"],
+        "description": payload.description.strip(),
+        "amount": round(float(payload.amount), 2),
+        "reference": payload.reference,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.cash_transactions.update_one({"id": tx_id}, {"$set": upd})
+    return await db.cash_transactions.find_one({"id": tx_id}, {"_id": 0})
+
+
+@api_router.delete("/cashbook/transactions/{tx_id}")
+async def cash_transaction_delete(tx_id: str, user: dict = Depends(require_super_admin)):
+    existing = await db.cash_transactions.find_one({"id": tx_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    if existing.get("auto"):
+        raise HTTPException(status_code=400, detail="Transaksi otomatis tidak bisa dihapus dari sini. Batalkan di modul sumbernya.")
+    await db.cash_transactions.delete_one({"id": tx_id})
+    return {"ok": True}
+
+
+@api_router.get("/cashbook/balance")
+async def cash_balance(user: dict = Depends(require_super_admin)):
+    setting = await _cash_setting()
+    txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1}).to_list(length=200000)
+    total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in")
+    total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
+    balance = float(setting.get("opening_balance", 0)) + total_in - total_out
+    return {
+        "opening_balance": round(float(setting.get("opening_balance", 0)), 2),
+        "opening_date": setting.get("opening_date"),
+        "total_in": round(total_in, 2),
+        "total_out": round(total_out, 2),
+        "balance": round(balance, 2),
+        "tx_count": len(txs),
+    }
+
+
+@api_router.get("/cashbook/summary")
+async def cash_summary(
+    user: dict = Depends(require_super_admin),
+    month: Optional[str] = None,  # YYYY-MM
+):
+    if not month:
+        month = datetime.now(timezone.utc).date().strftime("%Y-%m")
+    try:
+        year, m = month.split("-")
+        from calendar import monthrange
+        first = f"{year}-{int(m):02d}-01"
+        last_day = monthrange(int(year), int(m))[1]
+        last = f"{year}-{int(m):02d}-{last_day:02d}"
+    except Exception:
+        raise HTTPException(status_code=400, detail="Format month harus YYYY-MM")
+
+    setting = await _cash_setting()
+    opening_balance = float(setting.get("opening_balance", 0))
+    opening_date = setting.get("opening_date") or ""
+
+    # Opening balance per bulan = opening_balance + net transaksi sebelum first
+    prev = await db.cash_transactions.find(
+        {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1},
+    ).to_list(length=200000)
+    prev_net = 0.0
+    for p in prev:
+        prev_net += float(p["amount"]) if p["type"] == "in" else -float(p["amount"])
+    if opening_date and opening_date > first:
+        opening_of_period = 0.0
+    else:
+        opening_of_period = opening_balance
+    opening_of_period += prev_net
+
+    # Transaksi bulan ini
+    month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
+    total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
+    total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
+    closing = opening_of_period + total_in - total_out
+
+    # Breakdown per kategori
+    breakdown_in: Dict[str, Dict[str, Any]] = {}
+    breakdown_out: Dict[str, Dict[str, Any]] = {}
+    for t in month_tx:
+        target = breakdown_in if t["type"] == "in" else breakdown_out
+        key = t["account_code"]
+        row = target.setdefault(key, {
+            "account_code": key,
+            "account_name": t.get("account_name", key),
+            "amount": 0.0,
+            "count": 0,
+        })
+        row["amount"] += float(t["amount"])
+        row["count"] += 1
+    for row in list(breakdown_in.values()) + list(breakdown_out.values()):
+        row["amount"] = round(row["amount"], 2)
+
+    return {
+        "month": month,
+        "period_start": first,
+        "period_end": last,
+        "opening_balance": round(opening_of_period, 2),
+        "total_in": round(total_in, 2),
+        "total_out": round(total_out, 2),
+        "net": round(total_in - total_out, 2),
+        "closing_balance": round(closing, 2),
+        "tx_count": len(month_tx),
+        "breakdown_in": sorted(breakdown_in.values(), key=lambda x: x["amount"], reverse=True),
+        "breakdown_out": sorted(breakdown_out.values(), key=lambda x: x["amount"], reverse=True),
+    }
+
+
+@api_router.get("/cashbook/export")
+async def cash_export(user: dict = Depends(require_super_admin), month: Optional[str] = None):
+    """Export bulan tertentu ke Excel."""
+    if not month:
+        month = datetime.now(timezone.utc).date().strftime("%Y-%m")
+    data = await cash_transactions_list(user=user, month=month)
+    setting = await _cash_setting()
+    import pandas as pd
+    from io import BytesIO
+    ci = _company_info()
+
+    rows = []
+    # Baris pembuka
+    rows.append({
+        "Tanggal": "",
+        "Kode Akun": "",
+        "Nama Akun": "SALDO AWAL",
+        "Keterangan": f"Periode {month}",
+        "Pemasukan": "",
+        "Pengeluaran": "",
+        "Saldo": data["opening_balance"],
+    })
+    for t in data["transactions"]:
+        rows.append({
+            "Tanggal": t["date"],
+            "Kode Akun": t["account_code"],
+            "Nama Akun": t["account_name"],
+            "Keterangan": t.get("description", ""),
+            "Pemasukan": t["amount"] if t["type"] == "in" else "",
+            "Pengeluaran": t["amount"] if t["type"] == "out" else "",
+            "Saldo": t["balance"],
+        })
+    rows.append({
+        "Tanggal": "",
+        "Kode Akun": "",
+        "Nama Akun": "SALDO AKHIR",
+        "Keterangan": f"Total {len(data['transactions'])} transaksi",
+        "Pemasukan": "",
+        "Pengeluaran": "",
+        "Saldo": data["closing_balance"],
+    })
+    df = pd.DataFrame(rows)
+
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=f"Kas {month}")
+        # Auto width
+        ws = writer.sheets[f"Kas {month}"]
+        for col_idx, col in enumerate(df.columns, 1):
+            max_len = max((len(str(v)) for v in df[col].astype(str).values), default=10)
+            max_len = max(max_len, len(str(col)))
+            ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = min(max_len + 2, 60)
+    buf.seek(0)
+    fname = f"Kas_Operasional_{ci['name'].replace(' ', '_')}_{month}.xlsx"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
 
 # Include router
 app.include_router(api_router)

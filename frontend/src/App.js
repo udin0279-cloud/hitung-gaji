@@ -17,6 +17,7 @@ import Inventory from "@/pages/Inventory";
 import Purchasing from "@/pages/Purchasing";
 import Sales from "@/pages/Sales";
 import Reports from "@/pages/Reports";
+import CashBook from "@/pages/CashBook";
 import Layout from "@/components/Layout";
 import PortalLogin from "@/pages/PortalLogin";
 import PortalForgot from "@/pages/PortalForgot";
@@ -71,6 +72,7 @@ function App() {
               <Route path="/inventory" element={<ProtectedRoute allowedRoles={["super_admin"]}><Inventory /></ProtectedRoute>} />
               <Route path="/purchasing" element={<ProtectedRoute allowedRoles={["super_admin"]}><Purchasing /></ProtectedRoute>} />
               <Route path="/sales" element={<ProtectedRoute allowedRoles={["super_admin"]}><Sales /></ProtectedRoute>} />
+              <Route path="/cashbook" element={<ProtectedRoute allowedRoles={["super_admin"]}><CashBook /></ProtectedRoute>} />
               <Route path="/reports" element={<ProtectedRoute allowedRoles={["super_admin"]}><Reports /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute allowedRoles={["super_admin"]}><Settings /></ProtectedRoute>} />
             </Route>
