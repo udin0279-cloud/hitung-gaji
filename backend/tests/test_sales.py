@@ -277,12 +277,138 @@ class TestSalesReceipt:
         assert "TEST_Receipt" in html
         assert "0819111" in html
         assert "Struk Test" in html
-        assert "Cetak Struk" in html  # print button
+        assert "Cetak Nota" in html  # print button (updated wording)
         # Total 2*1.5*2 = 6 m² * 20000 = 120_000 - 5000 disc = 115_000
         assert "115" in html  # 115.000 in idr
         # cashier + kembali
         assert "Kembali" in html or "kembali" in html.lower()
         assert "Kasir" in html
+
+    # ---- Thermal-friendly CSS assertions (C80BT 80mm printer fix) ----
+    def test_receipt_uses_arial_not_courier(self, client, test_material, created_sales):
+        r = client.post(f"{BASE_URL}/api/sales", json={
+            "customer_name": "TEST_Thermal_Font",
+            "items": [{"material_id": test_material["id"], "product_name": "FontTest",
+                       "length_m": 1, "width_m": 1, "quantity": 1, "unit_price": 10000}],
+            "cash_paid": 10000,
+        })
+        assert r.status_code == 200
+        sid = r.json()["id"]
+        created_sales.append(sid)
+        html = client.get(f"{BASE_URL}/api/sales/{sid}/receipt").text
+        assert "Arial" in html, "Font Arial harus dipakai (sans-serif tebal)"
+        assert "Helvetica" in html, "Fallback Helvetica harus ada"
+        assert "'Liberation Sans'" in html or "Liberation Sans" in html
+        # Courier as an actual font-family value should not appear (was the source of the pudar issue).
+        # Comment mentioning Courier is allowed.
+        assert "font-family: Courier" not in html, "font-family Courier harus dihapus (menyebabkan cetakan pudar)"
+        assert "font-family: 'Courier" not in html
+        assert "font-family:Courier" not in html
+        assert "monospace" not in html, "Monospace tidak boleh dipakai untuk struk thermal"
+
+    def test_receipt_all_bold_and_black(self, client, test_material, created_sales):
+        # Reuse a sale
+        r = client.post(f"{BASE_URL}/api/sales", json={
+            "customer_name": "TEST_Thermal_Bold",
+            "items": [{"material_id": test_material["id"], "product_name": "BoldTest",
+                       "length_m": 1, "width_m": 1, "quantity": 1, "unit_price": 10000}],
+            "cash_paid": 10000,
+        })
+        assert r.status_code == 200
+        sid = r.json()["id"]
+        created_sales.append(sid)
+        html = client.get(f"{BASE_URL}/api/sales/{sid}/receipt").text
+        # Body must be font-weight 700
+        assert "font-weight: 700" in html, "Body harus font-weight 700 (bold) untuk thermal"
+        # Force ALL text inside .receipt to pure black (!important)
+        assert ".receipt, .receipt *" in html, "Selector harus force color untuk semua elemen di .receipt"
+        assert "color: #000 !important" in html, "Warna harus force #000 !important agar tidak pudar"
+        # Grand total & header should be 900
+        assert "font-weight: 900" in html, "Header/Total harus 900 (extra bold)"
+
+    def test_receipt_no_gray_colors_inside_receipt(self, client, test_material, created_sales):
+        r = client.post(f"{BASE_URL}/api/sales", json={
+            "customer_name": "TEST_Thermal_NoGray",
+            "items": [{"material_id": test_material["id"], "product_name": "GrayTest",
+                       "length_m": 1, "width_m": 1, "quantity": 1, "unit_price": 10000}],
+            "cash_paid": 10000,
+        })
+        assert r.status_code == 200
+        sid = r.json()["id"]
+        created_sales.append(sid)
+        html = client.get(f"{BASE_URL}/api/sales/{sid}/receipt").text
+        # Strip toolbar block (where #333 hint is allowed)
+        # Find the receipt section HTML
+        rec_start = html.find('<div class="receipt">')
+        rec_end = html.find('</div>\n<script>', rec_start)
+        rec_html = html[rec_start:rec_end] if rec_start != -1 else html
+        # No inline gray tones inside receipt content
+        for bad in ["#222", "#333", "#666", "#999", "color:gray", "color: gray"]:
+            assert bad not in rec_html, f"Warna abu-abu '{bad}' tidak boleh ada di .receipt (menyebabkan cetakan pudar)"
+        # dotted borders (thin) must be replaced by dashed/solid #000
+        # (dotted #999 was the old separator)
+        assert "dotted #999" not in html, "dotted #999 harus diganti dashed/solid #000"
+
+    def test_receipt_page_width_and_margin(self, client, test_material, created_sales):
+        r = client.post(f"{BASE_URL}/api/sales", json={
+            "customer_name": "TEST_Thermal_Width",
+            "items": [{"material_id": test_material["id"], "product_name": "WidthTest",
+                       "length_m": 1, "width_m": 1, "quantity": 1, "unit_price": 10000}],
+            "cash_paid": 10000,
+        })
+        assert r.status_code == 200
+        sid = r.json()["id"]
+        created_sales.append(sid)
+        html = client.get(f"{BASE_URL}/api/sales/{sid}/receipt").text
+        # @page 80mm margin 0
+        assert re.search(r"@page\s*\{[^}]*size:\s*80mm\s+auto[^}]*margin:\s*0", html), \
+            "@page harus size 80mm auto & margin 0"
+        # .receipt width 72mm (safe printable area for C80BT)
+        assert re.search(r"\.receipt\s*\{[^}]*width:\s*72mm", html), \
+            ".receipt harus lebar 72mm agar tidak terpotong di C80BT"
+
+    def test_receipt_has_full_transaction_data(self, client, test_material, created_sales):
+        r = client.post(f"{BASE_URL}/api/sales", json={
+            "customer_name": "TEST_Thermal_FullData",
+            "customer_phone": "081234567890",
+            "items": [{"material_id": test_material["id"], "product_name": "Banner Frontlite",
+                       "length_m": 3, "width_m": 2, "quantity": 1, "unit_price": 50000}],
+            "discount": 10000,
+            "cash_paid": 300000,
+            "notes": "test lengkap",
+        })
+        assert r.status_code == 200
+        sale = r.json()
+        created_sales.append(sale["id"])
+        html = client.get(f"{BASE_URL}/api/sales/{sale['id']}/receipt").text
+        # All key labels must exist
+        for label in ["No. Nota", "Tanggal", "Kasir", "Pelanggan", "Telp",
+                      "Subtotal", "Diskon", "TOTAL", "Metode", "Bayar", "Kembali",
+                      "Terima kasih"]:
+            assert label in html, f"Label '{label}' harus ada di struk"
+        # Data
+        assert "TEST_Thermal_FullData" in html
+        assert "081234567890" in html
+        assert "Banner Frontlite" in html
+        assert sale["sale_no"] in html
+        assert "TUNAI" in html  # payment method uppercased
+
+    def test_receipt_has_print_button(self, client, test_material, created_sales):
+        r = client.post(f"{BASE_URL}/api/sales", json={
+            "customer_name": "TEST_Thermal_Btn",
+            "items": [{"material_id": test_material["id"], "product_name": "BtnTest",
+                       "length_m": 1, "width_m": 1, "quantity": 1, "unit_price": 10000}],
+            "cash_paid": 10000,
+        })
+        assert r.status_code == 200
+        sid = r.json()["id"]
+        created_sales.append(sid)
+        html = client.get(f"{BASE_URL}/api/sales/{sid}/receipt").text
+        # Blue toolbar print button with window.print()
+        assert "window.print()" in html
+        assert 'class="toolbar"' in html
+        assert "#002FA7" in html, "Warna tombol biru harus #002FA7"
+        assert "Cetak Nota" in html
 
 
 class TestSalesDelete:
