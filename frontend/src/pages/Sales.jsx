@@ -13,6 +13,7 @@ function formatNum(n, digits = 4) {
 export default function Sales() {
   const [sales, setSales] = useState([]);
   const [materials, setMaterials] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -21,13 +22,15 @@ export default function Sales() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [s, m, st] = await Promise.all([
+      const [s, m, c, st] = await Promise.all([
         api.get("/sales"),
         api.get("/inventory/materials"),
+        api.get("/inventory/customers"),
         api.get("/sales/stats/today"),
       ]);
       setSales(s.data);
       setMaterials(m.data);
+      setCustomers(c.data);
       setStats(st.data);
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
@@ -150,7 +153,7 @@ export default function Sales() {
         </div>
       </div>
 
-      {openNew && <NewSaleModal materials={materials} onClose={() => setOpenNew(false)} onSaved={async (created) => { setOpenNew(false); await loadAll(); openReceipt(created, true); }} />}
+      {openNew && <NewSaleModal materials={materials} customers={customers} onClose={() => setOpenNew(false)} onSaved={async (created) => { setOpenNew(false); await loadAll(); openReceipt(created, true); }} />}
     </div>
   );
 }
@@ -172,8 +175,9 @@ function StatCard({ label, value, icon: Icon, isCount, testId, positive }) {
 /* ---------------- NEW SALE MODAL (POS) ---------------- */
 const EMPTY_ITEM = { material_id: "", product_name: "", length_m: 0, width_m: 0, quantity: 1, unit_price: 0 };
 
-function NewSaleModal({ materials, onClose, onSaved }) {
+function NewSaleModal({ materials, customers, onClose, onSaved }) {
   const activeMats = materials.filter((m) => m.active !== false);
+  const activeCustomers = (customers || []).filter((c) => c.active !== false);
   const [customer, setCustomer] = useState({ name: "", phone: "" });
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
   const [discount, setDiscount] = useState(0);
@@ -184,6 +188,21 @@ function NewSaleModal({ materials, onClose, onSaved }) {
   const addItem = () => setItems((arr) => [...arr, { ...EMPTY_ITEM }]);
   const removeItem = (idx) => setItems((arr) => arr.filter((_, i) => i !== idx));
   const updItem = (idx, key, val) => setItems((arr) => arr.map((it, i) => i === idx ? { ...it, [key]: val } : it));
+
+  // Auto-fill phone jika nama pelanggan match dengan master
+  const onCustomerNameChange = (val) => {
+    const match = activeCustomers.find((c) => (c.name || "").toLowerCase() === val.trim().toLowerCase());
+    setCustomer((c) => ({
+      name: val,
+      phone: match ? (match.phone || "") : c.phone,
+    }));
+  };
+
+  const isExistingCustomer = () => {
+    const n = customer.name.trim().toLowerCase();
+    if (!n || n === "umum") return true; // "Umum" tidak perlu disimpan
+    return activeCustomers.some((c) => (c.name || "").toLowerCase() === n);
+  };
 
   const onMaterialPick = (idx, mid) => {
     const mat = materials.find((m) => m.id === mid);
@@ -232,6 +251,18 @@ function NewSaleModal({ materials, onClose, onSaved }) {
       };
       const { data } = await api.post("/sales", payload);
       toast.success(`Transaksi ${data.sale_no} berhasil`);
+      // Auto-save pelanggan baru ke Master (fire-and-forget)
+      const nameClean = customer.name.trim();
+      if (nameClean && nameClean.toLowerCase() !== "umum" && !isExistingCustomer()) {
+        try {
+          await api.post("/inventory/customers", {
+            name: nameClean,
+            phone: customer.phone.trim() || null,
+            active: true,
+          });
+          toast.info(`Pelanggan "${nameClean}" tersimpan ke Master`);
+        } catch (_err) { /* ignore, transaksi tetap sukses */ }
+      }
       await onSaved(data);
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal menyimpan");
@@ -251,8 +282,30 @@ function NewSaleModal({ materials, onClose, onSaved }) {
         <form onSubmit={submit} className="p-5 space-y-5">
           {/* Customer */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Nama Pelanggan">
-              <input data-testid="sale-customer-name" value={customer.name} onChange={(e) => setCustomer((c) => ({ ...c, name: e.target.value }))} placeholder="Umum (isi bila ada)" className={inputCls} />
+            <Field label="Nama Pelanggan" hint={activeCustomers.length > 0 ? `${activeCustomers.length} pelanggan di master — ketik untuk cari` : "Pelanggan baru akan otomatis tersimpan ke Master"}>
+              <input
+                data-testid="sale-customer-name"
+                value={customer.name}
+                onChange={(e) => onCustomerNameChange(e.target.value)}
+                onBlur={(e) => onCustomerNameChange(e.target.value)}
+                placeholder="Ketik nama / pilih dari daftar — kosongkan = Umum"
+                list="sale-customers-list"
+                autoComplete="off"
+                className={inputCls}
+              />
+              <datalist id="sale-customers-list">
+                {activeCustomers.map((c) => (
+                  <option key={c.id} value={c.name}>
+                    {c.phone ? `${c.phone}` : ""}{c.contact_person ? ` • ${c.contact_person}` : ""}
+                  </option>
+                ))}
+              </datalist>
+              {customer.name.trim() && !isExistingCustomer() && (
+                <div data-testid="new-customer-indicator" className="mt-1 text-[10px] font-bold uppercase tracking-widest text-[#008A00]">✓ Pelanggan baru — akan disimpan ke Master otomatis</div>
+              )}
+              {customer.name.trim() && isExistingCustomer() && customer.name.trim().toLowerCase() !== "umum" && (
+                <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-[#002FA7]">◉ Pelanggan terdaftar</div>
+              )}
             </Field>
             <Field label="No. Telepon (Opsional)">
               <input data-testid="sale-customer-phone" value={customer.phone} onChange={(e) => setCustomer((c) => ({ ...c, phone: e.target.value }))} placeholder="0812xxxx" className={inputCls + " font-mono"} />
