@@ -1,0 +1,38 @@
+{
+  "summary": "Verified NEW feature POST /api/inventory/customers/broadcast-whatsapp + BroadcastWAModal on Inventory→Customer tab. Backend 14/14 pytest pass covering: message validation (empty/whitespace/>3000char → 400), unauth (401/403), preview_only mode returns {preview_only,total_selected,total_with_phone,skipped_no_phone,sample_targets}, actual send returns {total,sent,failed,mocked,skipped_no_phone,results[]}, {name} variable replacement (verified via db.whatsapp_logs.message_preview), customers without phone skipped and counted in skipped_no_phone, customer_ids=[] targets ALL active-with-phone customers, db.whatsapp_logs written per send with type='customer_broadcast'+customer_id+customer_name+phone+message_preview+status+reason+sent_at+sent_by. CRUD regression (GET/POST/PUT/DELETE customers) and Sales POST regression (with material seed + auto-created customer flow) both green. Frontend Playwright verified: green 'Broadcast WA' button with badge count 3 (2 seeded + PT Test Advertising), disabled state respected; modal opens with all data-testid elements present (broadcast-message, broadcast-preview, broadcast-select-all, broadcast-send-button, 3× broadcast-recipient); default template contains '{name}' and 'banner Flexy' promo copy; live-preview replaces {name}→'Pak Budi'; send button disabled when message empty AND when no recipients selected; select-all toggles all checkboxes; recipient search 'Budi' filters to 1 correctly; window.confirm dialog shown; POST fires and results modal shows Total/Terkirim/Gagal/Mocked cards + per-customer status rows; toast '0 terkirim, 3 gagal' displayed. NOTE: FONNTE_TOKEN IS set in preview .env — real Fonnte API called but returns 'request invalid on disconnected device' (Fonnte device unlinked). This is EXPECTED preview behavior; endpoint returns status='failed' with reason string correctly, not a bug.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_customer_broadcast_wa.py",
+    "/app/test_reports/pytest/pytest_broadcast_wa.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py file now 4797 lines — long-standing monolith. Consider splitting into modules (auth/sales/inventory/payroll/marketing). Not introduced by this feature but continues to grow.",
+    "customers_broadcast_whatsapp() has no rate-limit protection against a super_admin accidentally spamming: no cooldown, no daily quota check. With 0.3s pacing a 1000-customer broadcast takes 5min and holds the request open the whole time (no background task). Consider FastAPI BackgroundTasks or a real job queue (Celery/RQ) for reliability + async progress reporting. Non-blocking for small customer base.",
+    "The endpoint keeps HTTP request open for entire duration of send loop (asyncio.sleep 0.3s × N). For N=100 customers that's 30+ seconds — browsers may abort. Consider streaming response (SSE) or async task pattern.",
+    "db.whatsapp_logs write is best-effort inside try/except: log failures are silently swallowed. Fine for MVP but should surface some visibility (logger.warning) in case Mongo becomes unavailable.",
+    "Frontend BroadcastWAModal recomputes 'preview' every render via message.replace on line 1357 — fine at current scale but could be memoized (useMemo) if messages get long. Trivial.",
+    "Frontend does not disable the modal itself while sending — user can click 'Batal' mid-send which may leave UI in inconsistent state. Not critical, since sending=true disables send button and re-clicking Batal just closes modal (result still hits state). Consider disabling close during send.",
+    "Missing endpoint /api/admin/whatsapp/logs or similar to VIEW past broadcasts in-app. Backend writes logs but there's no UI/API to retrieve them. Would help ops audit which customers received which promo.",
+    "No idempotency key on broadcast POST — a browser retry could double-send. Given super_admin only + confirm dialog, low risk, but consider a client-generated request_id.",
+    "MOCKED case handling: since FONNTE_TOKEN is set in this preview but device is disconnected, results come back 'failed' (not 'mocked'). The frontend toast copy 'Fonnte token belum diset' shown when mocked > 0 — accurate. But when failed>0 and mocked=0 (this scenario), the yellow ResultCard warning banner is not shown, so ops must read the per-row 'reason' column to diagnose. Consider showing a general failure banner too."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_customer_broadcast_wa.py (NEW - 14 tests)"
+  ],
+  "success_rate": {"backend": "100% (14/14 pytest)", "frontend": "100% (button + badge + modal + preview live-render + send flow + confirm + result card + cleanup all verified)"},
+  "test_credentials": "admin@payroll.id / admin123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created 3 backend test customers (TEST_BC_WithPhoneA/B/NoPhone) + 3 frontend test customers (TEST_UI_Budi_QA, TEST_UI_Ani_QA, TEST_UI_NoPhone_QA) + 1 test material (TEST_MAT_*) + 1 test sale — all auto-cleaned up in fixture teardown & Playwright finally block. Also cleaned 45 stale TEST_-prefixed whatsapp_logs from prior iterations. Final DB state verified: only 'PT Test Advertising' remains as pre-existing customer.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Broadcast WA endpoint (POST /api/inventory/customers/broadcast-whatsapp) is fully working. Preview env has FONNTE_TOKEN set but Fonnte device is disconnected — so real send returns status='failed' with reason='request invalid on disconnected device'. To test with 'mocked' status, unset FONNTE_TOKEN in /app/backend/.env. To test with 'sent' status, link the Fonnte account (via Fonnte dashboard) to a WA device. Backend logs to db.whatsapp_logs collection with type='customer_broadcast' — no admin UI to view logs yet (potential future enhancement). Message template supports {name} and {phone} variables. Frontend modal is at /app/frontend/src/pages/Inventory.jsx lines 1305-1528 (BroadcastWAModal component). Sales.jsx auto-save-to-customer-master (iteration_17) still works.",
+  "rca_of_the_issue": "N/A — feature validated as working. Only observation: FONNTE_TOKEN is set in preview .env but device is disconnected → all real sends return 'failed'. Backend behavior is correct: it calls Fonnte, receives the error, returns status='failed' with the actual reason string. This is not a bug in the broadcast feature itself."
+}

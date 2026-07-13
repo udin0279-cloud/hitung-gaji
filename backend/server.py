@@ -3826,6 +3826,92 @@ async def cust_delete(customer_id: str, user: dict = Depends(require_super_admin
     return {"ok": True}
 
 
+# ---------------- Broadcast WhatsApp ke Pelanggan ----------------
+class CustomerBroadcastIn(BaseModel):
+    message: str
+    customer_ids: Optional[List[str]] = None  # None/empty = semua pelanggan aktif yg punya phone
+    preview_only: bool = False
+
+
+@api_router.post("/inventory/customers/broadcast-whatsapp")
+async def customers_broadcast_whatsapp(payload: CustomerBroadcastIn, user: dict = Depends(require_super_admin)):
+    msg_template = (payload.message or "").strip()
+    if not msg_template:
+        raise HTTPException(status_code=400, detail="Pesan tidak boleh kosong")
+    if len(msg_template) > 3000:
+        raise HTTPException(status_code=400, detail="Pesan terlalu panjang (max 3000 karakter)")
+
+    # Ambil target customers
+    query: Dict[str, Any] = {"active": {"$ne": False}}
+    if payload.customer_ids:
+        query["id"] = {"$in": payload.customer_ids}
+    all_customers = await db.customers.find(query, {"_id": 0}).to_list(length=5000)
+    # Filter yang punya phone
+    targets = [c for c in all_customers if (c.get("phone") or "").strip()]
+    skipped_no_phone = len(all_customers) - len(targets)
+
+    if payload.preview_only:
+        return {
+            "preview_only": True,
+            "total_selected": len(all_customers),
+            "total_with_phone": len(targets),
+            "skipped_no_phone": skipped_no_phone,
+            "sample_targets": [{"name": c["name"], "phone": c.get("phone")} for c in targets[:5]],
+        }
+
+    if not targets:
+        raise HTTPException(status_code=400, detail="Tidak ada pelanggan dengan nomor WhatsApp yang bisa dikirim")
+
+    results = []
+    sent = failed = mocked = 0
+    for c in targets:
+        # Replace variabel {name} & {phone}
+        personalized = msg_template.replace("{name}", c.get("name", "")).replace("{phone}", c.get("phone", ""))
+        res = await _send_whatsapp(c.get("phone", ""), personalized)
+        status = res.get("status", "failed")
+        if status == "sent":
+            sent += 1
+        elif status == "mocked":
+            mocked += 1
+        else:
+            failed += 1
+        results.append({
+            "customer_id": c.get("id"),
+            "name": c.get("name"),
+            "phone": res.get("phone") or c.get("phone"),
+            "status": status,
+            "reason": res.get("reason"),
+        })
+        # Log ke db (opsional, best-effort)
+        try:
+            await db.whatsapp_logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "type": "customer_broadcast",
+                "customer_id": c.get("id"),
+                "customer_name": c.get("name"),
+                "phone": res.get("phone") or c.get("phone"),
+                "message_preview": personalized[:200],
+                "status": status,
+                "reason": res.get("reason"),
+                "sent_at": datetime.now(timezone.utc).isoformat(),
+                "sent_by": user.get("email"),
+            })
+        except Exception:
+            pass
+        # Gentle pacing untuk Fonnte free plan
+        await asyncio.sleep(0.3)
+
+    return {
+        "preview_only": False,
+        "total": len(targets),
+        "sent": sent,
+        "failed": failed,
+        "mocked": mocked,
+        "skipped_no_phone": skipped_no_phone,
+        "results": results,
+    }
+
+
 # ---------------- Laporan Laba/Rugi (Profit & Loss) ----------------
 async def _payroll_cost_for_month(period: str) -> tuple:
     """Return (total_net, employee_count) untuk payroll_runs dgn period=YYYY-MM. Fallback 0."""

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, X, Search, Package, TrendingDown, AlertTriangle, Boxes, ClipboardList, Scale, Download } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Search, Package, TrendingDown, AlertTriangle, Boxes, ClipboardList, Scale, Download, MessageCircle, Send } from "lucide-react";
 
 const CATEGORIES = [
   { value: "flexy", label: "Flexy" },
@@ -1141,12 +1141,15 @@ function CustomersTab({ customers, reload }) {
   const [form, setForm] = useState(EMPTY_CUST);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+  const [openBroadcast, setOpenBroadcast] = useState(false);
 
   const filtered = customers.filter((c) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return c.name.toLowerCase().includes(q) || (c.phone || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q);
   });
+
+  const withPhone = customers.filter((c) => (c.phone || "").trim() && c.active !== false).length;
 
   const openCreate = () => { setEditing(null); setForm(EMPTY_CUST); setOpen(true); };
   const openEdit = (c) => { setEditing(c); setForm({ ...EMPTY_CUST, ...c }); setOpen(true); };
@@ -1184,9 +1187,21 @@ function CustomersTab({ customers, reload }) {
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
           <input data-testid="cust-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / telepon / email…" className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none" />
         </div>
-        <button data-testid="add-customer-button" onClick={openCreate} className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2">
-          <Plus className="w-4 h-4" /> Tambah Customer
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            data-testid="broadcast-wa-button"
+            onClick={() => setOpenBroadcast(true)}
+            disabled={withPhone === 0}
+            title={withPhone === 0 ? "Belum ada pelanggan dengan nomor WA" : `Kirim pesan ke ${withPhone} pelanggan`}
+            className="rounded-none bg-[#008A00] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#006D00] inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <MessageCircle className="w-4 h-4" /> Broadcast WA
+            <span className="font-mono text-[10px] bg-white/20 px-1.5 py-0.5">{withPhone}</span>
+          </button>
+          <button data-testid="add-customer-button" onClick={openCreate} className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2">
+            <Plus className="w-4 h-4" /> Tambah Customer
+          </button>
+        </div>
       </div>
 
       <div className="border border-zinc-200 bg-white overflow-x-auto">
@@ -1277,6 +1292,248 @@ function CustomersTab({ customers, reload }) {
           </div>
         </div>
       )}
+
+      {openBroadcast && (
+        <BroadcastWAModal customers={customers} onClose={() => setOpenBroadcast(false)} />
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Broadcast WhatsApp Modal ---------------- */
+function BroadcastWAModal({ customers, onClose }) {
+  const eligible = useMemo(
+    () => customers.filter((c) => (c.phone || "").trim() && c.active !== false),
+    [customers]
+  );
+  const [selectedIds, setSelectedIds] = useState(() => eligible.map((c) => c.id));
+  const [message, setMessage] = useState(
+    "Halo {name}, terima kasih sudah menjadi pelanggan setia kami. 🙏\n\nKami info: minggu ini promo cetak banner Flexy hanya Rp 20.000/m² (min 5m²). Info lebih lanjut hubungi kami ya.\n\n— Payroll Indonesia"
+  );
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+  const [search, setSearch] = useState("");
+
+  const filtered = eligible.filter((c) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return c.name.toLowerCase().includes(q) || (c.phone || "").includes(q);
+  });
+
+  const toggleAll = (checked) => {
+    setSelectedIds(checked ? filtered.map((c) => c.id) : []);
+  };
+  const toggleOne = (id, checked) => {
+    setSelectedIds((arr) => (checked ? [...arr, id] : arr.filter((x) => x !== id)));
+  };
+
+  const send = async () => {
+    if (!message.trim()) { toast.error("Pesan wajib diisi"); return; }
+    if (selectedIds.length === 0) { toast.error("Pilih minimal 1 pelanggan"); return; }
+    if (!window.confirm(`Kirim pesan WhatsApp ke ${selectedIds.length} pelanggan?`)) return;
+    setSending(true);
+    setResult(null);
+    try {
+      const { data } = await api.post("/inventory/customers/broadcast-whatsapp", {
+        message: message.trim(),
+        customer_ids: selectedIds,
+      });
+      setResult(data);
+      const sentTotal = data.sent + data.mocked;
+      if (data.mocked > 0) {
+        toast.info(`${data.mocked} pesan MOCKED (Fonnte token belum diset). ${data.sent} sent, ${data.failed} failed.`);
+      } else if (data.failed > 0) {
+        toast.warning(`${sentTotal} terkirim, ${data.failed} gagal`);
+      } else {
+        toast.success(`${sentTotal} pesan berhasil dikirim`);
+      }
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal broadcast");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const preview = message.replace(/{name}/g, "Pak Budi");
+  const allChecked = filtered.length > 0 && filtered.every((c) => selectedIds.includes(c.id));
+
+  return (
+    <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+      <div className="bg-white border border-zinc-300 w-full max-w-5xl max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-200 sticky top-0 bg-white z-10">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-[#008A00] flex items-center justify-center">
+              <MessageCircle className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Marketing</div>
+              <div className="font-heading text-xl font-bold text-zinc-900">Broadcast WhatsApp</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-zinc-100" data-testid="close-broadcast-modal"><X className="w-4 h-4" /></button>
+        </div>
+
+        {result ? (
+          <div className="p-6 space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-zinc-200 border border-zinc-200">
+              <ResultCard label="Total" value={result.total} testId="broadcast-total" />
+              <ResultCard label="Terkirim" value={result.sent} testId="broadcast-sent" positive />
+              <ResultCard label="Gagal" value={result.failed} testId="broadcast-failed" danger />
+              <ResultCard label="Mocked" value={result.mocked} testId="broadcast-mocked" />
+            </div>
+            {result.mocked > 0 && (
+              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 p-3 font-mono">
+                ⚠ Token Fonnte belum di-set. Pesan hanya di-simulate (mocked). Set env FONNTE_TOKEN untuk mengaktifkan pengiriman.
+              </div>
+            )}
+            <div className="border border-zinc-200 max-h-64 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 border-b border-zinc-200 sticky top-0">
+                  <tr className="text-[10px] uppercase tracking-widest text-zinc-600 font-bold">
+                    <th className="px-3 py-2 text-left">Pelanggan</th>
+                    <th className="px-3 py-2 text-left">Nomor</th>
+                    <th className="px-3 py-2 text-left">Status</th>
+                    <th className="px-3 py-2 text-left">Info</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(result.results || []).map((r, i) => (
+                    <tr key={i} data-testid="broadcast-result-row" className="border-b border-zinc-100">
+                      <td className="px-3 py-2 font-medium">{r.name}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-zinc-600">{r.phone}</td>
+                      <td className="px-3 py-2">
+                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 ${
+                          r.status === "sent" ? "bg-[#008A00]/10 text-[#008A00]"
+                          : r.status === "mocked" ? "bg-amber-100 text-amber-700"
+                          : "bg-[#E81123]/10 text-[#E81123]"
+                        }`}>{r.status}</span>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-zinc-500 font-mono">{r.reason || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200">
+              <button onClick={() => { setResult(null); }} className="rounded-none bg-white border border-zinc-300 px-5 py-2.5 text-sm font-medium hover:bg-zinc-50">Kirim Lagi</button>
+              <button onClick={onClose} className="rounded-none bg-[#002FA7] text-white px-6 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90">Tutup</button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Left: Message */}
+            <div className="space-y-3">
+              <Field label="Isi Pesan" hint="Gunakan {name} untuk mention nama pelanggan otomatis">
+                <textarea
+                  data-testid="broadcast-message"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  rows={9}
+                  className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none font-mono"
+                />
+              </Field>
+              <div className="text-[10px] text-zinc-500 font-mono flex justify-between">
+                <span>{message.length} / 3000 karakter</span>
+                <button
+                  type="button"
+                  onClick={() => setMessage(
+                    "Halo {name}, terima kasih sudah menjadi pelanggan setia kami.\n\n[Isi pesan di sini]\n\n— Payroll Indonesia"
+                  )}
+                  className="text-[#002FA7] hover:underline"
+                >Reset Template</button>
+              </div>
+
+              <div className="border-t border-zinc-200 pt-3">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-2">Preview Pesan</div>
+                <div data-testid="broadcast-preview" className="bg-[#E9FFDC] border border-[#008A00]/30 p-3 text-sm text-zinc-800 whitespace-pre-wrap font-sans max-h-40 overflow-y-auto">
+                  {preview}
+                </div>
+                <div className="text-[10px] text-zinc-500 mt-1">Contoh untuk pelanggan &ldquo;Pak Budi&rdquo;</div>
+              </div>
+            </div>
+
+            {/* Right: Recipient list */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700">
+                  Penerima ({selectedIds.length} / {eligible.length})
+                </div>
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={(e) => toggleAll(e.target.checked)}
+                    data-testid="broadcast-select-all"
+                  />
+                  <span>Pilih Semua</span>
+                </label>
+              </div>
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Cari nama / nomor…"
+                  className="rounded-none border border-zinc-300 bg-white pl-9 pr-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+                />
+              </div>
+              <div className="border border-zinc-200 max-h-80 overflow-y-auto">
+                {filtered.length === 0 && (
+                  <div className="p-8 text-center text-zinc-400 font-mono text-xs">
+                    {eligible.length === 0 ? "Belum ada pelanggan dengan nomor WA aktif." : "Tidak ada hasil."}
+                  </div>
+                )}
+                {filtered.map((c) => {
+                  const checked = selectedIds.includes(c.id);
+                  return (
+                    <label key={c.id} data-testid="broadcast-recipient" className={`flex items-center gap-3 p-2.5 border-b border-zinc-100 cursor-pointer hover:bg-zinc-50 ${checked ? "bg-[#008A00]/5" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => toggleOne(c.id, e.target.checked)}
+                      />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-zinc-900">{c.name}</div>
+                        <div className="text-xs font-mono text-zinc-500">{c.phone}</div>
+                      </div>
+                      <span className="text-[9px] font-mono text-zinc-400">{c.order_count || 0} order</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="lg:col-span-2 flex items-center justify-between gap-2 pt-4 border-t border-zinc-200">
+              <div className="text-xs text-zinc-500 font-mono">
+                Pacing 0.3s/pesan · Fonnte Free Plan compatible
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={onClose} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-5 py-2.5 text-sm font-medium hover:bg-zinc-50">Batal</button>
+                <button
+                  type="button"
+                  data-testid="broadcast-send-button"
+                  onClick={send}
+                  disabled={sending || selectedIds.length === 0 || !message.trim()}
+                  className="rounded-none bg-[#008A00] text-white px-8 py-3 text-sm font-bold uppercase tracking-wider hover:bg-[#006D00] disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                >
+                  <Send className="w-4 h-4" /> {sending ? `Mengirim ${selectedIds.length}…` : `Kirim ke ${selectedIds.length}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResultCard({ label, value, positive, danger, testId }) {
+  return (
+    <div className="bg-white p-4">
+      <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">{label}</div>
+      <div data-testid={testId} className={`font-mono text-2xl font-bold mt-1 ${positive ? "text-[#008A00]" : danger ? "text-[#E81123]" : "text-zinc-900"}`}>
+        {value}
+      </div>
     </div>
   );
 }
