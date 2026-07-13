@@ -5036,11 +5036,14 @@ async def cash_transactions_list(
     # Kalau filter bulan, hitung saldo awal bulan dari transaksi sebelumnya + opening
     if month:
         first_of_month = q["date"]["$gte"]
+        last_of_month = q["date"]["$lte"]
         prev = await db.cash_transactions.find(
             {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1},
         ).to_list(length=100000)
-        # Jika opening_date > first_of_month, opening tidak ikut
-        if opening_date and opening_date > first_of_month:
+        # Include opening_balance selama opening_date jatuh <= akhir periode
+        # yang dilihat. Jika opening_date di masa depan (setelah bulan ini),
+        # baru diabaikan.
+        if opening_date and opening_date > last_of_month:
             balance = 0.0
         else:
             balance = opening_balance
@@ -5158,7 +5161,7 @@ async def cash_summary(
     prev_net = 0.0
     for p in prev:
         prev_net += float(p["amount"]) if p["type"] == "in" else -float(p["amount"])
-    if opening_date and opening_date > first:
+    if opening_date and opening_date > last:
         opening_of_period = 0.0
     else:
         opening_of_period = opening_balance

@@ -1,0 +1,42 @@
+{
+  "summary": "Backend regression + bug-fix verification for Kas Operasional opening balance/opening_date fix. Verified fix in /api/cashbook/summary (line ~5164) and /api/cashbook/transactions (line ~5046): comparison now uses `opening_date > last_of_month` (not first). All 13 new targeted tests + all 26 existing tests PASSED (39/39). Primary bug (opening_date=2026-07-15, view Juli 2026, opening_balance was 0) is confirmed FIXED — opening_balance now includes 5,000,000 as expected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_cashbook_opening_date_bug.py",
+    "/app/backend/tests/test_cashbook.py",
+    "/app/test_reports/pytest/cashbook_bug_results.xml",
+    "/app/test_reports/pytest/cashbook_regression_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix implementation is correct and minimal: both endpoints now check `if opening_date and opening_date > last:` (or last_of_month). Symmetric between /summary and /transactions.",
+    "String comparison of ISO dates (YYYY-MM-DD) works correctly for lexicographic ordering; no timezone issues.",
+    "Behavior: opening_of_period = (opening_balance if opening_date <= last_of_month else 0) + prev_net_of_transactions_before_first_of_month. This matches user's expectation.",
+    "Suggestion (non-blocking): Consider clarifying opening_date semantics in API docs — 'opening balance is applied for any period whose end date >= opening_date'. Also consider whether prev_net should be filtered to only include tx with date >= opening_date (currently sums all prior tx regardless of opening_date, which is correct if tx were created after opening event, but could be surprising if user later shifts opening_date forward)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_cashbook_opening_date_bug.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (39/39 tests passed)",
+    "frontend": "N/A (backend only per request)"
+  },
+  "test_credentials": "admin@payroll.id / admin123 (verified working, cookie-based httpOnly)",
+  "seed_data_creation": "No permanent seed data. Test module snapshots original cashbook settings on entry and restores them on module teardown to avoid state leak between test runs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Bug fix verified via new /app/backend/tests/test_cashbook_opening_date_bug.py (13 tests covering: mid-month opening, before-month regression, future-date exclusion, first_of_month + last_of_month + day_after_last boundaries, /balance endpoint unaffected, closing consistency). Existing /app/backend/tests/test_cashbook.py (26 tests) also pass. Both endpoints /api/cashbook/summary and /api/cashbook/transactions correctly include opening_balance whenever opening_date <= last_of_month of the viewed period. Test fixture restores original opening_balance/opening_date after run to avoid polluting state.",
+  "rca of the issue": {
+    "root_cause": "In /api/cashbook/transactions (line ~5046) and /api/cashbook/summary (line ~5164), backend previously compared `opening_date > first_of_month`. Result: when user set opening_date mid-month (e.g. 2026-07-15) and viewed the same month (Juli 2026), 2026-07-15 > 2026-07-01 → True → opening_balance zeroed out. User saw 'Saldo Awal Rp 0' while real-time /balance showed Rp 5.170.000.",
+    "reproduction": "1) PUT /api/cashbook/settings {opening_balance: 5000000, opening_date: '2026-07-15'}; 2) GET /api/cashbook/summary?month=2026-07; 3) BEFORE FIX: response.opening_balance == 0. AFTER FIX: response.opening_balance == 5000000 (+ prev_net if any).",
+    "mitigation": "Changed comparison to `opening_date > last_of_month` (last day of the viewed month). Opening is now included whenever opening_date falls on or before the end of the viewed period. Verified boundaries: first_of_month (included), last_of_month (included), day_after_last (excluded), far future (excluded), before period (included plus prev_net)."
+  }
+}
