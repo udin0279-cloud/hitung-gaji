@@ -42,12 +42,13 @@ export default function Inventory() {
   const [orders, setOrders] = useState([]);
   const [adjusts, setAdjusts] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [m, s, si, w, o, adj, c] = await Promise.all([
+      const [m, s, si, w, o, adj, c, p] = await Promise.all([
         api.get("/inventory/materials"),
         api.get("/inventory/stats"),
         api.get("/inventory/stock-in"),
@@ -55,6 +56,7 @@ export default function Inventory() {
         api.get("/inventory/orders"),
         api.get("/inventory/stock-adjust"),
         api.get("/inventory/customers"),
+        api.get("/products"),
       ]);
       setMaterials(m.data);
       setStats(s.data);
@@ -63,6 +65,7 @@ export default function Inventory() {
       setOrders(o.data);
       setAdjusts(adj.data);
       setCustomers(c.data);
+      setProducts(p.data);
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
     } finally {
@@ -110,6 +113,7 @@ export default function Inventory() {
       <div className="mt-8 border-b border-zinc-200">
         <div className="flex flex-wrap gap-1">
           <TabButton active={tab === "materials"} onClick={() => setTab("materials")} testId="tab-materials">Master Bahan</TabButton>
+          <TabButton active={tab === "products"} onClick={() => setTab("products")} testId="tab-products">Master Produk</TabButton>
           <TabButton active={tab === "stock-in"} onClick={() => setTab("stock-in")} testId="tab-stock-in">Barang Masuk</TabButton>
           <TabButton active={tab === "waste"} onClick={() => setTab("waste")} testId="tab-waste">Sisa / Rijek</TabButton>
           <TabButton active={tab === "orders"} onClick={() => setTab("orders")} testId="tab-orders">Order Produksi</TabButton>
@@ -123,6 +127,8 @@ export default function Inventory() {
           <div className="py-12 text-center text-zinc-400 font-mono text-xs">Memuat…</div>
         ) : tab === "materials" ? (
           <MaterialsTab materials={materials} reload={loadAll} />
+        ) : tab === "products" ? (
+          <ProductsTab products={products} materials={materials} reload={loadAll} />
         ) : tab === "stock-in" ? (
           <StockInTab materials={materials} stockIn={stockIn} reload={loadAll} />
         ) : tab === "waste" ? (
@@ -1534,6 +1540,252 @@ function ResultCard({ label, value, positive, danger, testId }) {
       <div data-testid={testId} className={`font-mono text-2xl font-bold mt-1 ${positive ? "text-[#008A00]" : danger ? "text-[#E81123]" : "text-zinc-900"}`}>
         {value}
       </div>
+    </div>
+  );
+}
+
+/* ---------------- MASTER PRODUK Tab (BOM) ---------------- */
+const FORMULA_OPTIONS = [
+  { value: "fixed", label: "Fixed (total)", hint: "Konsumsi tetap total, tidak dikali qty" },
+  { value: "per_qty", label: "Per Qty (× jumlah pcs)", hint: "Konsumsi × qty produk (mis. 1 lembar per pcs)" },
+  { value: "area", label: "Area (P × L × qty)", hint: "Konsumsi = P×L×qty×faktor (untuk kain/flexy)" },
+  { value: "length", label: "Length (P × qty)", hint: "Konsumsi = P×qty×faktor (untuk tali/pita)" },
+];
+const FORMULA_LABEL = Object.fromEntries(FORMULA_OPTIONS.map((f) => [f.value, f.label]));
+
+const EMPTY_PRODUCT = {
+  code: "", name: "", category: "",
+  pricing_mode: "fixed", unit_price: 0,
+  components: [{ material_id: "", formula: "per_qty", quantity: 1 }],
+  active: true,
+};
+
+function ProductsTab({ products, materials, reload }) {
+  const [openForm, setOpenForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(EMPTY_PRODUCT);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filtered = products.filter((p) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return p.name.toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q) || (p.category || "").toLowerCase().includes(q);
+  });
+
+  const openCreate = () => { setEditing(null); setForm(EMPTY_PRODUCT); setOpenForm(true); };
+  const openEdit = (p) => {
+    setEditing(p);
+    setForm({
+      code: p.code || "",
+      name: p.name,
+      category: p.category || "",
+      pricing_mode: p.pricing_mode || "fixed",
+      unit_price: p.unit_price || 0,
+      components: (p.components || []).map((c) => ({ material_id: c.material_id, formula: c.formula, quantity: c.quantity })),
+      active: p.active !== false,
+    });
+    setOpenForm(true);
+  };
+
+  const addComp = () => setForm((f) => ({ ...f, components: [...f.components, { material_id: "", formula: "per_qty", quantity: 1 }] }));
+  const rmComp = (i) => setForm((f) => ({ ...f, components: f.components.filter((_, idx) => idx !== i) }));
+  const updComp = (i, key, val) => setForm((f) => ({ ...f, components: f.components.map((c, idx) => idx === i ? { ...c, [key]: val } : c) }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) { toast.error("Nama produk wajib"); return; }
+    if (form.components.length === 0) { toast.error("Minimal 1 bahan/komponen"); return; }
+    for (const c of form.components) {
+      if (!c.material_id) { toast.error("Semua komponen harus pilih bahan"); return; }
+      if (!c.formula) { toast.error("Semua komponen harus pilih formula"); return; }
+      if (Number(c.quantity) <= 0) { toast.error("Quantity komponen harus > 0"); return; }
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        ...form,
+        unit_price: Number(form.unit_price) || 0,
+        components: form.components.map((c) => ({
+          material_id: c.material_id, formula: c.formula, quantity: Number(c.quantity),
+        })),
+      };
+      if (editing) await api.put(`/products/${editing.id}`, payload);
+      else await api.post("/products", payload);
+      toast.success(editing ? "Produk diperbarui" : "Produk ditambahkan");
+      setOpenForm(false); await reload();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal menyimpan");
+    } finally { setSaving(false); }
+  };
+
+  const remove = async (p) => {
+    if (!window.confirm(`Hapus produk "${p.name}"?`)) return;
+    try { await api.delete(`/products/${p.id}`); toast.success("Produk dihapus"); await reload(); }
+    catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
+  };
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <input data-testid="product-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / kode produk…" className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none" />
+        </div>
+        <button data-testid="add-product-button" onClick={openCreate} className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2">
+          <Plus className="w-4 h-4" /> Tambah Produk
+        </button>
+      </div>
+
+      <div className="border border-zinc-200 bg-white overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
+              <th className="px-3 py-3">Kode / Nama</th>
+              <th className="px-3 py-3">Kategori</th>
+              <th className="px-3 py-3">Harga</th>
+              <th className="px-3 py-3">Komposisi Bahan</th>
+              <th className="px-3 py-3">Status</th>
+              <th className="px-3 py-3 text-right">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada produk. Klik &ldquo;Tambah Produk&rdquo; untuk buat produk seperti Slayer, Bendera, dll dengan multi-bahan.</td></tr>
+            )}
+            {filtered.map((p) => (
+              <tr key={p.id} data-testid="product-row" className="border-b border-zinc-100 hover:bg-zinc-50/80 align-top">
+                <td className="px-3 py-3">
+                  {p.code && <div className="font-mono text-[10px] text-zinc-500">{p.code}</div>}
+                  <div className="font-semibold text-zinc-900">{p.name}</div>
+                </td>
+                <td className="px-3 py-3 text-xs text-zinc-500">{p.category || "—"}</td>
+                <td className="px-3 py-3 font-mono text-xs">
+                  <div className="font-bold text-zinc-900">{formatIDR(p.unit_price)}</div>
+                  <div className="text-[10px] text-zinc-500">{p.pricing_mode === "per_area" ? "per m²" : "per pcs"}</div>
+                </td>
+                <td className="px-3 py-3">
+                  <div className="space-y-1">
+                    {(p.components || []).map((c, i) => (
+                      <div key={i} className="text-xs">
+                        <span className="font-medium text-zinc-800">{c.material_name || "—"}</span>
+                        <span className="text-[10px] text-zinc-500 font-mono ml-2">{FORMULA_LABEL[c.formula] || c.formula} × {c.quantity} {c.material_unit || ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                </td>
+                <td className="px-3 py-3">
+                  <span className={`text-[10px] font-bold uppercase tracking-widest ${p.active !== false ? "text-[#008A00]" : "text-zinc-400"}`}>
+                    {p.active !== false ? "Aktif" : "Nonaktif"}
+                  </span>
+                </td>
+                <td className="px-3 py-3">
+                  <div className="flex justify-end gap-1">
+                    <button data-testid="edit-product-button" onClick={() => openEdit(p)} className="p-1.5 hover:bg-zinc-100 text-zinc-700"><Pencil className="w-3.5 h-3.5" /></button>
+                    <button data-testid="delete-product-button" onClick={() => remove(p)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {openForm && (
+        <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white border border-zinc-300 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-zinc-200 sticky top-0 bg-white">
+              <div>
+                <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">{editing ? "Edit" : "Baru"}</div>
+                <div className="font-heading text-xl font-bold text-zinc-900">{editing ? "Edit Produk" : "Tambah Produk"}</div>
+              </div>
+              <button onClick={() => setOpenForm(false)} data-testid="close-product-modal" className="p-1.5 hover:bg-zinc-100"><X className="w-4 h-4" /></button>
+            </div>
+            <form onSubmit={submit} className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Kode (Opsional)">
+                  <input data-testid="prod-code" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} className={inputCls + " font-mono"} placeholder="SLY-01" />
+                </Field>
+                <Field label="Kategori (Opsional)">
+                  <input data-testid="prod-category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls} placeholder="Konveksi / Cetak / dll" />
+                </Field>
+              </div>
+              <Field label="Nama Produk">
+                <input required data-testid="prod-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} placeholder="Slayer, Bendera Merah Putih, Kaos Sablon" />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Mode Harga">
+                  <select data-testid="prod-pricing" value={form.pricing_mode} onChange={(e) => setForm({ ...form, pricing_mode: e.target.value })} className={inputCls}>
+                    <option value="fixed">Fixed per pcs (mis. Slayer Rp 25.000/pcs)</option>
+                    <option value="per_area">Per m² (untuk produk berbasis luas)</option>
+                  </select>
+                </Field>
+                <Field label={form.pricing_mode === "per_area" ? "Harga per m² (Rp)" : "Harga per pcs (Rp)"}>
+                  <input required data-testid="prod-price" type="number" min="0" step="0.01" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} className={inputCls + " font-mono font-bold"} />
+                </Field>
+              </div>
+
+              {/* Components / BOM */}
+              <div className="border-t border-zinc-200 pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[11px] uppercase tracking-widest font-bold text-zinc-700">Komposisi Bahan (BOM)</div>
+                  <button type="button" data-testid="add-comp-button" onClick={addComp} className="text-xs text-[#002FA7] hover:underline font-semibold">+ Tambah Komponen</button>
+                </div>
+                <div className="space-y-3">
+                  {form.components.map((c, i) => {
+                    const mat = materials.find((m) => m.id === c.material_id);
+                    const hint = FORMULA_OPTIONS.find((f) => f.value === c.formula)?.hint || "";
+                    return (
+                      <div key={i} data-testid={`comp-row-${i}`} className="border border-zinc-200 p-3 bg-zinc-50/40 space-y-2">
+                        <div className="grid grid-cols-12 gap-2">
+                          <div className="col-span-5">
+                            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Bahan</label>
+                            <select required data-testid={`comp-mat-${i}`} value={c.material_id} onChange={(e) => updComp(i, "material_id", e.target.value)} className={inputCls}>
+                              <option value="">— pilih bahan —</option>
+                              {materials.filter((m) => m.active !== false).map((m) => (
+                                <option key={m.id} value={m.id}>{m.name} ({m.unit}, stok: {formatNum(m.current_stock)})</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="col-span-4">
+                            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Formula</label>
+                            <select required data-testid={`comp-formula-${i}`} value={c.formula} onChange={(e) => updComp(i, "formula", e.target.value)} className={inputCls}>
+                              {FORMULA_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                            </select>
+                          </div>
+                          <div className="col-span-2">
+                            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Faktor</label>
+                            <input required data-testid={`comp-qty-${i}`} type="number" step="0.01" min="0.01" value={c.quantity} onChange={(e) => updComp(i, "quantity", e.target.value)} className={inputCls + " font-mono"} />
+                          </div>
+                          <div className="col-span-1 pt-6">
+                            {form.components.length > 1 && (
+                              <button type="button" onClick={() => rmComp(i)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]" title="Hapus"><X className="w-3.5 h-3.5" /></button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-zinc-500 font-mono">
+                          {mat && <span>Unit: <b>{mat.unit}</b> · </span>}
+                          <span>{hint}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
+                <span>Produk aktif (bisa dipilih di Kasir)</span>
+              </label>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-zinc-200">
+                <button type="button" onClick={() => setOpenForm(false)} className="rounded-none bg-white border border-zinc-300 px-5 py-2.5 text-sm hover:bg-zinc-50">Batal</button>
+                <button data-testid="save-product-button" type="submit" disabled={saving} className="rounded-none bg-[#002FA7] text-white px-8 py-3 text-sm font-bold uppercase tracking-wider disabled:opacity-40">{saving ? "Menyimpan…" : "Simpan"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

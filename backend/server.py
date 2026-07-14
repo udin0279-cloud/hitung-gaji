@@ -4506,13 +4506,175 @@ async def purchasing_stats(user: dict = Depends(require_super_admin)):
 
 
 # ---------------- Sales / POS Module ----------------
-class SaleItemIn(BaseModel):
+# Master Produk dengan BOM (Bill of Materials)
+PRODUCT_FORMULAS = ("fixed", "per_qty", "area", "length")
+
+class ProductComponent(BaseModel):
     material_id: str
-    product_name: str  # nama produk/jasa (mis. "Banner 3x2m", "Sticker Vinyl")
-    length_m: float  # panjang meter
-    width_m: float  # lebar meter
+    formula: str  # "fixed" | "per_qty" | "area" | "length"
+    quantity: float = 1.0  # faktor konsumsi
+
+class ProductIn(BaseModel):
+    code: Optional[str] = None
+    name: str
+    category: Optional[str] = None
+    pricing_mode: str = "fixed"  # "fixed" (per unit) | "per_area" (per m²)
+    unit_price: float = 0
+    components: List[ProductComponent] = []
+    active: bool = True
+
+
+def _product_requires_dimensions(components: List[Dict[str, Any]]) -> bool:
+    return any(c.get("formula") in ("area", "length") for c in components)
+
+
+async def _enrich_product(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Isi snapshot material_name & material_unit ke tiap component."""
+    if not p:
+        return p
+    for c in p.get("components", []):
+        mat = await db.materials.find_one({"id": c.get("material_id")}, {"_id": 0, "name": 1, "unit": 1, "current_stock": 1})
+        if mat:
+            c["material_name"] = mat.get("name")
+            c["material_unit"] = mat.get("unit")
+            c["material_stock"] = mat.get("current_stock")
+        else:
+            c["material_name"] = "(bahan dihapus)"
+            c["material_unit"] = ""
+            c["material_stock"] = 0
+    p["requires_dimensions"] = _product_requires_dimensions(p.get("components", []))
+    return p
+
+
+def _compute_component_consumption(
+    formula: str, factor: float, length_m: float, width_m: float, qty: int
+) -> float:
+    """Hitung konsumsi bahan untuk 1 component sale."""
+    f = (formula or "").lower()
+    factor = float(factor or 0)
+    q = int(qty or 0)
+    if f == "fixed":
+        return round(factor, 4)
+    if f == "per_qty":
+        return round(factor * q, 4)
+    if f == "area":
+        return round(factor * float(length_m or 0) * float(width_m or 0) * q, 4)
+    if f == "length":
+        return round(factor * float(length_m or 0) * q, 4)
+    return 0.0
+
+
+@api_router.get("/products")
+async def products_list(user: dict = Depends(require_super_admin), only_active: bool = False):
+    q: Dict[str, Any] = {}
+    if only_active:
+        q["active"] = {"$ne": False}
+    items = await db.products.find(q, {"_id": 0}).sort("name", 1).to_list(length=2000)
+    for p in items:
+        await _enrich_product(p)
+    return items
+
+
+@api_router.get("/products/{product_id}")
+async def products_get(product_id: str, user: dict = Depends(require_super_admin)):
+    p = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    await _enrich_product(p)
+    return p
+
+
+@api_router.post("/products")
+async def products_create(payload: ProductIn, user: dict = Depends(require_super_admin)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Nama produk wajib")
+    if payload.pricing_mode not in ("fixed", "per_area"):
+        raise HTTPException(status_code=400, detail="pricing_mode harus 'fixed' atau 'per_area'")
+    if payload.unit_price < 0:
+        raise HTTPException(status_code=400, detail="Harga tidak boleh negatif")
+    for c in payload.components:
+        if c.formula not in PRODUCT_FORMULAS:
+            raise HTTPException(status_code=400, detail=f"Formula '{c.formula}' tidak valid. Pilih: {PRODUCT_FORMULAS}")
+        if c.quantity <= 0:
+            raise HTTPException(status_code=400, detail="Quantity komponen harus > 0")
+        m = await db.materials.find_one({"id": c.material_id})
+        if not m:
+            raise HTTPException(status_code=400, detail=f"Bahan {c.material_id} tidak ditemukan")
+    # Cek duplicate nama
+    safe = re.escape(payload.name.strip())
+    exists = await db.products.find_one({"name": {"$regex": f"^{safe}$", "$options": "i"}})
+    if exists:
+        raise HTTPException(status_code=400, detail="Produk dengan nama tersebut sudah ada")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "code": (payload.code or "").strip() or None,
+        "name": payload.name.strip(),
+        "category": (payload.category or "").strip() or None,
+        "pricing_mode": payload.pricing_mode,
+        "unit_price": round(float(payload.unit_price), 2),
+        "components": [c.model_dump() for c in payload.components],
+        "active": payload.active,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.products.insert_one(doc)
+    doc.pop("_id", None)
+    await _enrich_product(doc)
+    return doc
+
+
+@api_router.put("/products/{product_id}")
+async def products_update(product_id: str, payload: ProductIn, user: dict = Depends(require_super_admin)):
+    existing = await db.products.find_one({"id": product_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    if payload.pricing_mode not in ("fixed", "per_area"):
+        raise HTTPException(status_code=400, detail="pricing_mode harus 'fixed' atau 'per_area'")
+    for c in payload.components:
+        if c.formula not in PRODUCT_FORMULAS:
+            raise HTTPException(status_code=400, detail=f"Formula '{c.formula}' tidak valid")
+        if c.quantity <= 0:
+            raise HTTPException(status_code=400, detail="Quantity komponen harus > 0")
+        m = await db.materials.find_one({"id": c.material_id})
+        if not m:
+            raise HTTPException(status_code=400, detail=f"Bahan {c.material_id} tidak ditemukan")
+    upd = {
+        "code": (payload.code or "").strip() or None,
+        "name": payload.name.strip(),
+        "category": (payload.category or "").strip() or None,
+        "pricing_mode": payload.pricing_mode,
+        "unit_price": round(float(payload.unit_price), 2),
+        "components": [c.model_dump() for c in payload.components],
+        "active": payload.active,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.products.update_one({"id": product_id}, {"$set": upd})
+    doc = await db.products.find_one({"id": product_id}, {"_id": 0})
+    await _enrich_product(doc)
+    return doc
+
+
+@api_router.delete("/products/{product_id}")
+async def products_delete(product_id: str, user: dict = Depends(require_super_admin)):
+    existing = await db.products.find_one({"id": product_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    used = await db.sales.count_documents({"items.product_id": product_id})
+    if used > 0:
+        raise HTTPException(status_code=400, detail=f"Produk masih dipakai di {used} transaksi. Non-aktifkan saja.")
+    await db.products.delete_one({"id": product_id})
+    return {"ok": True}
+
+
+class SaleItemIn(BaseModel):
+    # MODE 1 (backward compat): pilih material langsung
+    material_id: Optional[str] = None
+    # MODE 2 (baru): pilih product dengan BOM
+    product_id: Optional[str] = None
+    product_name: str  # nama produk/jasa (mis. "Banner 3x2m", "Slayer")
+    length_m: float = 0
+    width_m: float = 0
     quantity: int = 1
-    unit_price: float  # harga per m² (bisa override dari material.selling_price)
+    unit_price: float  # harga per m² (mode material) ATAU harga per unit (mode product fixed) ATAU per m² (product per_area)
 
 
 class SaleIn(BaseModel):
@@ -4566,36 +4728,133 @@ async def sales_get(sale_id: str, user: dict = Depends(require_super_admin)):
 async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin)):
     if not payload.items:
         raise HTTPException(status_code=400, detail="Item transaksi tidak boleh kosong")
-    # Validate + hitung + kurangi stok
+    # Validate + hitung + kumpulkan konsumsi bahan per material
     items_out = []
     subtotal = 0.0
+    # Track penggunaan stok agar kita hitung total per material (agregat kalau item yang sama muncul 2x)
+    stock_deductions: Dict[str, float] = {}  # material_id -> total qty dikurangi
+    material_cache: Dict[str, Dict[str, Any]] = {}
+
+    async def _get_mat(mid: str) -> Dict[str, Any]:
+        if mid in material_cache:
+            return material_cache[mid]
+        m = await db.materials.find_one({"id": mid})
+        if not m:
+            raise HTTPException(status_code=400, detail="Bahan tidak ditemukan")
+        material_cache[mid] = m
+        return m
+
     for it in payload.items:
-        mat = await db.materials.find_one({"id": it.material_id})
-        if not mat:
-            raise HTTPException(status_code=400, detail=f"Bahan tidak ditemukan")
-        if it.length_m <= 0 or it.width_m <= 0 or it.quantity <= 0:
-            raise HTTPException(status_code=400, detail=f"Ukuran & qty {it.product_name} harus > 0")
-        area_per_pc = float(it.length_m) * float(it.width_m)
-        area_total = round(area_per_pc * int(it.quantity), 4)  # dalam m² (juga jumlah stok yg dipakai)
-        line_subtotal = round(area_total * float(it.unit_price), 2)
-        # Cek stok
-        current_stock = float(mat.get("current_stock", 0))
-        if area_total > current_stock:
-            raise HTTPException(status_code=400, detail=f"Stok {mat.get('name')} tidak cukup (butuh {area_total}, tersedia {current_stock})")
-        items_out.append({
-            "material_id": it.material_id,
-            "material_name": mat.get("name"),
-            "material_unit": mat.get("unit"),
-            "product_name": it.product_name,
-            "length_m": float(it.length_m),
-            "width_m": float(it.width_m),
-            "quantity": int(it.quantity),
-            "area_per_pc": round(area_per_pc, 4),
-            "area_total": area_total,
-            "unit_price": float(it.unit_price),
-            "subtotal": line_subtotal,
-        })
-        subtotal += line_subtotal
+        if it.quantity <= 0:
+            raise HTTPException(status_code=400, detail=f"Qty {it.product_name} harus > 0")
+
+        # ===== MODE 2: PRODUCT (BOM) =====
+        if it.product_id:
+            prod = await db.products.find_one({"id": it.product_id}, {"_id": 0})
+            if not prod:
+                raise HTTPException(status_code=400, detail=f"Produk tidak ditemukan")
+            components = prod.get("components") or []
+            needs_dim = any(c.get("formula") in ("area", "length") for c in components)
+            if needs_dim and (it.length_m <= 0 or it.width_m <= 0):
+                # Untuk formula 'length', width boleh 0
+                bad = any(c.get("formula") == "area" for c in components) and (it.length_m <= 0 or it.width_m <= 0)
+                bad_len = any(c.get("formula") == "length" for c in components) and it.length_m <= 0
+                if bad or bad_len:
+                    raise HTTPException(status_code=400, detail=f"Ukuran P×L wajib diisi untuk {it.product_name}")
+            # Hitung harga sesuai pricing_mode
+            pricing = prod.get("pricing_mode") or "fixed"
+            unit_price_use = float(it.unit_price if it.unit_price > 0 else prod.get("unit_price", 0))
+            if pricing == "per_area":
+                area_pc = float(it.length_m or 0) * float(it.width_m or 0)
+                area_total = round(area_pc * int(it.quantity), 4)
+                line_subtotal = round(area_total * unit_price_use, 2)
+            else:  # fixed
+                area_pc = float(it.length_m or 0) * float(it.width_m or 0)
+                area_total = round(area_pc * int(it.quantity), 4)
+                line_subtotal = round(unit_price_use * int(it.quantity), 2)
+
+            # Hitung konsumsi bahan per komponen
+            item_components = []
+            for c in components:
+                cons = _compute_component_consumption(
+                    c["formula"], c.get("quantity", 1), it.length_m, it.width_m, it.quantity,
+                )
+                mat = await _get_mat(c["material_id"])
+                stock_deductions[c["material_id"]] = stock_deductions.get(c["material_id"], 0) + cons
+                item_components.append({
+                    "material_id": c["material_id"],
+                    "material_name": mat.get("name"),
+                    "material_unit": mat.get("unit"),
+                    "formula": c["formula"],
+                    "factor": float(c.get("quantity", 1)),
+                    "consumption": cons,
+                })
+
+            items_out.append({
+                "product_id": it.product_id,
+                "product_code": prod.get("code"),
+                "product_name": it.product_name or prod.get("name"),
+                "product_pricing_mode": pricing,
+                "length_m": float(it.length_m or 0),
+                "width_m": float(it.width_m or 0),
+                "quantity": int(it.quantity),
+                "area_per_pc": round(area_pc, 4),
+                "area_total": area_total,
+                "unit_price": unit_price_use,
+                "subtotal": line_subtotal,
+                "components": item_components,
+                # legacy fields untuk struk kompatibel
+                "material_id": None,
+                "material_name": ", ".join(c["material_name"] for c in item_components) or "-",
+                "material_unit": item_components[0]["material_unit"] if item_components else "",
+            })
+            subtotal += line_subtotal
+
+        # ===== MODE 1: MATERIAL langsung (legacy) =====
+        else:
+            if not it.material_id:
+                raise HTTPException(status_code=400, detail=f"{it.product_name}: pilih Produk atau Bahan")
+            if it.length_m <= 0 or it.width_m <= 0:
+                raise HTTPException(status_code=400, detail=f"Ukuran P×L {it.product_name} harus > 0")
+            mat = await _get_mat(it.material_id)
+            area_per_pc = float(it.length_m) * float(it.width_m)
+            area_total = round(area_per_pc * int(it.quantity), 4)
+            line_subtotal = round(area_total * float(it.unit_price), 2)
+            stock_deductions[it.material_id] = stock_deductions.get(it.material_id, 0) + area_total
+            items_out.append({
+                "material_id": it.material_id,
+                "material_name": mat.get("name"),
+                "material_unit": mat.get("unit"),
+                "product_id": None,
+                "product_name": it.product_name,
+                "length_m": float(it.length_m),
+                "width_m": float(it.width_m),
+                "quantity": int(it.quantity),
+                "area_per_pc": round(area_per_pc, 4),
+                "area_total": area_total,
+                "unit_price": float(it.unit_price),
+                "subtotal": line_subtotal,
+                "components": [{
+                    "material_id": it.material_id,
+                    "material_name": mat.get("name"),
+                    "material_unit": mat.get("unit"),
+                    "formula": "area",
+                    "factor": 1.0,
+                    "consumption": area_total,
+                }],
+            })
+            subtotal += line_subtotal
+
+    # Validasi stok total (agregat)
+    for mid, total_needed in stock_deductions.items():
+        mat = material_cache.get(mid) or await _get_mat(mid)
+        current = float(mat.get("current_stock", 0))
+        if total_needed > current + 1e-6:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stok {mat.get('name')} tidak cukup (butuh {round(total_needed, 4)} {mat.get('unit')}, tersedia {round(current, 4)})",
+            )
+
     discount = float(payload.discount or 0)
     total = round(subtotal - discount, 2)
     cash_paid = float(payload.cash_paid or 0)
@@ -4637,13 +4896,13 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
         )
     except Exception as ex:
         logger.warning(f"Cashbook auto-insert (sale) failed: {ex}")
-    # Kurangi stok
-    for it in items_out:
-        mat = await db.materials.find_one({"id": it["material_id"]})
+    # Kurangi stok agregat per material
+    for mid, qty_used in stock_deductions.items():
+        mat = material_cache.get(mid)
         if mat:
-            new_stock = round(float(mat.get("current_stock", 0)) - float(it["area_total"]), 4)
+            new_stock = round(float(mat.get("current_stock", 0)) - float(qty_used), 4)
             await db.materials.update_one(
-                {"id": it["material_id"]},
+                {"id": mid},
                 {"$set": {"current_stock": new_stock, "updated_at": now.isoformat()}},
             )
     doc.pop("_id", None)
@@ -4655,14 +4914,28 @@ async def sales_delete(sale_id: str, user: dict = Depends(require_super_admin)):
     s = await db.sales.find_one({"id": sale_id})
     if not s:
         raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
-    # Rollback stok
+    # Rollback stok — agregat per material dari components (support multi-material BOM)
+    rollback: Dict[str, float] = {}
     for it in s.get("items") or []:
-        mat = await db.materials.find_one({"id": it.get("material_id")})
+        comps = it.get("components")
+        if comps:
+            for c in comps:
+                mid = c.get("material_id")
+                if mid:
+                    rollback[mid] = rollback.get(mid, 0) + float(c.get("consumption", 0))
+        else:
+            # Legacy sale tanpa components — pakai material_id + area_total
+            mid = it.get("material_id")
+            if mid:
+                rollback[mid] = rollback.get(mid, 0) + float(it.get("area_total", 0))
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for mid, qty in rollback.items():
+        mat = await db.materials.find_one({"id": mid})
         if mat:
-            new_stock = round(float(mat.get("current_stock", 0)) + float(it.get("area_total", 0)), 4)
+            new_stock = round(float(mat.get("current_stock", 0)) + float(qty), 4)
             await db.materials.update_one(
-                {"id": it["material_id"]},
-                {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}},
+                {"id": mid},
+                {"$set": {"current_stock": new_stock, "updated_at": now_iso}},
             )
     await db.sales.delete_one({"id": sale_id})
     # Hapus auto cash transaction terkait
@@ -4685,18 +4958,42 @@ async def sales_receipt_html(sale_id: str, user: dict = Depends(require_super_ad
         return f"{float(n or 0):.4f}".rstrip("0").rstrip(".") or "0"
     items_rows = ""
     for it in s.get("items") or []:
-        items_rows += f"""
+        pricing_mode = it.get("product_pricing_mode")
+        is_product_fixed = it.get("product_id") and pricing_mode == "fixed"
+        # Detail dimensi/qty
+        if is_product_fixed:
+            dim_line = f"<span>{int(it.get('quantity', 1))} pcs</span><span>@ {_idr(it.get('unit_price'))}</span>"
+        else:
+            dim_line = (
+                f"<span>{_num(it.get('length_m'))}m × {_num(it.get('width_m'))}m × {int(it.get('quantity', 1))}</span>"
+                f"<span>= {_num(it.get('area_total'))}m²</span>"
+            )
+            price_line = f"<span>@ {_idr(it.get('unit_price'))}/m²</span><span class='strong'>{_idr(it.get('subtotal'))}</span>"
+        # Bahan breakdown (untuk BOM)
+        mat_line = ""
+        comps = it.get("components") or []
+        if len(comps) > 1:
+            mat_bits = " + ".join(f"{c.get('material_name', '-')} {_num(c.get('consumption'))}{c.get('material_unit', '')}" for c in comps)
+            mat_line = f'<div class="mat">Bahan: {mat_bits}</div>'
+        elif it.get("material_name"):
+            mat_line = f'<div class="mat">{it.get("material_name")}</div>'
+
+        if is_product_fixed:
+            items_rows += f"""
         <div class="item">
           <div class="prod">{it.get('product_name', '')}</div>
-          <div class="mat">{it.get('material_name', '')}</div>
-          <div class="row">
-            <span>{_num(it.get('length_m'))}m × {_num(it.get('width_m'))}m × {int(it.get('quantity', 1))}</span>
-            <span>= {_num(it.get('area_total'))}m²</span>
-          </div>
-          <div class="row">
-            <span>@ {_idr(it.get('unit_price'))}/m²</span>
-            <span class="strong">{_idr(it.get('subtotal'))}</span>
-          </div>
+          {mat_line}
+          <div class="row">{dim_line}</div>
+          <div class="row"><span></span><span class="strong">{_idr(it.get('subtotal'))}</span></div>
+        </div>
+        """
+        else:
+            items_rows += f"""
+        <div class="item">
+          <div class="prod">{it.get('product_name', '')}</div>
+          {mat_line}
+          <div class="row">{dim_line}</div>
+          <div class="row">{price_line}</div>
         </div>
         """
     discount_row = ""

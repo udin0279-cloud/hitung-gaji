@@ -13,6 +13,7 @@ function formatNum(n, digits = 4) {
 export default function Sales() {
   const [sales, setSales] = useState([]);
   const [materials, setMaterials] = useState([]);
+  const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -22,15 +23,17 @@ export default function Sales() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [s, m, c, st] = await Promise.all([
+      const [s, m, c, p, st] = await Promise.all([
         api.get("/sales"),
         api.get("/inventory/materials"),
         api.get("/inventory/customers"),
+        api.get("/products", { params: { only_active: true } }),
         api.get("/sales/stats/today"),
       ]);
       setSales(s.data);
       setMaterials(m.data);
       setCustomers(c.data);
+      setProducts(p.data);
       setStats(st.data);
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
@@ -153,7 +156,7 @@ export default function Sales() {
         </div>
       </div>
 
-      {openNew && <NewSaleModal materials={materials} customers={customers} onClose={() => setOpenNew(false)} onSaved={async (created) => { setOpenNew(false); await loadAll(); openReceipt(created, true); }} />}
+      {openNew && <NewSaleModal materials={materials} products={products} customers={customers} onClose={() => setOpenNew(false)} onSaved={async (created) => { setOpenNew(false); await loadAll(); openReceipt(created, true); }} />}
     </div>
   );
 }
@@ -173,10 +176,24 @@ function StatCard({ label, value, icon: Icon, isCount, testId, positive }) {
 }
 
 /* ---------------- NEW SALE MODAL (POS) ---------------- */
-const EMPTY_ITEM = { material_id: "", product_name: "", length_m: 0, width_m: 0, quantity: 1, unit_price: 0 };
+// picker_id format: "prod:<id>" atau "mat:<id>"
+const EMPTY_ITEM = { picker_id: "", product_id: null, material_id: null, product_name: "", length_m: 0, width_m: 0, quantity: 1, unit_price: 0 };
 
-function NewSaleModal({ materials, customers, onClose, onSaved }) {
+function computeConsumption(formula, factor, L, W, qty) {
+  const f = Number(factor || 0);
+  const q = Number(qty || 0);
+  const l = Number(L || 0);
+  const w = Number(W || 0);
+  if (formula === "fixed") return f;
+  if (formula === "per_qty") return f * q;
+  if (formula === "area") return f * l * w * q;
+  if (formula === "length") return f * l * q;
+  return 0;
+}
+
+function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
   const activeMats = materials.filter((m) => m.active !== false);
+  const activeProducts = (products || []).filter((p) => p.active !== false);
   const activeCustomers = (customers || []).filter((c) => c.active !== false);
   const [customer, setCustomer] = useState({ name: "", phone: "" });
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
@@ -189,44 +206,107 @@ function NewSaleModal({ materials, customers, onClose, onSaved }) {
   const removeItem = (idx) => setItems((arr) => arr.filter((_, i) => i !== idx));
   const updItem = (idx, key, val) => setItems((arr) => arr.map((it, i) => i === idx ? { ...it, [key]: val } : it));
 
-  // Auto-fill phone jika nama pelanggan match dengan master
   const onCustomerNameChange = (val) => {
     const match = activeCustomers.find((c) => (c.name || "").toLowerCase() === val.trim().toLowerCase());
-    setCustomer((c) => ({
-      name: val,
-      phone: match ? (match.phone || "") : c.phone,
-    }));
+    setCustomer((c) => ({ name: val, phone: match ? (match.phone || "") : c.phone }));
   };
 
   const isExistingCustomer = () => {
     const n = customer.name.trim().toLowerCase();
-    if (!n || n === "umum") return true; // "Umum" tidak perlu disimpan
+    if (!n || n === "umum") return true;
     return activeCustomers.some((c) => (c.name || "").toLowerCase() === n);
   };
 
-  const onMaterialPick = (idx, mid) => {
-    const mat = materials.find((m) => m.id === mid);
-    setItems((arr) => arr.map((it, i) => i === idx ? {
-      ...it,
-      material_id: mid,
-      unit_price: mat?.selling_price > 0 ? mat.selling_price : it.unit_price,
-      product_name: it.product_name || (mat?.name || ""),
-    } : it));
+  const onPickerChange = (idx, picker_id) => {
+    setItems((arr) => arr.map((it, i) => {
+      if (i !== idx) return it;
+      if (!picker_id) return { ...EMPTY_ITEM, quantity: it.quantity };
+      const [kind, id] = picker_id.split(":");
+      if (kind === "prod") {
+        const p = activeProducts.find((x) => x.id === id);
+        return {
+          ...it,
+          picker_id, product_id: id, material_id: null,
+          product_name: p?.name || "",
+          unit_price: p?.unit_price || 0,
+          length_m: 0, width_m: 0,
+        };
+      }
+      if (kind === "mat") {
+        const m = activeMats.find((x) => x.id === id);
+        return {
+          ...it,
+          picker_id, material_id: id, product_id: null,
+          product_name: it.product_name || m?.name || "",
+          unit_price: m?.selling_price > 0 ? m.selling_price : it.unit_price,
+        };
+      }
+      return it;
+    }));
   };
 
-  // Perhitungan
+  // Perhitungan tiap row
   const rows = items.map((it) => {
-    const mat = materials.find((m) => m.id === it.material_id);
-    const area = Number(it.length_m || 0) * Number(it.width_m || 0);
-    const area_total = area * Number(it.quantity || 0);
-    const subtotal = area_total * Number(it.unit_price || 0);
-    const stock_ok = mat ? Number(mat.current_stock || 0) >= area_total : false;
-    return { it, mat, area, area_total, subtotal, stock_ok };
+    const product = it.product_id ? activeProducts.find((p) => p.id === it.product_id) : null;
+    const material = it.material_id ? materials.find((m) => m.id === it.material_id) : null;
+    const L = Number(it.length_m || 0), W = Number(it.width_m || 0), Q = Number(it.quantity || 0);
+    const area = L * W;
+    const area_total = area * Q;
+
+    let subtotal = 0;
+    let consumptions = []; // [{material_id, name, unit, consumption, stock, ok}]
+    let requires_LW = true;
+    let requires_L_only = false;
+    let stock_ok = true;
+
+    if (product) {
+      const pricing = product.pricing_mode || "fixed";
+      const price = Number(it.unit_price || 0);
+      subtotal = pricing === "per_area" ? area_total * price : price * Q;
+      requires_LW = (product.components || []).some((c) => c.formula === "area");
+      requires_L_only = !requires_LW && (product.components || []).some((c) => c.formula === "length");
+      consumptions = (product.components || []).map((c) => {
+        const cons = computeConsumption(c.formula, c.quantity, L, W, Q);
+        const mat = materials.find((m) => m.id === c.material_id);
+        const stock = mat ? Number(mat.current_stock || 0) : 0;
+        return {
+          material_id: c.material_id,
+          name: mat?.name || c.material_name || "-",
+          unit: mat?.unit || c.material_unit || "",
+          formula: c.formula,
+          consumption: cons,
+          stock,
+          ok: cons <= stock,
+        };
+      });
+      stock_ok = consumptions.every((c) => c.ok);
+    } else if (material) {
+      subtotal = area_total * Number(it.unit_price || 0);
+      consumptions = [{
+        material_id: it.material_id,
+        name: material.name,
+        unit: material.unit,
+        formula: "area",
+        consumption: area_total,
+        stock: Number(material.current_stock || 0),
+        ok: area_total <= Number(material.current_stock || 0),
+      }];
+      stock_ok = consumptions[0].ok;
+    }
+
+    return { it, product, material, area, area_total, subtotal, consumptions, stock_ok, requires_LW, requires_L_only };
   });
   const subtotal = rows.reduce((s, r) => s + r.subtotal, 0);
   const total = Math.max(subtotal - Number(discount || 0), 0);
   const change = Math.max(Number(cashPaid || 0) - total, 0);
-  const canSubmit = items.length > 0 && rows.every((r) => r.it.material_id && r.area_total > 0 && r.it.unit_price > 0 && r.stock_ok) && Number(cashPaid || 0) >= total && total > 0;
+  const canSubmit = items.length > 0 && rows.every((r) => {
+    if (!r.it.picker_id) return false;
+    if (r.it.unit_price <= 0) return false;
+    if (r.it.quantity <= 0) return false;
+    if (r.requires_LW && (r.it.length_m <= 0 || r.it.width_m <= 0)) return false;
+    if (r.requires_L_only && r.it.length_m <= 0) return false;
+    return r.subtotal > 0 && r.stock_ok;
+  }) && Number(cashPaid || 0) >= total && total > 0;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -241,8 +321,9 @@ function NewSaleModal({ materials, customers, onClose, onSaved }) {
         payment_method: "tunai",
         notes: notes.trim() || null,
         items: items.map((it) => ({
-          material_id: it.material_id,
-          product_name: it.product_name || (materials.find((m) => m.id === it.material_id)?.name || "-"),
+          material_id: it.material_id || null,
+          product_id: it.product_id || null,
+          product_name: it.product_name || "-",
           length_m: Number(it.length_m) || 0,
           width_m: Number(it.width_m) || 0,
           quantity: Number(it.quantity) || 1,
@@ -321,21 +402,38 @@ function NewSaleModal({ materials, customers, onClose, onSaved }) {
             <div className="space-y-3">
               {items.map((it, idx) => {
                 const r = rows[idx];
+                const isProduct = !!r.product;
+                const showLW = r.requires_LW;
+                const showLonly = r.requires_L_only;
+                const pricingLabel = isProduct
+                  ? (r.product.pricing_mode === "per_area" ? "Harga / m² (Rp)" : "Harga / pcs (Rp)")
+                  : "Harga / m² (Rp)";
                 return (
                   <div key={idx} className="border border-zinc-200 p-3 space-y-2 bg-zinc-50/40">
                     <div className="grid grid-cols-12 gap-2">
-                      <div className="col-span-6">
-                        <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Bahan</label>
-                        <select data-testid={`sale-item-mat-${idx}`} required value={it.material_id} onChange={(e) => onMaterialPick(idx, e.target.value)} className={inputCls}>
-                          <option value="">— pilih bahan —</option>
-                          {activeMats.map((m) => (
-                            <option key={m.id} value={m.id}>{m.name} (stok: {formatNum(m.current_stock)} {m.unit})</option>
-                          ))}
+                      <div className="col-span-7">
+                        <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Produk / Bahan</label>
+                        <select data-testid={`sale-item-picker-${idx}`} required value={it.picker_id} onChange={(e) => onPickerChange(idx, e.target.value)} className={inputCls}>
+                          <option value="">— pilih produk / bahan —</option>
+                          {activeProducts.length > 0 && (
+                            <optgroup label="Produk (Multi-Bahan / BOM)">
+                              {activeProducts.map((p) => (
+                                <option key={`prod-${p.id}`} value={`prod:${p.id}`}>
+                                  {p.name}{p.code ? ` [${p.code}]` : ""} — {p.pricing_mode === "per_area" ? "per m²" : "per pcs"}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          <optgroup label="Bahan Langsung">
+                            {activeMats.map((m) => (
+                              <option key={`mat-${m.id}`} value={`mat:${m.id}`}>{m.name} (stok: {formatNum(m.current_stock)} {m.unit})</option>
+                            ))}
+                          </optgroup>
                         </select>
                       </div>
-                      <div className="col-span-5">
+                      <div className="col-span-4">
                         <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Nama Produk (untuk struk)</label>
-                        <input data-testid={`sale-item-name-${idx}`} value={it.product_name} onChange={(e) => updItem(idx, "product_name", e.target.value)} placeholder="Banner, X-Banner, Spanduk…" className={inputCls} />
+                        <input data-testid={`sale-item-name-${idx}`} value={it.product_name} onChange={(e) => updItem(idx, "product_name", e.target.value)} placeholder={isProduct ? r.product?.name : "Banner, Spanduk…"} className={inputCls} />
                       </div>
                       <div className="col-span-1 pt-6">
                         {items.length > 1 && (
@@ -344,20 +442,30 @@ function NewSaleModal({ materials, customers, onClose, onSaved }) {
                       </div>
                     </div>
                     <div className="grid grid-cols-12 gap-2">
-                      <div className="col-span-2">
-                        <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Panjang (m)</label>
-                        <input data-testid={`sale-item-length-${idx}`} type="number" step="0.01" min="0" required value={it.length_m} onChange={(e) => updItem(idx, "length_m", e.target.value)} className={inputCls + " font-mono"} />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Lebar (m)</label>
-                        <input data-testid={`sale-item-width-${idx}`} type="number" step="0.01" min="0" required value={it.width_m} onChange={(e) => updItem(idx, "width_m", e.target.value)} className={inputCls + " font-mono"} />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Qty</label>
+                      {showLW && (
+                        <>
+                          <div className="col-span-2">
+                            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Panjang (m)</label>
+                            <input data-testid={`sale-item-length-${idx}`} type="number" step="0.01" min="0" required value={it.length_m} onChange={(e) => updItem(idx, "length_m", e.target.value)} className={inputCls + " font-mono"} />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Lebar (m)</label>
+                            <input data-testid={`sale-item-width-${idx}`} type="number" step="0.01" min="0" required value={it.width_m} onChange={(e) => updItem(idx, "width_m", e.target.value)} className={inputCls + " font-mono"} />
+                          </div>
+                        </>
+                      )}
+                      {showLonly && (
+                        <div className="col-span-4">
+                          <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Panjang (m)</label>
+                          <input data-testid={`sale-item-length-${idx}`} type="number" step="0.01" min="0" required value={it.length_m} onChange={(e) => updItem(idx, "length_m", e.target.value)} className={inputCls + " font-mono"} />
+                        </div>
+                      )}
+                      <div className={showLW || showLonly ? "col-span-2" : "col-span-4"}>
+                        <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Qty (pcs)</label>
                         <input data-testid={`sale-item-qty-${idx}`} type="number" min="1" required value={it.quantity} onChange={(e) => updItem(idx, "quantity", e.target.value)} className={inputCls + " font-mono"} />
                       </div>
                       <div className="col-span-3">
-                        <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Harga / m² (Rp)</label>
+                        <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">{pricingLabel}</label>
                         <input data-testid={`sale-item-price-${idx}`} type="number" step="0.01" min="0" required value={it.unit_price} onChange={(e) => updItem(idx, "unit_price", e.target.value)} className={inputCls + " font-mono"} />
                       </div>
                       <div className="col-span-3">
@@ -367,14 +475,24 @@ function NewSaleModal({ materials, customers, onClose, onSaved }) {
                         </div>
                       </div>
                     </div>
-                    <div className="text-[10px] text-zinc-500 font-mono flex items-center justify-between">
-                      <span>Luas total: <b>{formatNum(r.area_total)} m²</b> (= {formatNum(r.area)} × {it.quantity || 0})</span>
-                      {r.mat && (
-                        <span className={r.stock_ok ? "text-[#008A00]" : "text-[#E81123] font-bold"}>
-                          {r.stock_ok ? `Stok cukup (${formatNum(r.mat.current_stock)} ${r.mat.unit})` : `Stok kurang! Tersedia ${formatNum(r.mat.current_stock)} ${r.mat.unit}`}
-                        </span>
-                      )}
-                    </div>
+                    {/* Bahan consumption breakdown */}
+                    {it.picker_id && r.consumptions.length > 0 && (
+                      <div data-testid={`sale-item-bom-${idx}`} className="text-[10px] text-zinc-600 font-mono border-t border-zinc-200 pt-2 mt-1">
+                        <div className="font-bold uppercase tracking-widest text-zinc-500 mb-1">
+                          {isProduct ? `BOM (${r.consumptions.length} bahan)` : "Konsumsi Bahan"}:
+                        </div>
+                        <div className="space-y-0.5">
+                          {r.consumptions.map((c, ci) => (
+                            <div key={ci} className="flex items-center justify-between">
+                              <span>· <b>{c.name}</b> ({c.formula}) → {formatNum(c.consumption)} {c.unit}</span>
+                              <span className={c.ok ? "text-[#008A00]" : "text-[#E81123] font-bold"}>
+                                {c.ok ? `✓ (stok: ${formatNum(c.stock)})` : `✗ Kurang! stok: ${formatNum(c.stock)}`}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

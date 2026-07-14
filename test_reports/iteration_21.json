@@ -1,0 +1,39 @@
+{
+  "summary": "Full backend + frontend testing of new Master Produk (BOM) module & Sales BOM integration. Created 23 new pytest tests covering products CRUD, validations, multi-material stock deduction, formula variants (fixed/per_qty/area/length), pricing modes (fixed/per_area), delete rollback, aggregate stock check, and backward compatibility with legacy material_id sales. Verified UI end-to-end: Master Produk tab with 2-line BOM breakdown, Sales OPTGROUP picker (Produk BOM vs Bahan Langsung), live-computed multi-material consumption (Slayer 10 pcs → Kertas 10 pcs + Kain 0.45m²) and Rp 250.000 subtotal, plus legacy mode preserved. All 23 new tests + all 40 regression tests (test_inventory + test_sales) passed. No critical bugs found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Inventory > Master Produk modal", "issues": ["React dev warning: '<span> cannot be a child of <option>' — caused by dev tooling injecting x-* debug wrappers into <option> tags. Not a functional bug; likely disappears in production build."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_products_bom.py",
+    "/app/test_reports/pytest/products_bom_results.xml",
+    "/app/test_reports/pytest/regression_bom.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "products_create/update: material validity is checked but not that material is active — inactive materials can be added as components; consider filtering only active materials in the dropdown (already done in FE via optgroup source) but backend should reject an inactive material_id.",
+    "Sale rollback via components consumption is correct; legacy fallback (material_id + area_total) preserved — nicely done.",
+    "receipt HTML: `.mat` line for BOM sale uses ' + ' separator with all materials, unit suffix appended (e.g. '10pcs + 0.45meter'). Test verified. For legacy sales the same field displays material_name alone.",
+    "SaleItemIn.unit_price is REQUIRED but sales_create falls back to prod.unit_price if it_unit_price <= 0. Cleaner would be to derive on server when null.",
+    "Aggregate stock check works across items (verified by test_aggregate_stock_check_across_items).",
+    "Formula 'fixed' does NOT multiply by qty — this is documented in the request and verified (consumption = factor only). This is an important business rule to keep well-documented in user-facing help text.",
+    "products.pricing_mode 'per_area' subtotal = area_total × unit_price. When formula 'per_qty' is only component (no area formula) but pricing_mode='per_area' is chosen, subtotal will be 0 because area_total=0. Consider validating pricing_mode='per_area' requires at least one area/length component (or documenting)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_products_bom.py (new — 23 test cases)"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23 new BOM tests + 40/40 regression = 63/63)",
+    "frontend": "100% (Master Produk tab, add product modal, Sales OPTGROUP picker, live BOM breakdown, legacy mode all verified)"
+  },
+  "test_credentials": "admin@payroll.id / admin123 (cookie-based httpOnly, verified working)",
+  "seed_data_creation": "All test data prefixed with 'TEST_BOM_<uuid>' (backend tests) or 'UITEST_' (UI test). All created products, sales, and materials cleaned up in module teardown / cleanup phase. No permanent data leak.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Master Produk (BOM) is production-ready. Backend endpoints /api/products (GET/POST/PUT/DELETE) and enhanced /api/sales (product_id + material_id dual mode) fully covered by /app/backend/tests/test_products_bom.py. Key test scenarios: (1) Slayer with per_qty+area components → multi-material deduction; (2) formula fixed does NOT multiply by qty; (3) pricing_mode 'per_area' vs 'fixed'; (4) sale delete rollback across all components; (5) legacy material_id sale flow preserved. UI: Master Produk tab (data-testid='tab-products'), add modal fields (prod-code/prod-category/prod-name/prod-pricing/prod-price/comp-mat-N/comp-formula-N/comp-qty-N/add-comp-button/save-product-button), Sales picker (data-testid='sale-item-picker-0' with OPTGROUPs), live BOM breakdown (sale-item-bom-0). One minor: consider disallowing pricing_mode='per_area' when no area/length component exists (currently subtotal will be 0).",
+  "rca of the issue": "N/A — no bugs found. Feature implementation is solid across both backend and frontend."
+}
