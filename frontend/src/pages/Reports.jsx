@@ -1,18 +1,24 @@
 import { useEffect, useState } from "react";
 import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { Download, TrendingUp, TrendingDown, Wallet, Package as PackageIcon } from "lucide-react";
+import { Download, TrendingUp, TrendingDown, Wallet, Package as PackageIcon, ArrowUpDown } from "lucide-react";
 
 export default function Reports() {
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
   const [report, setReport] = useState(null);
+  const [margins, setMargins] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [sortBy, setSortBy] = useState("revenue"); // revenue | margin | margin_pct
 
   const load = async (p) => {
     setLoading(true);
     try {
-      const { data } = await api.get(`/reports/profit-loss/${p}`);
-      setReport(data);
+      const [pl, mr] = await Promise.all([
+        api.get(`/reports/profit-loss/${p}`),
+        api.get(`/reports/product-margin/${p}`),
+      ]);
+      setReport(pl.data);
+      setMargins(mr.data);
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat laporan");
     } finally {
@@ -130,8 +136,127 @@ export default function Reports() {
               </div>
             </div>
           )}
+          {/* Product Margin Report */}
+          {margins && margins.products.length > 0 && (
+            <ProductMarginPanel margins={margins} sortBy={sortBy} setSortBy={setSortBy} />
+          )}
         </>
       )}
+    </div>
+  );
+}
+
+/* ---------- Product Margin Panel ---------- */
+function ProductMarginPanel({ margins, sortBy, setSortBy }) {
+  const sorted = [...margins.products].sort((a, b) => {
+    if (sortBy === "margin") return b.margin - a.margin;
+    if (sortBy === "margin_pct") return b.margin_pct - a.margin_pct;
+    return b.revenue - a.revenue;
+  });
+  const top3 = [...margins.products].sort((a, b) => b.margin - a.margin).slice(0, 3);
+  const bottom3 = [...margins.products].filter((p) => p.revenue > 0).sort((a, b) => a.margin_pct - b.margin_pct).slice(0, 3);
+  const maxMargin = Math.max(...margins.products.map((p) => Math.abs(p.margin)), 1);
+
+  return (
+    <div className="mt-6 border border-zinc-200 bg-white p-6">
+      <div className="flex items-end justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Analytics</div>
+          <div className="font-heading text-lg font-bold text-zinc-900">Margin per Produk</div>
+        </div>
+        <div className="text-xs text-zinc-500 font-mono">
+          {margins.total_products} produk · Total Revenue <b className="text-zinc-900">{formatIDR(margins.total_revenue)}</b> · Modal <b className="text-zinc-900">{formatIDR(margins.total_cost)}</b> · Margin <b className={margins.total_margin >= 0 ? "text-[#008A00]" : "text-[#E81123]"}>{formatIDR(margins.total_margin)} ({margins.total_margin_pct}%)</b>
+        </div>
+      </div>
+
+      {/* Top & Bottom */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <RankPanel title="🏆 Produk Paling Untung (by Margin Rp)" rows={top3} color="#008A00" />
+        <RankPanel title="⚠ Produk Margin Tipis / Rugi (by %)" rows={bottom3} color="#E81123" isBottom />
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest border-b border-zinc-200">
+              <th className="py-2 pr-4">#</th>
+              <th className="py-2 pr-4">Produk</th>
+              <th className="py-2 pr-4 text-right">Qty</th>
+              <th className="py-2 pr-4 text-right">Order</th>
+              <th onClick={() => setSortBy("revenue")} className={`py-2 pr-4 text-right cursor-pointer select-none ${sortBy === "revenue" ? "text-[#002FA7]" : ""}`}>
+                <span className="inline-flex items-center gap-1">Revenue <ArrowUpDown className="w-3 h-3" /></span>
+              </th>
+              <th className="py-2 pr-4 text-right">Modal</th>
+              <th onClick={() => setSortBy("margin")} className={`py-2 pr-4 text-right cursor-pointer select-none ${sortBy === "margin" ? "text-[#002FA7]" : ""}`}>
+                <span className="inline-flex items-center gap-1">Margin Rp <ArrowUpDown className="w-3 h-3" /></span>
+              </th>
+              <th onClick={() => setSortBy("margin_pct")} className={`py-2 pr-4 text-right cursor-pointer select-none ${sortBy === "margin_pct" ? "text-[#002FA7]" : ""}`}>
+                <span className="inline-flex items-center gap-1">Margin % <ArrowUpDown className="w-3 h-3" /></span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((p, i) => (
+              <tr key={`${p.product_id || ""}::${p.product_name}`} data-testid="product-margin-row" className="border-b border-zinc-100 hover:bg-zinc-50/50 align-top">
+                <td className="py-2 pr-4 font-mono text-xs text-zinc-500">{i + 1}</td>
+                <td className="py-2 pr-4">
+                  <div className="font-medium text-zinc-900">{p.product_name}</div>
+                  {p.is_bom && (
+                    <div className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                      BOM: {p.materials_used.map((m) => `${m.name} ${m.consumption.toFixed(2)}${m.unit}`).join(" + ")}
+                    </div>
+                  )}
+                </td>
+                <td className="py-2 pr-4 font-mono text-right">{p.qty_total}</td>
+                <td className="py-2 pr-4 font-mono text-right">{p.sale_count}</td>
+                <td className="py-2 pr-4 font-mono text-right text-zinc-900 font-semibold">{formatIDR(p.revenue)}</td>
+                <td className="py-2 pr-4 font-mono text-right text-zinc-700">{formatIDR(p.cost)}</td>
+                <td className={`py-2 pr-4 font-mono text-right font-bold ${p.margin >= 0 ? "text-[#008A00]" : "text-[#E81123]"}`}>{formatIDR(p.margin)}</td>
+                <td className="py-2 pr-4 text-right">
+                  <div className="inline-flex flex-col items-end gap-1">
+                    <span className={`font-mono text-xs font-bold ${p.margin_pct >= 20 ? "text-[#008A00]" : p.margin_pct >= 5 ? "text-amber-600" : "text-[#E81123]"}`}>
+                      {p.margin_pct}%
+                    </span>
+                    <div className="w-16 h-1 bg-zinc-100">
+                      <div className="h-full" style={{ width: `${Math.min((Math.abs(p.margin) / maxMargin) * 100, 100)}%`, backgroundColor: p.margin >= 0 ? "#008A00" : "#E81123" }} />
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="text-[10px] text-zinc-500 font-mono mt-3">
+        Klik header <b>Revenue / Margin Rp / Margin %</b> untuk urutkan. Warna: <span className="text-[#008A00] font-bold">≥20% sehat</span> · <span className="text-amber-600 font-bold">5–19% tipis</span> · <span className="text-[#E81123] font-bold">&lt;5% waspada</span>
+      </div>
+    </div>
+  );
+}
+
+function RankPanel({ title, rows, color, isBottom }) {
+  return (
+    <div className="border border-zinc-200 bg-zinc-50/30 p-4">
+      <div className="text-xs font-bold text-zinc-700 mb-2 uppercase tracking-widest">{title}</div>
+      {rows.length === 0 && <div className="text-zinc-400 font-mono text-xs py-2">—</div>}
+      <div className="space-y-1.5">
+        {rows.map((r, i) => (
+          <div key={i} className="flex items-baseline justify-between text-sm">
+            <div className="flex-1 truncate">
+              <span className="font-mono text-[10px] text-zinc-500 mr-2">#{i + 1}</span>
+              <span className="font-medium">{r.product_name}</span>
+              <span className="text-[10px] text-zinc-500 font-mono ml-2">({r.sale_count}× · {r.qty_total} pcs)</span>
+            </div>
+            <div className="text-right ml-2">
+              <div className="font-mono font-bold text-sm" style={{ color: r.margin >= 0 ? color : "#E81123" }}>
+                {isBottom ? `${r.margin_pct}%` : formatIDR(r.margin)}
+              </div>
+              <div className="font-mono text-[9px] text-zinc-500">{isBottom ? formatIDR(r.margin) : `${r.margin_pct}%`}</div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

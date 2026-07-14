@@ -3921,6 +3921,102 @@ async def _payroll_cost_for_month(period: str) -> tuple:
     return float(run.get("total_net", 0)), int(run.get("employee_count", 0))
 
 
+@api_router.get("/reports/product-margin/{period}")
+async def product_margin_report(period: str, user: dict = Depends(require_super_admin)):
+    """Ranking margin per produk untuk periode YYYY-MM.
+    Data source: db.sales items. Cost = sum(component.consumption × material.purchase_price).
+    """
+    start, end, _year, _month = _parse_month(period)
+    sales = await db.sales.find(
+        {"date": {"$gte": start, "$lte": end}}, {"_id": 0},
+    ).to_list(length=50000)
+
+    # Cache materials untuk lookup purchase_price
+    material_cache: Dict[str, Dict[str, Any]] = {}
+    async def _mat(mid: str):
+        if mid in material_cache:
+            return material_cache[mid]
+        m = await db.materials.find_one({"id": mid}, {"_id": 0, "name": 1, "purchase_price": 1, "unit": 1})
+        material_cache[mid] = m or {}
+        return material_cache[mid]
+
+    # Group by product identity
+    # Key: (product_id or "") + "::" + product_name (untuk group produk yg sama)
+    groups: Dict[str, Dict[str, Any]] = {}
+    for s in sales:
+        for it in (s.get("items") or []):
+            key = f"{it.get('product_id') or ''}::{(it.get('product_name') or '-').strip()}"
+            row = groups.setdefault(key, {
+                "product_id": it.get("product_id"),
+                "product_name": (it.get("product_name") or "-").strip() or "-",
+                "is_bom": bool(it.get("product_id")),
+                "sale_count": 0,
+                "qty_total": 0,
+                "revenue": 0.0,
+                "cost": 0.0,
+                "materials_used": {},  # name -> total consumption
+            })
+            row["sale_count"] += 1
+            row["qty_total"] += int(it.get("quantity", 0) or 0)
+            row["revenue"] += float(it.get("subtotal", 0) or 0)
+            # Cost from components (BOM) or legacy area_total × purchase_price
+            comps = it.get("components") or []
+            if comps:
+                for c in comps:
+                    m = await _mat(c.get("material_id"))
+                    cost = float(c.get("consumption", 0) or 0) * float(m.get("purchase_price", 0) or 0)
+                    row["cost"] += cost
+                    mname = m.get("name") or c.get("material_name") or "-"
+                    mu = row["materials_used"].setdefault(mname, {"consumption": 0.0, "unit": m.get("unit") or c.get("material_unit") or ""})
+                    mu["consumption"] += float(c.get("consumption", 0) or 0)
+            else:
+                # Legacy: material_id + area_total
+                mid = it.get("material_id")
+                if mid:
+                    m = await _mat(mid)
+                    area_total = float(it.get("area_total", 0) or 0)
+                    row["cost"] += area_total * float(m.get("purchase_price", 0) or 0)
+                    mname = m.get("name") or it.get("material_name") or "-"
+                    mu = row["materials_used"].setdefault(mname, {"consumption": 0.0, "unit": m.get("unit") or it.get("material_unit") or ""})
+                    mu["consumption"] += area_total
+
+    rows = []
+    for _k, r in groups.items():
+        margin = r["revenue"] - r["cost"]
+        pct = (margin / r["revenue"] * 100) if r["revenue"] > 0 else 0.0
+        rows.append({
+            "product_id": r["product_id"],
+            "product_name": r["product_name"],
+            "is_bom": r["is_bom"],
+            "sale_count": r["sale_count"],
+            "qty_total": r["qty_total"],
+            "revenue": round(r["revenue"], 2),
+            "cost": round(r["cost"], 2),
+            "margin": round(margin, 2),
+            "margin_pct": round(pct, 2),
+            "materials_used": [
+                {"name": k, "consumption": round(v["consumption"], 4), "unit": v["unit"]}
+                for k, v in sorted(r["materials_used"].items(), key=lambda x: -x[1]["consumption"])
+            ],
+        })
+    # Sort by revenue desc default (frontend bisa re-sort)
+    rows.sort(key=lambda x: x["revenue"], reverse=True)
+    total_revenue = sum(r["revenue"] for r in rows)
+    total_cost = sum(r["cost"] for r in rows)
+    total_margin = total_revenue - total_cost
+    return {
+        "period": period,
+        "period_start": start,
+        "period_end": end,
+        "total_products": len(rows),
+        "total_revenue": round(total_revenue, 2),
+        "total_cost": round(total_cost, 2),
+        "total_margin": round(total_margin, 2),
+        "total_margin_pct": round((total_margin / total_revenue * 100) if total_revenue > 0 else 0, 2),
+        "products": rows,
+    }
+
+
 @api_router.get("/reports/profit-loss/{period}")
 async def profit_loss_report(period: str, user: dict = Depends(require_super_admin)):
     """P&L bulanan: Revenue (orders selesai/aktif) − COGS − Waste − Gaji = Net Profit."""
