@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Users as UsersIcon, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays, UserCog, Menu, X as XIcon, Package, TrendingUp, ShoppingCart, ShoppingBag, Wallet } from "lucide-react";
+import { LayoutDashboard, Users as UsersIcon, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays, UserCog, Menu, X as XIcon, Package, TrendingUp, ShoppingCart, ShoppingBag, Wallet, Tags } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 
@@ -13,6 +13,7 @@ const ALL_NAV = [
   { to: "/sales", label: "Penjualan", icon: ShoppingBag, testId: "nav-sales", roles: ["super_admin"] },
   { to: "/cashbook", label: "Kas Operasional", icon: Wallet, testId: "nav-cashbook", roles: ["super_admin"] },
   { to: "/reports", label: "Laba/Rugi", icon: TrendingUp, testId: "nav-reports", roles: ["super_admin"] },
+  { to: "/categories", label: "Master Kategori", icon: Tags, testId: "nav-categories", roles: ["super_admin"] },
   { to: "/thr", label: "THR", icon: Gift, testId: "nav-thr", roles: ["super_admin"] },
   { to: "/leave", label: "Izin & Cuti", icon: CalendarDays, testId: "nav-leave", badgeKey: "pending", roles: ["super_admin", "hr_leave"] },
   { to: "/users", label: "Kelola User", icon: UserCog, testId: "nav-users", roles: ["super_admin"] },

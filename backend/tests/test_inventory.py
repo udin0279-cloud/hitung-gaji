@@ -75,10 +75,22 @@ class TestMaterials:
         assert mat["current_stock"] == 2.5
 
     def test_invalid_category(self, client):
+        """Updated after Master Kategori unified: category enum no longer enforced,
+        arbitrary category names are now allowed and auto-upserted."""
         r = client.post(f"{BASE_URL}/api/inventory/materials", json={
             "name": "TEST_Bad", "category": "invalid_cat", "unit": "roll",
         })
-        assert r.status_code == 400
+        assert r.status_code == 200, r.text
+        # cleanup
+        try:
+            client.delete(f"{BASE_URL}/api/inventory/materials/{r.json()['id']}")
+        except Exception:
+            pass
+        # empty category should still be rejected
+        r2 = client.post(f"{BASE_URL}/api/inventory/materials", json={
+            "name": "TEST_BadEmpty", "category": "  ", "unit": "roll",
+        })
+        assert r2.status_code == 400
 
     def test_invalid_unit(self, client):
         r = client.post(f"{BASE_URL}/api/inventory/materials", json={

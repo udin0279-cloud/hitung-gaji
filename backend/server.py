@@ -3221,31 +3221,35 @@ async def inv_list_materials(user: dict = Depends(require_super_admin)):
 
 @api_router.post("/inventory/materials")
 async def inv_create_material(payload: MaterialIn, user: dict = Depends(require_super_admin)):
-    if payload.category not in MATERIAL_CATEGORIES:
-        raise HTTPException(status_code=400, detail=f"Kategori tidak valid")
+    if not (payload.category or "").strip():
+        raise HTTPException(status_code=400, detail="Kategori wajib diisi")
     if payload.unit not in MATERIAL_UNITS:
         raise HTTPException(status_code=400, detail=f"Satuan tidak valid")
     doc = payload.model_dump()
+    doc["category"] = (doc.get("category") or "").strip()
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
     doc["updated_at"] = doc["created_at"]
     await db.materials.insert_one(doc)
+    await _upsert_category("material", doc["category"])
     doc.pop("_id", None)
     return doc
 
 
 @api_router.put("/inventory/materials/{material_id}")
 async def inv_update_material(material_id: str, payload: MaterialIn, user: dict = Depends(require_super_admin)):
-    if payload.category not in MATERIAL_CATEGORIES:
-        raise HTTPException(status_code=400, detail=f"Kategori tidak valid")
+    if not (payload.category or "").strip():
+        raise HTTPException(status_code=400, detail="Kategori wajib diisi")
     if payload.unit not in MATERIAL_UNITS:
         raise HTTPException(status_code=400, detail=f"Satuan tidak valid")
     existing = await db.materials.find_one({"id": material_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Bahan tidak ditemukan")
     update = payload.model_dump()
+    update["category"] = (update.get("category") or "").strip()
     update["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.materials.update_one({"id": material_id}, {"$set": update})
+    await _upsert_category("material", update["category"])
     return await db.materials.find_one({"id": material_id}, {"_id": 0})
 
 
@@ -3760,8 +3764,172 @@ class CustomerIn(BaseModel):
     address: Optional[str] = None
     npwp: Optional[str] = None
     contact_person: Optional[str] = None
+    category: Optional[str] = None
     notes: Optional[str] = None
     active: bool = True
+
+
+# ================================================================
+# ==================== MASTER KATEGORI (unified) ==================
+# ================================================================
+CATEGORY_TYPES = ("material", "product", "supplier", "customer")
+
+class CategoryIn(BaseModel):
+    type: str  # material | product | supplier | customer
+    name: str
+    description: Optional[str] = None
+    color: Optional[str] = None  # hex mis. #002FA7
+    active: bool = True
+
+
+async def _upsert_category(cat_type: str, name: Optional[str]):
+    """Idempotent upsert kategori. Dipanggil dari CRUD master lain."""
+    if not name or not name.strip() or cat_type not in CATEGORY_TYPES:
+        return
+    nm = name.strip()
+    # Case-insensitive dedupe
+    exists = await db.categories.find_one({"type": cat_type, "name": {"$regex": f"^{re.escape(nm)}$", "$options": "i"}})
+    if exists:
+        return
+    await db.categories.insert_one({
+        "id": str(uuid.uuid4()),
+        "type": cat_type,
+        "name": nm,
+        "description": None,
+        "color": None,
+        "active": True,
+        "auto_created": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+async def _backfill_categories():
+    """One-shot backfill: scan existing masters lalu upsert kategori-kategori yang belum ada."""
+    for src_coll, cat_type in [
+        ("materials", "material"),
+        ("products", "product"),
+        ("suppliers", "supplier"),
+        ("customers", "customer"),
+    ]:
+        try:
+            names = await db[src_coll].distinct("category")
+            for n in names or []:
+                if n and isinstance(n, str) and n.strip():
+                    await _upsert_category(cat_type, n.strip())
+        except Exception as ex:
+            logger.warning(f"Backfill category from {src_coll} failed: {ex}")
+
+
+@api_router.get("/categories")
+async def categories_list(user: dict = Depends(require_super_admin), type: Optional[str] = None, only_active: bool = False):
+    q: Dict[str, Any] = {}
+    if type:
+        if type not in CATEGORY_TYPES:
+            raise HTTPException(status_code=400, detail=f"Type harus salah satu: {CATEGORY_TYPES}")
+        q["type"] = type
+    if only_active:
+        q["active"] = {"$ne": False}
+    items = await db.categories.find(q, {"_id": 0}).sort([("type", 1), ("name", 1)]).to_list(length=5000)
+    return items
+
+
+@api_router.post("/categories/backfill")
+async def categories_backfill(user: dict = Depends(require_super_admin)):
+    before = await db.categories.count_documents({})
+    await _backfill_categories()
+    after = await db.categories.count_documents({})
+    return {"added": after - before, "total": after}
+
+
+@api_router.post("/categories")
+async def categories_create(payload: CategoryIn, user: dict = Depends(require_super_admin)):
+    if payload.type not in CATEGORY_TYPES:
+        raise HTTPException(status_code=400, detail=f"Type harus salah satu: {CATEGORY_TYPES}")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Nama kategori wajib")
+    exists = await db.categories.find_one({"type": payload.type, "name": {"$regex": f"^{re.escape(payload.name.strip())}$", "$options": "i"}})
+    if exists:
+        raise HTTPException(status_code=400, detail=f"Kategori '{payload.name}' sudah ada untuk tipe {payload.type}")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "type": payload.type,
+        "name": payload.name.strip(),
+        "description": (payload.description or "").strip() or None,
+        "color": (payload.color or "").strip() or None,
+        "active": payload.active,
+        "auto_created": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.categories.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/categories/{cat_id}")
+async def categories_update(cat_id: str, payload: CategoryIn, user: dict = Depends(require_super_admin)):
+    existing = await db.categories.find_one({"id": cat_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Kategori tidak ditemukan")
+    new_name = payload.name.strip()
+    if payload.type not in CATEGORY_TYPES:
+        raise HTTPException(status_code=400, detail=f"Type harus salah satu: {CATEGORY_TYPES}")
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Nama kategori wajib")
+    if new_name.lower() != (existing.get("name") or "").lower() or payload.type != existing.get("type"):
+        dup = await db.categories.find_one({
+            "type": payload.type,
+            "name": {"$regex": f"^{re.escape(new_name)}$", "$options": "i"},
+            "id": {"$ne": cat_id},
+        })
+        if dup:
+            raise HTTPException(status_code=400, detail=f"Kategori '{new_name}' sudah ada untuk tipe {payload.type}")
+    # Kalau rename, cascade update di collections terkait
+    old_name = existing.get("name") or ""
+    old_type = existing.get("type")
+    upd = {
+        "type": payload.type,
+        "name": new_name,
+        "description": (payload.description or "").strip() or None,
+        "color": (payload.color or "").strip() or None,
+        "active": payload.active,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.categories.update_one({"id": cat_id}, {"$set": upd})
+    # Cascade rename di master data terkait
+    if old_name and old_name != new_name and old_type == payload.type:
+        coll_map = {"material": "materials", "product": "products", "supplier": "suppliers", "customer": "customers"}
+        coll = coll_map.get(payload.type)
+        if coll:
+            await db[coll].update_many({"category": old_name}, {"$set": {"category": new_name}})
+    return await db.categories.find_one({"id": cat_id}, {"_id": 0})
+
+
+@api_router.delete("/categories/{cat_id}")
+async def categories_delete(cat_id: str, user: dict = Depends(require_super_admin)):
+    existing = await db.categories.find_one({"id": cat_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Kategori tidak ditemukan")
+    # Cek apakah masih dipakai
+    coll_map = {"material": "materials", "product": "products", "supplier": "suppliers", "customer": "customers"}
+    coll = coll_map.get(existing.get("type"))
+    if coll:
+        used = await db[coll].count_documents({"category": existing.get("name")})
+        if used > 0:
+            raise HTTPException(status_code=400, detail=f"Kategori masih dipakai di {used} data {existing.get('type')}. Non-aktifkan saja atau ubah data yang menggunakan.")
+    await db.categories.delete_one({"id": cat_id})
+    return {"ok": True}
+
+
+@api_router.get("/categories/stats")
+async def categories_stats(user: dict = Depends(require_super_admin)):
+    """Return count per type + usage per category."""
+    coll_map = {"material": "materials", "product": "products", "supplier": "suppliers", "customer": "customers"}
+    stats = {}
+    for t in CATEGORY_TYPES:
+        total = await db.categories.count_documents({"type": t})
+        active = await db.categories.count_documents({"type": t, "active": {"$ne": False}})
+        stats[t] = {"total": total, "active": active}
+    return stats
 
 
 @api_router.get("/inventory/customers")
@@ -3801,6 +3969,7 @@ async def cust_create(payload: CustomerIn, user: dict = Depends(require_super_ad
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
     await db.customers.insert_one(doc)
+    await _upsert_category("customer", doc.get("category"))
     doc.pop("_id", None)
     return doc
 
@@ -3814,6 +3983,7 @@ async def cust_update(customer_id: str, payload: CustomerIn, user: dict = Depend
     upd["name"] = payload.name.strip()
     upd["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.customers.update_one({"id": customer_id}, {"$set": upd})
+    await _upsert_category("customer", upd.get("category"))
     return await db.customers.find_one({"id": customer_id}, {"_id": 0})
 
 
@@ -4232,6 +4402,7 @@ class SupplierIn(BaseModel):
     address: Optional[str] = None
     email: Optional[str] = None
     contact_person: Optional[str] = None
+    category: Optional[str] = None
     notes: Optional[str] = None
     active: bool = True
 
@@ -4303,6 +4474,7 @@ async def sup_create(payload: SupplierIn, user: dict = Depends(require_super_adm
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
     await db.suppliers.insert_one(doc)
+    await _upsert_category("supplier", doc.get("category"))
     doc.pop("_id", None)
     return doc
 
@@ -4322,6 +4494,7 @@ async def sup_update(sid: str, payload: SupplierIn, user: dict = Depends(require
     upd["name"] = new_name
     upd["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.suppliers.update_one({"id": sid}, {"$set": upd})
+    await _upsert_category("supplier", upd.get("category"))
     return await db.suppliers.find_one({"id": sid}, {"_id": 0})
 
 
@@ -4713,6 +4886,7 @@ async def products_create(payload: ProductIn, user: dict = Depends(require_super
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.products.insert_one(doc)
+    await _upsert_category("product", doc.get("category"))
     doc.pop("_id", None)
     await _enrich_product(doc)
     return doc
@@ -4744,6 +4918,7 @@ async def products_update(product_id: str, payload: ProductIn, user: dict = Depe
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.products.update_one({"id": product_id}, {"$set": upd})
+    await _upsert_category("product", upd.get("category"))
     doc = await db.products.find_one({"id": product_id}, {"_id": 0})
     await _enrich_product(doc)
     return doc

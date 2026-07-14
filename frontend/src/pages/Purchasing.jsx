@@ -430,7 +430,7 @@ function POTab({ pos, suppliers, materials, reload }) {
 }
 
 /* ---------------- SUPPLIERS TAB ---------------- */
-const EMPTY_SUP = { name: "", phone: "", address: "", email: "", contact_person: "", notes: "", active: true };
+const EMPTY_SUP = { name: "", phone: "", address: "", email: "", contact_person: "", category: "", notes: "", active: true };
 
 function SuppliersTab({ suppliers, reload }) {
   const [open, setOpen] = useState(false);
@@ -438,6 +438,13 @@ function SuppliersTab({ suppliers, reload }) {
   const [form, setForm] = useState(EMPTY_SUP);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+  const [categories, setCategories] = useState([]);
+
+  useEffect(() => {
+    api.get("/categories", { params: { type: "supplier", only_active: true } })
+      .then((r) => setCategories(r.data))
+      .catch(() => {});
+  }, []);
 
   const filtered = suppliers.filter((s) => {
     if (!search) return true;
@@ -556,6 +563,12 @@ function SuppliersTab({ suppliers, reload }) {
                   <input data-testid="sup-email" type="email" value={form.email || ""} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} />
                 </Field>
               </div>
+              <Field label="Kategori (Opsional)" hint="Distributor, Lokal, Impor, dll. — ketik baru = auto-simpan ke Master Kategori">
+                <input data-testid="sup-category" value={form.category || ""} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} list="sup-cat-list" className={inputCls} placeholder="Distributor / Lokal / Impor" />
+                <datalist id="sup-cat-list">
+                  {categories.map((c) => <option key={c.id} value={c.name} />)}
+                </datalist>
+              </Field>
               <Field label="Alamat">
                 <textarea data-testid="sup-address" value={form.address || ""} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} className={inputCls} rows={2} />
               </Field>

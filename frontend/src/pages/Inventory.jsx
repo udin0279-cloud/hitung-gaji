@@ -43,12 +43,13 @@ export default function Inventory() {
   const [adjusts, setAdjusts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState({ material: [], product: [], customer: [] });
   const [loading, setLoading] = useState(true);
 
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [m, s, si, w, o, adj, c, p] = await Promise.all([
+      const [m, s, si, w, o, adj, c, p, cats] = await Promise.all([
         api.get("/inventory/materials"),
         api.get("/inventory/stats"),
         api.get("/inventory/stock-in"),
@@ -57,6 +58,7 @@ export default function Inventory() {
         api.get("/inventory/stock-adjust"),
         api.get("/inventory/customers"),
         api.get("/products"),
+        api.get("/categories", { params: { only_active: true } }),
       ]);
       setMaterials(m.data);
       setStats(s.data);
@@ -66,6 +68,12 @@ export default function Inventory() {
       setAdjusts(adj.data);
       setCustomers(c.data);
       setProducts(p.data);
+      // Group categories by type
+      const grouped = { material: [], product: [], customer: [] };
+      for (const cat of cats.data) {
+        if (grouped[cat.type]) grouped[cat.type].push(cat);
+      }
+      setCategories(grouped);
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
     } finally {
@@ -126,9 +134,9 @@ export default function Inventory() {
         {loading ? (
           <div className="py-12 text-center text-zinc-400 font-mono text-xs">Memuat…</div>
         ) : tab === "materials" ? (
-          <MaterialsTab materials={materials} reload={loadAll} />
+          <MaterialsTab materials={materials} categories={categories.material} reload={loadAll} />
         ) : tab === "products" ? (
-          <ProductsTab products={products} materials={materials} reload={loadAll} />
+          <ProductsTab products={products} materials={materials} categories={categories.product} reload={loadAll} />
         ) : tab === "stock-in" ? (
           <StockInTab materials={materials} stockIn={stockIn} reload={loadAll} />
         ) : tab === "waste" ? (
@@ -136,7 +144,7 @@ export default function Inventory() {
         ) : tab === "orders" ? (
           <OrdersTab materials={materials} orders={orders} customers={customers} reload={loadAll} />
         ) : tab === "customers" ? (
-          <CustomersTab customers={customers} reload={loadAll} />
+          <CustomersTab customers={customers} categories={categories.customer} reload={loadAll} />
         ) : (
           <OpnameTab materials={materials} adjusts={adjusts} reload={loadAll} />
         )}
@@ -183,7 +191,7 @@ const EMPTY_MAT = {
   supplier_default: "", notes: "", active: true,
 };
 
-function MaterialsTab({ materials, reload }) {
+function MaterialsTab({ materials, categories = [], reload }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_MAT);
@@ -250,7 +258,9 @@ function MaterialsTab({ materials, reload }) {
           </div>
           <select data-testid="material-cat-filter" value={catFilter} onChange={(e) => setCatFilter(e.target.value)} className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm">
             <option value="all">Semua Kategori</option>
-            {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            {(categories.length > 0 ? categories.map((c) => ({ value: c.name, label: c.name })) : CATEGORIES).map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
           </select>
         </div>
         <button data-testid="add-material-button" onClick={openCreate} className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2">
@@ -312,14 +322,18 @@ function MaterialsTab({ materials, reload }) {
         </table>
       </div>
 
-      {open && <MaterialForm editing={editing} form={form} setForm={setForm} onClose={close} onSubmit={submit} saving={saving} />}
+      {open && <MaterialForm editing={editing} form={form} setForm={setForm} categories={categories} onClose={close} onSubmit={submit} saving={saving} />}
     </div>
   );
 }
 
-function MaterialForm({ editing, form, setForm, onClose, onSubmit, saving }) {
+function MaterialForm({ editing, form, setForm, categories = [], onClose, onSubmit, saving }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setBool = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.checked }));
+  // Fallback jika belum ada master categories, gunakan default 4 kategori
+  const catOptions = categories.length > 0
+    ? categories.map((c) => c.name)
+    : ["flexy", "sticker", "tinta", "lainnya"];
   return (
     <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4 no-print">
       <div className="bg-white border border-zinc-300 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -335,10 +349,19 @@ function MaterialForm({ editing, form, setForm, onClose, onSubmit, saving }) {
             <Field label="Nama Bahan">
               <input data-testid="mat-name" required value={form.name} onChange={set("name")} className={inputCls} placeholder="Contoh: Flexy Frontlite 3m" />
             </Field>
-            <Field label="Kategori">
-              <select data-testid="mat-category" value={form.category} onChange={set("category")} className={inputCls}>
-                {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-              </select>
+            <Field label="Kategori" hint="Pilih dari daftar atau ketik baru — otomatis tersimpan ke Master Kategori">
+              <input
+                data-testid="mat-category"
+                required
+                value={form.category}
+                onChange={set("category")}
+                list="mat-cat-list"
+                className={inputCls}
+                placeholder="Flexy / Sticker / Tinta / …"
+              />
+              <datalist id="mat-cat-list">
+                {catOptions.map((c) => <option key={c} value={c} />)}
+              </datalist>
             </Field>
             <Field label="Satuan">
               <select data-testid="mat-unit" value={form.unit} onChange={set("unit")} className={inputCls}>
@@ -1139,9 +1162,9 @@ function OpnameTab({ materials, adjusts, reload }) {
 
 
 /* ---------------- CUSTOMERS TAB ---------------- */
-const EMPTY_CUST = { name: "", phone: "", email: "", address: "", npwp: "", contact_person: "", notes: "", active: true };
+const EMPTY_CUST = { name: "", phone: "", email: "", address: "", npwp: "", contact_person: "", category: "", notes: "", active: true };
 
-function CustomersTab({ customers, reload }) {
+function CustomersTab({ customers, categories = [], reload }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_CUST);
@@ -1282,6 +1305,12 @@ function CustomersTab({ customers, reload }) {
                 </Field>
                 <Field label="NPWP (Opsional)">
                   <input data-testid="cust-npwp" value={form.npwp || ""} onChange={(e) => setForm((f) => ({ ...f, npwp: e.target.value }))} className={inputCls + " font-mono"} />
+                </Field>
+                <Field label="Kategori (Opsional)">
+                  <input data-testid="cust-category" value={form.category || ""} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} list="cust-cat-list" className={inputCls} placeholder="Ritel / Corporate / Reseller" />
+                  <datalist id="cust-cat-list">
+                    {categories.map((c) => <option key={c.id} value={c.name} />)}
+                  </datalist>
                 </Field>
                 <Field label="Alamat">
                   <input data-testid="cust-address" value={form.address || ""} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} className={inputCls} />
@@ -1560,7 +1589,7 @@ const EMPTY_PRODUCT = {
   active: true,
 };
 
-function ProductsTab({ products, materials, reload }) {
+function ProductsTab({ products, materials, categories = [], reload }) {
   const [openForm, setOpenForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_PRODUCT);
@@ -1707,7 +1736,10 @@ function ProductsTab({ products, materials, reload }) {
                   <input data-testid="prod-code" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} className={inputCls + " font-mono"} placeholder="SLY-01" />
                 </Field>
                 <Field label="Kategori (Opsional)">
-                  <input data-testid="prod-category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls} placeholder="Konveksi / Cetak / dll" />
+                  <input data-testid="prod-category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} list="prod-cat-list" className={inputCls} placeholder="Konveksi / Cetak / dll" />
+                  <datalist id="prod-cat-list">
+                    {categories.map((c) => <option key={c.id} value={c.name} />)}
+                  </datalist>
                 </Field>
               </div>
               <Field label="Nama Produk">
