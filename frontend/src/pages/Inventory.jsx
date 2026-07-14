@@ -1585,6 +1585,7 @@ const FORMULA_LABEL = Object.fromEntries(FORMULA_OPTIONS.map((f) => [f.value, f.
 const EMPTY_PRODUCT = {
   code: "", name: "", category: "",
   pricing_mode: "fixed", unit_price: 0,
+  purchase_price: 0, current_stock: 0,
   components: [{ material_id: "", formula: "per_qty", quantity: 1 }],
   active: true,
 };
@@ -1602,6 +1603,10 @@ function ProductsTab({ products, materials, categories = [], reload }) {
     return p.name.toLowerCase().includes(q) || (p.code || "").toLowerCase().includes(q) || (p.category || "").toLowerCase().includes(q);
   });
 
+  const totalStockValue = products.reduce((s, p) => s + Number(p.current_stock || 0) * Number(p.purchase_price || 0), 0);
+  const totalProducts = products.length;
+  const withStock = products.filter((p) => Number(p.current_stock || 0) > 0).length;
+
   const openCreate = () => { setEditing(null); setForm(EMPTY_PRODUCT); setOpenForm(true); };
   const openEdit = (p) => {
     setEditing(p);
@@ -1611,6 +1616,8 @@ function ProductsTab({ products, materials, categories = [], reload }) {
       category: p.category || "",
       pricing_mode: p.pricing_mode || "fixed",
       unit_price: p.unit_price || 0,
+      purchase_price: p.purchase_price || 0,
+      current_stock: p.current_stock || 0,
       components: (p.components || []).map((c) => ({ material_id: c.material_id, formula: c.formula, quantity: c.quantity })),
       active: p.active !== false,
     });
@@ -1635,6 +1642,8 @@ function ProductsTab({ products, materials, categories = [], reload }) {
       const payload = {
         ...form,
         unit_price: Number(form.unit_price) || 0,
+        purchase_price: Number(form.purchase_price) || 0,
+        current_stock: Number(form.current_stock) || 0,
         components: form.components.map((c) => ({
           material_id: c.material_id, formula: c.formula, quantity: Number(c.quantity),
         })),
@@ -1656,6 +1665,23 @@ function ProductsTab({ products, materials, categories = [], reload }) {
 
   return (
     <div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-zinc-200 border border-zinc-200 mb-4">
+        <div className="bg-white p-4">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Total Produk</div>
+          <div data-testid="products-total" className="font-mono text-2xl font-bold text-zinc-900 mt-1">{totalProducts}</div>
+          <div className="text-[10px] text-zinc-500 font-mono">{withStock} dengan stok</div>
+        </div>
+        <div className="bg-white p-4">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Nilai Stok Produk</div>
+          <div data-testid="products-stock-value" className="font-mono text-2xl font-bold text-[#002FA7] mt-1">{formatIDR(totalStockValue)}</div>
+          <div className="text-[10px] text-zinc-500 font-mono">Σ (Stok × Harga Beli)</div>
+        </div>
+        <div className="bg-white p-4">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Produk Aktif</div>
+          <div className="font-mono text-2xl font-bold text-[#008A00] mt-1">{products.filter((p) => p.active !== false).length}</div>
+          <div className="text-[10px] text-zinc-500 font-mono">bisa dipilih di Kasir</div>
+        </div>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="relative flex-1 max-w-md">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
@@ -1672,7 +1698,10 @@ function ProductsTab({ products, materials, categories = [], reload }) {
             <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
               <th className="px-3 py-3">Kode / Nama</th>
               <th className="px-3 py-3">Kategori</th>
-              <th className="px-3 py-3">Harga</th>
+              <th className="px-3 py-3 text-right">Stok</th>
+              <th className="px-3 py-3 text-right">Harga Beli</th>
+              <th className="px-3 py-3 text-right">Harga Jual</th>
+              <th className="px-3 py-3 text-right">Nilai Stok</th>
               <th className="px-3 py-3">Komposisi Bahan</th>
               <th className="px-3 py-3">Status</th>
               <th className="px-3 py-3 text-right">Aksi</th>
@@ -1680,42 +1709,60 @@ function ProductsTab({ products, materials, categories = [], reload }) {
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada produk. Klik &ldquo;Tambah Produk&rdquo; untuk buat produk seperti Slayer, Bendera, dll dengan multi-bahan.</td></tr>
+              <tr><td colSpan={9} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada produk. Klik &ldquo;Tambah Produk&rdquo; untuk buat produk seperti Slayer, Bendera, dll dengan multi-bahan.</td></tr>
             )}
-            {filtered.map((p) => (
-              <tr key={p.id} data-testid="product-row" className="border-b border-zinc-100 hover:bg-zinc-50/80 align-top">
-                <td className="px-3 py-3">
-                  {p.code && <div className="font-mono text-[10px] text-zinc-500">{p.code}</div>}
-                  <div className="font-semibold text-zinc-900">{p.name}</div>
-                </td>
-                <td className="px-3 py-3 text-xs text-zinc-500">{p.category || "—"}</td>
-                <td className="px-3 py-3 font-mono text-xs">
-                  <div className="font-bold text-zinc-900">{formatIDR(p.unit_price)}</div>
-                  <div className="text-[10px] text-zinc-500">{p.pricing_mode === "per_area" ? "per m²" : "per pcs"}</div>
-                </td>
-                <td className="px-3 py-3">
-                  <div className="space-y-1">
-                    {(p.components || []).map((c, i) => (
-                      <div key={i} className="text-xs">
-                        <span className="font-medium text-zinc-800">{c.material_name || "—"}</span>
-                        <span className="text-[10px] text-zinc-500 font-mono ml-2">{FORMULA_LABEL[c.formula] || c.formula} × {c.quantity} {c.material_unit || ""}</span>
-                      </div>
-                    ))}
-                  </div>
-                </td>
-                <td className="px-3 py-3">
-                  <span className={`text-[10px] font-bold uppercase tracking-widest ${p.active !== false ? "text-[#008A00]" : "text-zinc-400"}`}>
-                    {p.active !== false ? "Aktif" : "Nonaktif"}
-                  </span>
-                </td>
-                <td className="px-3 py-3">
-                  <div className="flex justify-end gap-1">
-                    <button data-testid="edit-product-button" onClick={() => openEdit(p)} className="p-1.5 hover:bg-zinc-100 text-zinc-700"><Pencil className="w-3.5 h-3.5" /></button>
-                    <button data-testid="delete-product-button" onClick={() => remove(p)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]"><Trash2 className="w-3.5 h-3.5" /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {filtered.map((p) => {
+              const stockValue = Number(p.current_stock || 0) * Number(p.purchase_price || 0);
+              return (
+                <tr key={p.id} data-testid="product-row" className="border-b border-zinc-100 hover:bg-zinc-50/80 align-top">
+                  <td className="px-3 py-3">
+                    {p.code && <div className="font-mono text-[10px] text-zinc-500">{p.code}</div>}
+                    <div className="font-semibold text-zinc-900">{p.name}</div>
+                  </td>
+                  <td className="px-3 py-3 text-xs text-zinc-500">{p.category || "—"}</td>
+                  <td className="px-3 py-3 font-mono text-xs text-right">
+                    <span className={`font-bold ${Number(p.current_stock || 0) <= 0 ? "text-zinc-400" : "text-zinc-900"}`}>
+                      {formatNum(p.current_stock || 0)}
+                    </span>
+                    <div className="text-[9px] text-zinc-400">{p.pricing_mode === "per_area" ? "m²" : "pcs"}</div>
+                  </td>
+                  <td className="px-3 py-3 font-mono text-xs text-right">
+                    <div className="text-zinc-700">{formatIDR(p.purchase_price || 0)}</div>
+                    {p.bom_cost > 0 && (
+                      <div className="text-[9px] text-zinc-400" title="Estimasi modal dari BOM">BOM: {formatIDR(p.bom_cost)}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-3 font-mono text-xs text-right">
+                    <div className="font-bold text-zinc-900">{formatIDR(p.unit_price)}</div>
+                    <div className="text-[9px] text-zinc-500">{p.pricing_mode === "per_area" ? "per m²" : "per pcs"}</div>
+                  </td>
+                  <td className="px-3 py-3 font-mono text-xs text-right font-bold text-[#002FA7]">
+                    {formatIDR(stockValue)}
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="space-y-1">
+                      {(p.components || []).map((c, i) => (
+                        <div key={i} className="text-xs">
+                          <span className="font-medium text-zinc-800">{c.material_name || "—"}</span>
+                          <span className="text-[10px] text-zinc-500 font-mono ml-2">{FORMULA_LABEL[c.formula] || c.formula} × {c.quantity} {c.material_unit || ""}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <span className={`text-[10px] font-bold uppercase tracking-widest ${p.active !== false ? "text-[#008A00]" : "text-zinc-400"}`}>
+                      {p.active !== false ? "Aktif" : "Nonaktif"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex justify-end gap-1">
+                      <button data-testid="edit-product-button" onClick={() => openEdit(p)} className="p-1.5 hover:bg-zinc-100 text-zinc-700"><Pencil className="w-3.5 h-3.5" /></button>
+                      <button data-testid="delete-product-button" onClick={() => remove(p)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1752,8 +1799,43 @@ function ProductsTab({ products, materials, categories = [], reload }) {
                     <option value="per_area">Per m² (untuk produk berbasis luas)</option>
                   </select>
                 </Field>
-                <Field label={form.pricing_mode === "per_area" ? "Harga per m² (Rp)" : "Harga per pcs (Rp)"}>
+                <Field label={form.pricing_mode === "per_area" ? "Harga Jual per m² (Rp)" : "Harga Jual per pcs (Rp)"}>
                   <input required data-testid="prod-price" type="number" min="0" step="0.01" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} className={inputCls + " font-mono font-bold"} />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="Stok Awal" hint={form.pricing_mode === "per_area" ? "dalam m²" : "dalam pcs"}>
+                  <input data-testid="prod-stock" type="number" min="0" step="0.01" value={form.current_stock} onChange={(e) => setForm({ ...form, current_stock: e.target.value })} className={inputCls + " font-mono"} />
+                </Field>
+                <Field label="Harga Beli / Modal (Rp)" hint="Modal per unit produk">
+                  <input data-testid="prod-purchase-price" type="number" min="0" step="0.01" value={form.purchase_price} onChange={(e) => setForm({ ...form, purchase_price: e.target.value })} className={inputCls + " font-mono"} />
+                  {(() => {
+                    // Suggest dari BOM
+                    const bomCost = form.components.reduce((sum, c) => {
+                      const mat = materials.find((m) => m.id === c.material_id);
+                      const buy = mat ? Number(mat.purchase_price || 0) : 0;
+                      return sum + (Number(c.quantity || 0) * buy);
+                    }, 0);
+                    if (bomCost > 0 && Number(form.purchase_price || 0) !== Math.round(bomCost)) {
+                      return (
+                        <button
+                          type="button"
+                          data-testid="use-bom-cost"
+                          onClick={() => setForm({ ...form, purchase_price: Math.round(bomCost) })}
+                          className="text-[10px] text-[#002FA7] hover:underline font-semibold mt-1 font-mono"
+                        >
+                          ↻ Pakai modal BOM: {formatIDR(bomCost)}
+                        </button>
+                      );
+                    }
+                    return null;
+                  })()}
+                </Field>
+                <Field label="Nilai Stok (auto)" hint="= Stok × Harga Beli">
+                  <div data-testid="prod-stock-value" className="rounded-none border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-mono font-bold text-[#002FA7]">
+                    {formatIDR((Number(form.current_stock) || 0) * (Number(form.purchase_price) || 0))}
+                  </div>
                 </Field>
               </div>
 

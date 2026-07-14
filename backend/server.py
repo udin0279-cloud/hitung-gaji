@@ -4788,7 +4788,9 @@ class ProductIn(BaseModel):
     name: str
     category: Optional[str] = None
     pricing_mode: str = "fixed"  # "fixed" (per unit) | "per_area" (per m²)
-    unit_price: float = 0
+    unit_price: float = 0  # harga jual
+    purchase_price: float = 0  # harga beli / modal per unit (opsional, bisa auto dari BOM)
+    current_stock: float = 0  # stok produk jadi (untuk finished goods yang di-stok)
     components: List[ProductComponent] = []
     active: bool = True
 
@@ -4798,20 +4800,35 @@ def _product_requires_dimensions(components: List[Dict[str, Any]]) -> bool:
 
 
 async def _enrich_product(p: Dict[str, Any]) -> Dict[str, Any]:
-    """Isi snapshot material_name & material_unit ke tiap component."""
+    """Isi snapshot material_name & material_unit ke tiap component. Compute bom_cost & stock_value."""
     if not p:
         return p
+    bom_cost = 0.0
     for c in p.get("components", []):
-        mat = await db.materials.find_one({"id": c.get("material_id")}, {"_id": 0, "name": 1, "unit": 1, "current_stock": 1})
+        mat = await db.materials.find_one({"id": c.get("material_id")}, {"_id": 0, "name": 1, "unit": 1, "current_stock": 1, "purchase_price": 1})
         if mat:
             c["material_name"] = mat.get("name")
             c["material_unit"] = mat.get("unit")
             c["material_stock"] = mat.get("current_stock")
+            c["material_purchase_price"] = mat.get("purchase_price", 0)
         else:
             c["material_name"] = "(bahan dihapus)"
             c["material_unit"] = ""
             c["material_stock"] = 0
+            c["material_purchase_price"] = 0
+        # BOM cost per unit produk (untuk formula per_qty & fixed cukup faktor × harga beli)
+        # Untuk area/length butuh dimensi standard — kita hitung per unit dasar (asumsi 1m²/1m)
+        factor = float(c.get("quantity", 1) or 1)
+        buy = float(c.get("material_purchase_price", 0) or 0)
+        formula = c.get("formula", "")
+        if formula in ("fixed", "per_qty"):
+            bom_cost += factor * buy
+        elif formula in ("area", "length"):
+            # Cost per 1m² atau 1m (sebagai reference); pengguna bisa hitung berdasar ukuran actual
+            bom_cost += factor * buy
     p["requires_dimensions"] = _product_requires_dimensions(p.get("components", []))
+    p["bom_cost"] = round(bom_cost, 2)  # modal bahan per unit (reference)
+    p["stock_value"] = round(float(p.get("current_stock", 0) or 0) * float(p.get("purchase_price", 0) or 0), 2)
     return p
 
 
@@ -4881,6 +4898,8 @@ async def products_create(payload: ProductIn, user: dict = Depends(require_super
         "category": (payload.category or "").strip() or None,
         "pricing_mode": payload.pricing_mode,
         "unit_price": round(float(payload.unit_price), 2),
+        "purchase_price": round(float(payload.purchase_price or 0), 2),
+        "current_stock": round(float(payload.current_stock or 0), 4),
         "components": [c.model_dump() for c in payload.components],
         "active": payload.active,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -4913,6 +4932,8 @@ async def products_update(product_id: str, payload: ProductIn, user: dict = Depe
         "category": (payload.category or "").strip() or None,
         "pricing_mode": payload.pricing_mode,
         "unit_price": round(float(payload.unit_price), 2),
+        "purchase_price": round(float(payload.purchase_price or 0), 2),
+        "current_stock": round(float(payload.current_stock or 0), 4),
         "components": [c.model_dump() for c in payload.components],
         "active": payload.active,
         "updated_at": datetime.now(timezone.utc).isoformat(),

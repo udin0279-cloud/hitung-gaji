@@ -1,0 +1,52 @@
+{
+  "summary": "Tested Master Produk finance extension (current_stock, purchase_price, bom_cost, stock_value). Backend: 7/7 new tests + 62 regression tests PASSED. Frontend: 3 stat cards, 4 new columns, form modal with 3 new fields, and quick-apply BOM cost button all working correctly. Sample scenario verified end-to-end: product with stock=25, purchase_price=15000 → stock_value=Rp 375.000; BOM component (Kertas ArtPaper × 1 @ Rp 2000) → bom_cost=Rp 2.000.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Master Produk form modal", "issues": ["Pre-existing: React hydration warning '<span> cannot be a child of <option>' from visual editor wrapper (x-source-path=\"name\") in comp-mat-* selects at line 1860. Unrelated to this feature — cosmetic dev-mode warning only. Consider using data-attribute markers instead of span wrappers, or suppress on <option> elements."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_products_finance.py",
+    "/app/test_reports/pytest/products_finance.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Inventory.jsx is 1917 lines — approaching split threshold. ProductsTab (~350 lines) could be extracted to its own file for maintainability.",
+    "Backend ProductIn does not validate current_stock/purchase_price to be non-negative. Per user, negative is accepted (results in absurd stock_value but no error) — this is an acceptable design choice per spec, but consider Pydantic Field(ge=0) for safety.",
+    "Frontend use-bom-cost comparison uses Math.round(bomCost) — for BOM cost with fractional cents (e.g., 2000.50), the button won't hide after applying because it applies Math.round(bomCost)=2001 but comparison is on stored 2000.50. In practice bom_cost is currency (whole IDR), so acceptable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_products_finance.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7 new + 62/62 regression = 69/69)",
+    "frontend": "100% (all 11 UI checkpoints pass)"
+  },
+  "test_credentials": "admin@payroll.id / admin123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Test fixtures create/cleanup TEST_PF_* prefixed materials, products, and sales — self-cleanup via zzz_cleanup test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Master Produk finance fields (current_stock, purchase_price, bom_cost, stock_value) fully working. bom_cost enrichment computed on both list & get endpoints. Sale creation does NOT auto-decrement product.current_stock (verified) — only material stock decrements via BOM. Frontend has 3 stat cards (products-total, products-stock-value, plus Produk Aktif count), 4 new table cols, and quick-apply 'use-bom-cost' button that applies bom_cost as purchase_price and hides after applied.",
+  "verified_scenarios": [
+    "POST /api/products with {current_stock:100, purchase_price:5000} → persists; bom_cost=2000 (from 1×2000 kertas); stock_value=500000 ✓",
+    "PUT /api/products/{id} with {current_stock:25, purchase_price:15000} → stock_value=375000 ✓",
+    "Backward compat: POST without current_stock/purchase_price → both default 0 ✓",
+    "GET /api/products returns enriched bom_cost & stock_value for all items ✓",
+    "GET /api/products/{id} returns component.material_purchase_price ✓",
+    "Regression: sale creation does NOT decrement product.current_stock (25 stays 25) ✓",
+    "Regression: material stock DOES decrement on sale (per_qty × 5 = 5) ✓",
+    "Frontend: 3 stat cards visible with correct values (Total=1, Nilai Stok=Rp 375.000, Aktif=1) ✓",
+    "Frontend: 4 new columns (Stok, Harga Beli, Harga Jual, Nilai Stok) ✓",
+    "Frontend: form auto-computes prod-stock-value = stock × purchase_price ✓",
+    "Frontend: 'BOM: Rp 2.000' hint shows under Harga Beli when bom_cost > 0 ✓",
+    "Frontend: use-bom-cost button appears when pp != bom_cost, applies bom_cost & hides after ✓",
+    "Regression: Kasir/Penjualan page loads normally with new fields present in products ✓",
+    "Regression: category auto-upsert on POST/PUT product still works (test_categories.py 100% pass) ✓"
+  ]
+}
