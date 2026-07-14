@@ -500,3 +500,48 @@ Test file: `/app/backend/tests/test_sales.py`
 
 ### Aplikasi Sekarang (Full ERP)
 👥 HR & Payroll · 📦 Inventory · 🛒 Purchasing · 💵 Sales/POS · 💰 Kas Operasional (NEW) · 📊 Laba/Rugi + Trend YoY · 📱 WhatsApp Broadcast · 🏢 Multi-tenant
+
+---
+
+## Session Update — Feb 2026 (Master Produk BOM)
+
+### Fitur Baru: Master Produk dengan BOM (Bill of Materials)
+- **Backend**: 
+  - Model `ProductComponent` + `ProductIn` dengan formula: `fixed`, `per_qty`, `area`, `length`
+  - Endpoint `GET/POST/PUT/DELETE /api/products` — CRUD lengkap
+  - Helper `_compute_component_consumption(formula, factor, L, W, qty)` — hitung konsumsi per komponen
+  - Update `POST /api/sales` support DUAL MODE: `product_id` (BOM) atau `material_id` (legacy)
+  - Update `DELETE /api/sales/{id}` — rollback multi-material dari `items.components`
+  - Update receipt HTML — tampil breakdown "Bahan: Kertas 10pcs + Kain 0.45m²"
+
+- **Frontend**:
+  - Tab baru "Master Produk" di halaman Inventory (sebelum Barang Masuk)
+  - Form Produk: kode, kategori, nama, pricing_mode (fixed/per_area), unit_price, komponen dinamis (add/remove) dengan formula & faktor
+  - Preview komposisi di tabel: multi-baris "Bahan × Formula × Faktor"
+  - Sales.jsx: dropdown gabungan dengan OPTGROUP "Produk (Multi-Bahan/BOM)" vs "Bahan Langsung"
+  - Field P×L conditional: tampil kalau formula produk butuh area/length, sembunyi kalau tidak
+  - Live BOM breakdown per item: menampilkan konsumsi tiap bahan + status stok (✓/✗)
+  - Stock validation real-time (frontend + backend agregat)
+
+- **Testing** (iteration_21.json): 
+  - **63/63 pytest lulus** (23 new BOM + 40 regression)
+  - Full E2E frontend: Master Produk tab, Sales OPTGROUP picker, live multi-material breakdown, backward compat legacy sales
+
+### Contoh Konfigurasi Produk
+- **Slayer** (fixed pricing Rp 25.000/pcs, komponen: 1 lembar Kertas per_qty + P×L Kain area)
+- **Bendera** (fixed pricing, komponen: 1 lembar Kertas per_qty + P×L Kain area + P panjang Tali length)
+- **Kaos Sablon** (fixed pricing, komponen: 1 Kaos per_qty + fixed 50ml Tinta)
+
+### Total Test Reports
+`iteration_11.json` → `iteration_21.json` (11 iterasi testing dengan >200 test cases lulus)
+
+### Backlog Setelah Ini
+- 🟢 P1: Scheduled Auto-Send Payslip (APScheduler)
+- 🟢 P2: Auto-add Lembur approved ke Payroll
+- 🟢 P2: Cuti Tahunan Kuota per Karyawan  
+- 🟢 P2: Notif WA Izin/Cuti approved (Fonnte)
+- 🟡 P2: Halaman Daftar Pinjaman Aktif
+- 🟡 P2: Audit Log HR
+- 🟡 P3: Halaman Log Broadcast WhatsApp
+- 🟡 P3: Notif WA PO tertunda / stok menipis
+- 🔴 CRITICAL: Refactor `server.py` (>5500 baris) → pecah ke `/app/backend/routers/*.py`
