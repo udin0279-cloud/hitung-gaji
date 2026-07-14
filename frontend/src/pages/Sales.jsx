@@ -269,6 +269,7 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
         const cons = computeConsumption(c.formula, c.quantity, L, W, Q);
         const mat = materials.find((m) => m.id === c.material_id);
         const stock = mat ? Number(mat.current_stock || 0) : 0;
+        const buy = mat ? Number(mat.purchase_price || 0) : 0;
         return {
           material_id: c.material_id,
           name: mat?.name || c.material_name || "-",
@@ -277,11 +278,14 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
           consumption: cons,
           stock,
           ok: cons <= stock,
+          buy_price: buy,
+          cost: cons * buy,
         };
       });
       stock_ok = consumptions.every((c) => c.ok);
     } else if (material) {
       subtotal = area_total * Number(it.unit_price || 0);
+      const buy = Number(material.purchase_price || 0);
       consumptions = [{
         material_id: it.material_id,
         name: material.name,
@@ -290,14 +294,25 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
         consumption: area_total,
         stock: Number(material.current_stock || 0),
         ok: area_total <= Number(material.current_stock || 0),
+        buy_price: buy,
+        cost: area_total * buy,
       }];
       stock_ok = consumptions[0].ok;
     }
 
-    return { it, product, material, area, area_total, subtotal, consumptions, stock_ok, requires_LW, requires_L_only };
+    const cost = consumptions.reduce((s, c) => s + (c.cost || 0), 0);
+    const margin = subtotal - cost;
+    const margin_pct = subtotal > 0 ? (margin / subtotal) * 100 : 0;
+
+    return { it, product, material, area, area_total, subtotal, cost, margin, margin_pct, consumptions, stock_ok, requires_LW, requires_L_only };
   });
   const subtotal = rows.reduce((s, r) => s + r.subtotal, 0);
+  const total_cost = rows.reduce((s, r) => s + r.cost, 0);
+  const gross_margin = subtotal - total_cost;
+  const gross_margin_pct = subtotal > 0 ? (gross_margin / subtotal) * 100 : 0;
   const total = Math.max(subtotal - Number(discount || 0), 0);
+  const net_margin = total - total_cost;
+  const net_margin_pct = total > 0 ? (net_margin / total) * 100 : 0;
   const change = Math.max(Number(cashPaid || 0) - total, 0);
   const canSubmit = items.length > 0 && rows.every((r) => {
     if (!r.it.picker_id) return false;
@@ -478,8 +493,13 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
                     {/* Bahan consumption breakdown */}
                     {it.picker_id && r.consumptions.length > 0 && (
                       <div data-testid={`sale-item-bom-${idx}`} className="text-[10px] text-zinc-600 font-mono border-t border-zinc-200 pt-2 mt-1">
-                        <div className="font-bold uppercase tracking-widest text-zinc-500 mb-1">
-                          {isProduct ? `BOM (${r.consumptions.length} bahan)` : "Konsumsi Bahan"}:
+                        <div className="font-bold uppercase tracking-widest text-zinc-500 mb-1 flex items-center justify-between">
+                          <span>{isProduct ? `BOM (${r.consumptions.length} bahan)` : "Konsumsi Bahan"}:</span>
+                          {r.subtotal > 0 && r.cost > 0 && (
+                            <span data-testid={`sale-item-margin-${idx}`} className={`px-1.5 py-0.5 ${r.margin >= 0 ? "bg-[#008A00]/10 text-[#008A00]" : "bg-[#E81123]/10 text-[#E81123]"}`}>
+                              Modal {formatIDR(r.cost)} · Margin {formatIDR(r.margin)} ({r.margin_pct.toFixed(1)}%)
+                            </span>
+                          )}
                         </div>
                         <div className="space-y-0.5">
                           {r.consumptions.map((c, ci) => (
@@ -518,7 +538,30 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
               <div className="border-t border-white/30 pt-2 mt-2">
                 <Row label="TOTAL" value={formatIDR(total)} bold big />
               </div>
-              <Row label="Bayar" value={formatIDR(cashPaid)} />
+              {/* Estimator Order — margin/keuntungan */}
+              {total_cost > 0 && (
+                <div className="border-t border-white/20 mt-3 pt-2 space-y-1" data-testid="sale-estimator">
+                  <div className="text-[9px] uppercase tracking-widest text-white/50 font-bold mb-1">Estimator Order (Modal & Keuntungan)</div>
+                  <Row label="Modal Bahan" value={formatIDR(total_cost)} muted />
+                  <Row
+                    label="Margin Kotor"
+                    value={`${formatIDR(gross_margin)} (${gross_margin_pct.toFixed(1)}%)`}
+                    positive={gross_margin >= 0}
+                    negative={gross_margin < 0}
+                  />
+                  {Number(discount) > 0 && (
+                    <Row
+                      label="Margin Bersih"
+                      value={`${formatIDR(net_margin)} (${net_margin_pct.toFixed(1)}%)`}
+                      positive={net_margin >= 0}
+                      negative={net_margin < 0}
+                    />
+                  )}
+                </div>
+              )}
+              <div className="border-t border-white/30 pt-2 mt-2">
+                <Row label="Bayar" value={formatIDR(cashPaid)} />
+              </div>
               <div className={`border-t border-white/30 pt-2 mt-2 ${change > 0 ? "text-[#4ade80]" : ""}`}>
                 <Row label="KEMBALI" value={formatIDR(change)} bold big />
               </div>
@@ -537,11 +580,12 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
   );
 }
 
-function Row({ label, value, bold, big }) {
+function Row({ label, value, bold, big, positive, negative, muted }) {
+  const color = negative ? "text-[#ff9d9d]" : positive ? "text-[#4ade80]" : muted ? "text-white/60" : "";
   return (
     <div className="flex justify-between items-baseline">
-      <span className={`${bold ? "font-bold" : ""} ${big ? "text-sm uppercase tracking-wider" : "text-xs"}`}>{label}</span>
-      <span className={`${bold ? "font-bold" : ""} ${big ? "text-xl" : "text-sm"}`}>{value}</span>
+      <span className={`${bold ? "font-bold" : ""} ${big ? "text-sm uppercase tracking-wider" : "text-xs"} ${color}`}>{label}</span>
+      <span className={`${bold ? "font-bold" : ""} ${big ? "text-xl" : "text-sm"} ${color}`}>{value}</span>
     </div>
   );
 }
