@@ -1,0 +1,32 @@
+{
+  "summary": "Full backend + frontend verification of defensive Kasir fix (Sales.jsx) for the 'produk tidak muncul di dropdown' bug. Preview environment reproducibly PASSES all 12 scenarios listed in the review. Backend: 7/7 pytest cases pass (create material→product→sale→delete BOM flow with subtotal=161000, consumption=5, stock 100→95→100). Frontend: dropdown shows OPTGROUP 'Produk (Multi-Bahan / BOM)' with seed product 'Cetak Brosur 120 gr [code] — per pcs'; product-count-hint reads '2 produk aktif · 4 bahan aktif'; defensive refetch on 'Transaksi Baru' click DOES pick up newly-created products WITHOUT page reload (verified 2→3 products after API-add + reopen); no-products-hint amber banner appears correctly when activeProducts.length===0 and hides otherwise; Produk optgroup is not rendered when activeProducts is empty while Bahan Langsung optgroup still renders (regression pass).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sales_defensive_refetch.py",
+    "/app/test_reports/pytest/sales_defensive_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Hydration warning in browser console: '<span> cannot be a child of <option>' — dev tooling (Emergent live-preview x-* wrappers) injects an inline <span data-ve-dynamic> inside <option> tags for the OPTGROUP options. It is DEV-only injection, not code you wrote, but confirm production build strips it so search-engines/screen-readers don't see malformed HTML.",
+    "Sales.jsx openNewSale (line 67-77) swallows errors silently with an empty catch. If /products or /materials returns 401 (see console 401 seen briefly right after login — likely a race with cookie propagation), the user sees no toast; they only see stale data. Consider surfacing a toast.warning('Data mungkin belum terbaru') on catch, or at minimum a console.warn for debuggability.",
+    "activeProducts filter (line 209) uses `p.active !== false`. Backend GET /api/products?only_active=true already filters — the frontend filter is a defensive extra layer. This is fine but the diagnostic hint '{activeProducts.length} produk aktif' could confuse users if server-side and client-side filters diverge. Consider using server response directly.",
+    "Sales.jsx is 629 lines — exceeds the 700-line soft limit narrowly but is approaching it. NewSaleModal (207-608) is 400 lines and could be extracted into its own file /components/NewSaleModal.jsx for maintainability.",
+    "Legacy 'material_id' path (Bahan Langsung) still uses area_total * unit_price with no dimensional guard when a picker without L/W is chosen. Not a regression from this change, but confirm intended for direct material sales.",
+    "loadAll() (line 26-32) fetches products WITH only_active=true, while openNewSale() also fetches with only_active=true — consistent. However, /inventory/materials returns ALL materials (active + inactive) and activeMats is filtered client-side. Consider adding only_active support to /inventory/materials for symmetry and payload size."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sales_defensive_refetch.py (new — 7 tests for the exact bug reproduction scenario)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (all listed scenarios pass)"},
+  "test_credentials": "admin@payroll.id / admin123 (cookie httpOnly, verified)",
+  "seed_data_creation": "UITEST_<rand> and UIRFCH_<epoch> tagged material+product created during UI test, plus TESTBROSUR_<hex> in pytest — ALL cleaned up. Verified final state: only pre-existing 'Cetak Brosur 120 gr' (from previous testing agent) remains active. Reactivated after the temporary deactivation used to validate the no-products-hint banner.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Bug NOT reproducible in preview — defensive Sales.jsx fix (openNewSale onClick refetch + product-count-hint + no-products-hint amber banner) is fully working. If user reports the bug still occurs in production, root cause is almost certainly stale browser cache / CDN cache on the built JS bundle. Recommend: (1) hard reload / clear site data, (2) bump the frontend build version, (3) add cache-busting hash to bundle names, (4) verify production deploy actually shipped the new Sales.jsx (grep for 'product-count-hint' in the deployed bundle). All backend endpoints and BOM logic verified working. Test files: /app/backend/tests/test_sales_defensive_refetch.py and existing /app/backend/tests/test_products_bom.py.",
+  "rca of the issue": "The defensive fix is CORRECT and works in preview. Since the bug was not reproducible here (product appears in dropdown after being created via API and the modal is re-opened), the root cause of the user's production issue is almost certainly one of: (a) stale JS bundle cached in the user's browser / edge CDN before defensive refetch was deployed — the ORIGINAL Sales.jsx only fetched products on mount, so if the user created the product AFTER loading /sales but never refreshed, the dropdown would remain empty; (b) production deploy did not actually pick up the new Sales.jsx; (c) products were saved with active=false somewhere in the flow (verified NOT the case with our test — active:true persists). Mitigation shipped: openNewSale refetches on every click, so the stale-state cache class of bug is eliminated. Additionally, product-count-hint and no-products-hint give the user immediate diagnostic feedback if the dropdown appears empty."
+}

@@ -63,6 +63,19 @@ export default function Sales() {
     catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
   };
 
+  // Refresh products & materials sebelum modal dibuka (defensive - biar tidak stale)
+  const openNewSale = async () => {
+    try {
+      const [m, p] = await Promise.all([
+        api.get("/inventory/materials"),
+        api.get("/products", { params: { only_active: true } }),
+      ]);
+      setMaterials(m.data);
+      setProducts(p.data);
+    } catch (_err) { /* fallback tetap pakai state existing */ }
+    setOpenNew(true);
+  };
+
   return (
     <div className="px-4 sm:px-6 lg:px-10 py-6 sm:py-8 max-w-7xl">
       <div className="flex flex-wrap items-end justify-between gap-4 pb-6 border-b border-zinc-200">
@@ -71,7 +84,7 @@ export default function Sales() {
           <h1 className="font-heading text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Penjualan / Kasir</h1>
           <p className="text-sm text-zinc-500 mt-1">POS digital printing — hitung otomatis berdasarkan luas (P×L×Qty) &amp; cetak struk thermal 80mm.</p>
         </div>
-        <button data-testid="new-sale-button" onClick={() => setOpenNew(true)} className="rounded-none bg-[#002FA7] text-white px-6 py-3 text-sm font-bold uppercase tracking-wider hover:bg-[#002FA7]/90 inline-flex items-center gap-2">
+        <button data-testid="new-sale-button" onClick={openNewSale} className="rounded-none bg-[#002FA7] text-white px-6 py-3 text-sm font-bold uppercase tracking-wider hover:bg-[#002FA7]/90 inline-flex items-center gap-2">
           <Plus className="w-4 h-4" /> Transaksi Baru
         </button>
       </div>
@@ -411,9 +424,23 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
           {/* Items */}
           <div className="border-t border-zinc-200 pt-4">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[11px] uppercase tracking-widest font-bold text-zinc-700">Detail Produk / Order</div>
+              <div>
+                <div className="text-[11px] uppercase tracking-widest font-bold text-zinc-700">Detail Produk / Order</div>
+                <div className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                  <span data-testid="product-count-hint" className={activeProducts.length === 0 ? "text-amber-700 font-bold" : ""}>
+                    {activeProducts.length} produk aktif
+                  </span>
+                  {" · "}
+                  <span>{activeMats.length} bahan aktif</span>
+                </div>
+              </div>
               <button type="button" data-testid="add-sale-item" onClick={addItem} className="text-xs text-[#002FA7] hover:underline font-semibold">+ Tambah Item</button>
             </div>
+            {activeProducts.length === 0 && (
+              <div data-testid="no-products-hint" className="mb-3 border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                ⚠ <b>Belum ada produk di Master Produk.</b> Buka menu <b>Inventory → Master Produk</b> untuk menambahkan produk (misal &ldquo;Cetak Brosur 120 gr&rdquo;) dengan komposisi bahan (BOM). Sementara ini kakak hanya bisa pilih dari &ldquo;Bahan Langsung&rdquo;.
+              </div>
+            )}
             <div className="space-y-3">
               {items.map((it, idx) => {
                 const r = rows[idx];
