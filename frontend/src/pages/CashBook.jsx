@@ -468,6 +468,17 @@ function SettingModal({ initial, onClose, onSaved }) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal");
     } finally { setSaving(false); }
   };
+  const resetToZero = async () => {
+    if (!window.confirm("Reset Saldo Awal ke Rp 0? Aksi ini bisa dibatalkan dengan mengisi ulang saldo dan klik Simpan.")) return;
+    setSaving(true);
+    try {
+      await api.put("/cashbook/settings", { opening_balance: 0, opening_date: form.opening_date });
+      toast.success("Saldo awal berhasil di-reset ke Rp 0");
+      await onSaved();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal reset");
+    } finally { setSaving(false); }
+  };
   return (
     <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white border border-zinc-300 w-full max-w-md">
@@ -482,9 +493,21 @@ function SettingModal({ initial, onClose, onSaved }) {
           <Field label="Saldo Awal (Rp)">
             <input type="number" step="0.01" required data-testid="setting-balance" value={form.opening_balance} onChange={(e) => setForm({ ...form, opening_balance: e.target.value })} className={inputCls + " font-mono text-lg font-bold"} />
           </Field>
-          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-200">
-            <button type="button" onClick={onClose} className="rounded-none bg-white border border-zinc-300 px-5 py-2.5 text-sm hover:bg-zinc-50">Batal</button>
-            <button data-testid="save-setting-button" type="submit" disabled={saving} className="rounded-none bg-[#002FA7] text-white px-6 py-2.5 text-sm font-bold uppercase tracking-wider disabled:opacity-40">{saving ? "Menyimpan…" : "Simpan"}</button>
+          <div className="flex flex-wrap justify-between items-center gap-2 pt-3 border-t border-zinc-200">
+            <button
+              type="button"
+              data-testid="reset-setting-button"
+              onClick={resetToZero}
+              disabled={saving}
+              className="rounded-none bg-white border border-[#E81123] text-[#E81123] px-4 py-2.5 text-xs font-bold uppercase tracking-wider hover:bg-[#E81123]/5 disabled:opacity-40 inline-flex items-center gap-1.5"
+              title="Reset Saldo Awal ke Rp 0"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Reset ke 0
+            </button>
+            <div className="flex gap-2">
+              <button type="button" onClick={onClose} className="rounded-none bg-white border border-zinc-300 px-5 py-2.5 text-sm hover:bg-zinc-50">Batal</button>
+              <button data-testid="save-setting-button" type="submit" disabled={saving} className="rounded-none bg-[#002FA7] text-white px-6 py-2.5 text-sm font-bold uppercase tracking-wider disabled:opacity-40">{saving ? "Menyimpan…" : "Simpan"}</button>
+            </div>
           </div>
         </form>
       </div>
