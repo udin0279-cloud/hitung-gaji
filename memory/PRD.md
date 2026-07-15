@@ -533,15 +533,56 @@ Test file: `/app/backend/tests/test_sales.py`
 - **Kaos Sablon** (fixed pricing, komponen: 1 Kaos per_qty + fixed 50ml Tinta)
 
 ### Total Test Reports
-`iteration_11.json` → `iteration_21.json` (11 iterasi testing dengan >200 test cases lulus)
+`iteration_11.json` → `iteration_25.json` (12 iterasi testing dengan >250 test cases lulus)
 
 ### Backlog Setelah Ini
+- 🟢 P1: Auto-add Lembur approved ke Payroll (belum dikerjakan)
 - 🟢 P1: Scheduled Auto-Send Payslip (APScheduler)
-- 🟢 P2: Auto-add Lembur approved ke Payroll
-- 🟢 P2: Cuti Tahunan Kuota per Karyawan  
+- 🟢 P1: Cuti Tahunan Kuota per Karyawan
 - 🟢 P2: Notif WA Izin/Cuti approved (Fonnte)
 - 🟡 P2: Halaman Daftar Pinjaman Aktif
 - 🟡 P2: Audit Log HR
 - 🟡 P3: Halaman Log Broadcast WhatsApp
 - 🟡 P3: Notif WA PO tertunda / stok menipis
-- 🔴 CRITICAL: Refactor `server.py` (>5500 baris) → pecah ke `/app/backend/routers/*.py`
+- 🔴 CRITICAL: Refactor `server.py` (>6000 baris) → pecah ke `/app/backend/routers/*.py`
+
+---
+## Update: 2026-07-15 — Kas Operasional: Jurnal Akuntansi + Kasbon Sementara
+
+### Implemented (Iteration 25 — 48/48 tests passed)
+User meminta 2 tab baru di modul `/cashbook`:
+
+**1. Tab "Jurnal Akuntansi" (Debet/Kredit format)**
+- Tampilan tabel format akuntansi klasik: Kode Akun, Nama Akun, Tanggal, Keterangan, **Debet** (hijau, untuk pemasukan/kas +), **Kredit** (merah, untuk pengeluaran/kas −), **Saldo** running
+- Saldo Awal bulan berjalan di baris pertama, Total Debet/Kredit + Saldo Akhir di footer
+- Filter bulan + search text
+- Data sumber sama dengan Buku Kas — hanya tampilan berbeda (single source of truth)
+
+**2. Tab "Kasbon Sementara" (Cash Advance untuk staff)**
+- Collection `kasbon_sementara`: {id, date, name, description, amount, status (open/settled), settled_at, created_by}
+- 3 stat cards: Total Belum Lunas, Sudah Dilunaskan, Total Semua Bulan Ini
+- Table columns: Tanggal, Nama, Keterangan, Jumlah, Status badge (LUNAS/BELUM LUNAS), Aksi
+- Action buttons: Settle (CheckCircle), Reopen (RotateCcw), Edit (Pencil), Delete (Trash)
+- Filter bulan + status + search
+- Footer table: TOTAL otomatis dari row yang tampil
+
+**3. 8 Kode Akun Akuntansi Standar (idempotent seed)**
+- `101 Kas` (in), `103 Persediaan Barang` (out), `103-01 Bahan Baku Mesin` (out)
+- `104 Perlengkapan Kantor` (out), `105 BBM dan Maintenance Kendaraan` (out)
+- `106 Pengiriman Dokumen` (out), `108 Makan dan Entertainment` (out)
+- `502 Beban Listrik, Air, Telepon` (out) — kode existing, nama lama tetap "Listrik, Air, Telepon, Internet" (user bisa rename via UI Kategori Akun)
+
+### API Endpoints Baru
+- `GET /api/cashbook/kasbon?month=&status=` — return {items, total_open, total_settled, total_all, count}
+- `POST /api/cashbook/kasbon` — body {date, name, description, amount}
+- `PUT /api/cashbook/kasbon/{id}` — full update
+- `PUT /api/cashbook/kasbon/{id}/settle` — mark as lunas
+- `PUT /api/cashbook/kasbon/{id}/reopen` — un-settle
+- `DELETE /api/cashbook/kasbon/{id}`
+
+### Files Changed
+- `backend/server.py` — DEFAULT_CASH_ACCOUNTS extended (8 kode baru), `_ensure_cash_accounts` refactored to idempotent per-code seed, new KasbonIn model + 6 endpoints
+- `frontend/src/pages/CashBook.jsx` — 2 new tabs, 3 new components (JournalTab, KasbonTab, KasbonFormModal), Lucide icons: BookOpen, Users, CheckCircle2, RotateCcw
+
+### Testing
+Iteration 25: 22 new backend + 26 regression + full frontend E2E = **48/48 PASSED**.
