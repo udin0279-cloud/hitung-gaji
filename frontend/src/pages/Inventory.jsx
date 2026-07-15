@@ -1586,9 +1586,16 @@ const EMPTY_PRODUCT = {
   code: "", name: "", category: "",
   pricing_mode: "fixed", unit_price: 0,
   purchase_price: 0, current_stock: 0,
-  components: [{ material_id: "", formula: "per_qty", quantity: 1 }],
+  components: [{ material_id: "", formula: "per_qty", quantity: 1, quantity_size_b: "" }],
   active: true,
+  // Sizing (khusus kaos/jersey)
+  has_sizes: false,
+  sizes: [],
+  price_size_a: 0,
+  price_size_b: 0,
 };
+
+const SIZE_OPTIONS = ["S", "M", "L", "XL", "XXL", "XXXL"];
 
 function ProductsTab({ products, materials, categories = [], reload }) {
   const [openForm, setOpenForm] = useState(false);
@@ -1618,15 +1625,26 @@ function ProductsTab({ products, materials, categories = [], reload }) {
       unit_price: p.unit_price || 0,
       purchase_price: p.purchase_price || 0,
       current_stock: p.current_stock || 0,
-      components: (p.components || []).map((c) => ({ material_id: c.material_id, formula: c.formula, quantity: c.quantity })),
+      components: (p.components || []).map((c) => ({
+        material_id: c.material_id, formula: c.formula, quantity: c.quantity,
+        quantity_size_b: c.quantity_size_b ?? "",
+      })),
       active: p.active !== false,
+      has_sizes: !!p.has_sizes,
+      sizes: p.sizes || [],
+      price_size_a: p.price_size_a || 0,
+      price_size_b: p.price_size_b || 0,
     });
     setOpenForm(true);
   };
 
-  const addComp = () => setForm((f) => ({ ...f, components: [...f.components, { material_id: "", formula: "per_qty", quantity: 1 }] }));
+  const addComp = () => setForm((f) => ({ ...f, components: [...f.components, { material_id: "", formula: "per_qty", quantity: 1, quantity_size_b: "" }] }));
   const rmComp = (i) => setForm((f) => ({ ...f, components: f.components.filter((_, idx) => idx !== i) }));
   const updComp = (i, key, val) => setForm((f) => ({ ...f, components: f.components.map((c, idx) => idx === i ? { ...c, [key]: val } : c) }));
+  const toggleSize = (s) => setForm((f) => ({
+    ...f,
+    sizes: f.sizes.includes(s) ? f.sizes.filter((x) => x !== s) : [...f.sizes, s].sort((a, b) => SIZE_OPTIONS.indexOf(a) - SIZE_OPTIONS.indexOf(b)),
+  }));
 
   const submit = async (e) => {
     e.preventDefault();
@@ -1637,6 +1655,12 @@ function ProductsTab({ products, materials, categories = [], reload }) {
       if (!c.formula) { toast.error("Semua komponen harus pilih formula"); return; }
       if (Number(c.quantity) <= 0) { toast.error("Quantity komponen harus > 0"); return; }
     }
+    if (form.has_sizes) {
+      if (!form.sizes || form.sizes.length === 0) { toast.error("Pilih minimal 1 ukuran"); return; }
+      if (Number(form.price_size_a) <= 0) { toast.error("Harga S-XL harus > 0"); return; }
+      const hasTierB = form.sizes.some((s) => !["S", "M", "L", "XL"].includes(s));
+      if (hasTierB && Number(form.price_size_b) <= 0) { toast.error("Harga XXL keatas harus > 0"); return; }
+    }
     setSaving(true);
     try {
       const payload = {
@@ -1644,8 +1668,13 @@ function ProductsTab({ products, materials, categories = [], reload }) {
         unit_price: Number(form.unit_price) || 0,
         purchase_price: Number(form.purchase_price) || 0,
         current_stock: Number(form.current_stock) || 0,
+        has_sizes: !!form.has_sizes,
+        sizes: form.has_sizes ? form.sizes : [],
+        price_size_a: form.has_sizes ? Number(form.price_size_a) || 0 : 0,
+        price_size_b: form.has_sizes ? Number(form.price_size_b) || 0 : 0,
         components: form.components.map((c) => ({
           material_id: c.material_id, formula: c.formula, quantity: Number(c.quantity),
+          quantity_size_b: (form.has_sizes && c.quantity_size_b !== "" && c.quantity_size_b !== null) ? Number(c.quantity_size_b) : null,
         })),
       };
       if (editing) await api.put(`/products/${editing.id}`, payload);
@@ -1799,9 +1828,75 @@ function ProductsTab({ products, materials, categories = [], reload }) {
                     <option value="per_area">Per m² (untuk produk berbasis luas)</option>
                   </select>
                 </Field>
-                <Field label={form.pricing_mode === "per_area" ? "Harga Jual per m² (Rp)" : "Harga Jual per pcs (Rp)"}>
-                  <input required data-testid="prod-price" type="number" min="0" step="0.01" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} className={inputCls + " font-mono font-bold"} />
+                <Field label={form.pricing_mode === "per_area" ? "Harga Jual per m² (Rp)" : "Harga Jual per pcs (Rp)"} hint={form.has_sizes ? "Harga default (dipakai bila kosong tier)" : ""}>
+                  <input required={!form.has_sizes} data-testid="prod-price" type="number" min="0" step="0.01" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} className={inputCls + " font-mono font-bold"} disabled={form.has_sizes} />
                 </Field>
+              </div>
+
+              {/* ===== SIZING (kaos/jersey) ===== */}
+              <div className="border border-zinc-200 bg-zinc-50/50 p-4 space-y-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    data-testid="prod-has-sizes"
+                    checked={form.has_sizes}
+                    onChange={(e) => setForm({ ...form, has_sizes: e.target.checked })}
+                  />
+                  <span className="text-sm font-bold text-zinc-800">Produk ini memiliki ukuran (kaos / jersey)</span>
+                </label>
+                {form.has_sizes && (
+                  <div className="space-y-3 pl-6 border-l-2 border-[#002FA7]/30">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-2">Ukuran Tersedia</div>
+                      <div className="flex flex-wrap gap-2">
+                        {SIZE_OPTIONS.map((s) => {
+                          const active = form.sizes.includes(s);
+                          const isTierB = !["S", "M", "L", "XL"].includes(s);
+                          return (
+                            <button
+                              key={s}
+                              type="button"
+                              data-testid={`prod-size-${s}`}
+                              onClick={() => toggleSize(s)}
+                              className={`rounded-none px-3 py-1.5 text-xs font-bold uppercase tracking-wider border transition-colors ${
+                                active
+                                  ? isTierB
+                                    ? "bg-[#E81123] text-white border-[#E81123]"
+                                    : "bg-[#002FA7] text-white border-[#002FA7]"
+                                  : "bg-white text-zinc-500 border-zinc-300 hover:border-zinc-500"
+                              }`}
+                            >
+                              {s}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="text-[10px] text-zinc-500 mt-1.5">Biru = tier S-XL · Merah = tier XXL keatas (harga lebih mahal)</div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="Harga S – XL (Rp)" hint="Untuk ukuran S, M, L, XL">
+                        <input
+                          type="number" min="0" step="0.01"
+                          data-testid="prod-price-a"
+                          value={form.price_size_a}
+                          onChange={(e) => setForm({ ...form, price_size_a: e.target.value })}
+                          className={inputCls + " font-mono font-bold border-[#002FA7]"}
+                          placeholder="cth 85000"
+                        />
+                      </Field>
+                      <Field label="Harga XXL keatas (Rp)" hint="Untuk ukuran XXL, XXXL, dst">
+                        <input
+                          type="number" min="0" step="0.01"
+                          data-testid="prod-price-b"
+                          value={form.price_size_b}
+                          onChange={(e) => setForm({ ...form, price_size_b: e.target.value })}
+                          className={inputCls + " font-mono font-bold border-[#E81123]"}
+                          placeholder="cth 95000"
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-3">
@@ -1868,7 +1963,7 @@ function ProductsTab({ products, materials, categories = [], reload }) {
                             </select>
                           </div>
                           <div className="col-span-2">
-                            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Faktor</label>
+                            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">{form.has_sizes ? "Jumlah S-XL" : "Faktor"}</label>
                             <input required data-testid={`comp-qty-${i}`} type="number" step="0.01" min="0.01" value={c.quantity} onChange={(e) => updComp(i, "quantity", e.target.value)} className={inputCls + " font-mono"} />
                           </div>
                           <div className="col-span-1 pt-6">
@@ -1877,6 +1972,23 @@ function ProductsTab({ products, materials, categories = [], reload }) {
                             )}
                           </div>
                         </div>
+                        {form.has_sizes && (
+                          <div className="grid grid-cols-12 gap-2 mt-1.5">
+                            <div className="col-span-9"></div>
+                            <div className="col-span-2">
+                              <label className="text-[10px] uppercase tracking-widest font-bold text-[#E81123] block mb-1">Jumlah XXL+</label>
+                              <input
+                                type="number" step="0.01" min="0"
+                                data-testid={`comp-qty-b-${i}`}
+                                value={c.quantity_size_b || ""}
+                                onChange={(e) => updComp(i, "quantity_size_b", e.target.value)}
+                                placeholder="opsional"
+                                className={inputCls + " font-mono border-[#E81123]/50"}
+                              />
+                            </div>
+                            <div className="col-span-1"></div>
+                          </div>
+                        )}
                         <div className="text-[10px] text-zinc-500 font-mono">
                           {mat && <span>Unit: <b>{mat.unit}</b> · </span>}
                           <span>{hint}</span>

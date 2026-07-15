@@ -294,7 +294,13 @@ function StatCard({ label, value, icon: Icon, isCount, testId, positive }) {
 
 /* ---------------- NEW SALE MODAL (POS) ---------------- */
 // picker_id format: "prod:<id>" atau "mat:<id>"
-const EMPTY_ITEM = { picker_id: "", product_id: null, material_id: null, product_name: "", length_m: 0, width_m: 0, quantity: 1, unit_price: 0 };
+const EMPTY_ITEM = { picker_id: "", product_id: null, material_id: null, product_name: "", length_m: 0, width_m: 0, quantity: 1, unit_price: 0, size: "" };
+
+const TIER_A_SIZES = ["S", "M", "L", "XL"];
+function sizeTier(size) {
+  if (!size) return "A";
+  return TIER_A_SIZES.includes(String(size).toUpperCase()) ? "A" : "B";
+}
 
 function computeConsumption(formula, factor, L, W, qty) {
   const f = Number(factor || 0);
@@ -341,12 +347,21 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
       const [kind, id] = picker_id.split(":");
       if (kind === "prod") {
         const p = activeProducts.find((x) => x.id === id);
+        // Default size = first available size (kalau produk pakai sizing)
+        const defaultSize = p?.has_sizes && (p.sizes || []).length > 0 ? p.sizes[0] : "";
+        const tier = sizeTier(defaultSize);
+        // Harga otomatis dari tier bila has_sizes, else pakai unit_price
+        let price = p?.unit_price || 0;
+        if (p?.has_sizes) {
+          price = tier === "B" ? (p.price_size_b || p.price_size_a || 0) : (p.price_size_a || 0);
+        }
         return {
           ...it,
           picker_id, product_id: id, material_id: null,
           product_name: p?.name || "",
-          unit_price: p?.unit_price || 0,
+          unit_price: price,
           length_m: 0, width_m: 0,
+          size: defaultSize,
         };
       }
       if (kind === "mat") {
@@ -356,9 +371,22 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
           picker_id, material_id: id, product_id: null,
           product_name: it.product_name || m?.name || "",
           unit_price: m?.selling_price > 0 ? m.selling_price : it.unit_price,
+          size: "",
         };
       }
       return it;
+    }));
+  };
+
+  // Ketika user ubah size di kasir → auto-update harga dari tier
+  const onSizeChange = (idx, size) => {
+    setItems((arr) => arr.map((it, i) => {
+      if (i !== idx) return it;
+      const p = activeProducts.find((x) => x.id === it.product_id);
+      if (!p || !p.has_sizes) return { ...it, size };
+      const tier = sizeTier(size);
+      const price = tier === "B" ? (p.price_size_b || p.price_size_a || 0) : (p.price_size_a || 0);
+      return { ...it, size, unit_price: price };
     }));
   };
 
@@ -382,8 +410,14 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
       subtotal = pricing === "per_area" ? area_total * price : price * Q;
       requires_LW = (product.components || []).some((c) => c.formula === "area");
       requires_L_only = !requires_LW && (product.components || []).some((c) => c.formula === "length");
+      const tier = product.has_sizes ? sizeTier(it.size) : "A";
       consumptions = (product.components || []).map((c) => {
-        const cons = computeConsumption(c.formula, c.quantity, L, W, Q);
+        // Pakai quantity_size_b bila tier B & value ada
+        let factorUse = Number(c.quantity || 0);
+        if (tier === "B" && c.quantity_size_b !== null && c.quantity_size_b !== undefined && c.quantity_size_b !== "") {
+          factorUse = Number(c.quantity_size_b);
+        }
+        const cons = computeConsumption(c.formula, factorUse, L, W, Q);
         const mat = materials.find((m) => m.id === c.material_id);
         const stock = mat ? Number(mat.current_stock || 0) : 0;
         const buy = mat ? Number(mat.purchase_price || 0) : 0;
@@ -435,6 +469,7 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
     if (!r.it.picker_id) return false;
     if (r.it.unit_price <= 0) return false;
     if (r.it.quantity <= 0) return false;
+    if (r.product?.has_sizes && !r.it.size) return false;
     if (r.requires_LW && (r.it.length_m <= 0 || r.it.width_m <= 0)) return false;
     if (r.requires_L_only && r.it.length_m <= 0) return false;
     return r.subtotal > 0 && r.stock_ok;
@@ -460,6 +495,7 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
           width_m: Number(it.width_m) || 0,
           quantity: Number(it.quantity) || 1,
           unit_price: Number(it.unit_price) || 0,
+          size: it.size || null,
         })),
       };
       const { data } = await api.post("/sales", payload);
@@ -587,6 +623,38 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
                         )}
                       </div>
                     </div>
+                    {/* Size selector untuk produk kaos/jersey */}
+                    {isProduct && r.product?.has_sizes && (r.product.sizes || []).length > 0 && (
+                      <div className="bg-white border border-[#002FA7]/30 p-2.5">
+                        <label className="text-[10px] uppercase tracking-widest font-bold text-[#002FA7] block mb-1.5">Pilih Ukuran</label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(r.product.sizes || []).map((s) => {
+                            const active = it.size === s;
+                            const isTierB = !["S", "M", "L", "XL"].includes(s);
+                            return (
+                              <button
+                                key={s}
+                                type="button"
+                                data-testid={`sale-item-size-${idx}-${s}`}
+                                onClick={() => onSizeChange(idx, s)}
+                                className={`rounded-none px-3 py-1.5 text-xs font-bold uppercase tracking-wider border transition-colors ${
+                                  active
+                                    ? isTierB ? "bg-[#E81123] text-white border-[#E81123]" : "bg-[#002FA7] text-white border-[#002FA7]"
+                                    : "bg-white text-zinc-600 border-zinc-300 hover:border-zinc-500"
+                                }`}
+                              >
+                                {s}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {it.size && (
+                          <div className="text-[10px] font-mono text-zinc-500 mt-1.5">
+                            Tier: <b className={sizeTier(it.size) === "B" ? "text-[#E81123]" : "text-[#002FA7]"}>{sizeTier(it.size) === "B" ? "XXL+" : "S-XL"}</b> · Harga otomatis: <b className="text-zinc-900">{formatIDR(it.unit_price)}</b>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="grid grid-cols-12 gap-2">
                       {showLW && (
                         <>

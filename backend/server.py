@@ -4785,18 +4785,37 @@ PRODUCT_FORMULAS = ("fixed", "per_qty", "area", "length")
 class ProductComponent(BaseModel):
     material_id: str
     formula: str  # "fixed" | "per_qty" | "area" | "length"
-    quantity: float = 1.0  # faktor konsumsi
+    quantity: float = 1.0  # faktor konsumsi (untuk tier A / non-size / S-XL)
+    # NEW: konsumsi untuk tier B (XXL keatas). None = pakai quantity yg sama
+    quantity_size_b: Optional[float] = None
 
 class ProductIn(BaseModel):
     code: Optional[str] = None
     name: str
     category: Optional[str] = None
     pricing_mode: str = "fixed"  # "fixed" (per unit) | "per_area" (per m²)
-    unit_price: float = 0  # harga jual
+    unit_price: float = 0  # harga jual default (dipakai bila has_sizes=False)
     purchase_price: float = 0  # harga beli / modal per unit (opsional, bisa auto dari BOM)
     current_stock: float = 0  # stok produk jadi (untuk finished goods yang di-stok)
     components: List[ProductComponent] = []
     active: bool = True
+    # NEW: sizing untuk produk kaos/jersey
+    has_sizes: bool = False
+    sizes: List[str] = []  # subset dari ["S","M","L","XL","XXL","XXXL"]
+    price_size_a: float = 0  # harga untuk S–XL (dipakai kalau has_sizes=True)
+    price_size_b: float = 0  # harga untuk XXL keatas
+
+
+# Klasifikasi tier size
+SIZE_TIER_A = {"S", "M", "L", "XL"}
+# Everything else (XXL, XXXL, 2XL, 3XL, dsb) = tier B
+
+
+def _size_tier(size: Optional[str]) -> str:
+    """Return 'A' untuk S-XL, 'B' untuk XXL+ atau default 'A' bila tidak ada."""
+    if not size:
+        return "A"
+    return "A" if size.strip().upper() in SIZE_TIER_A else "B"
 
 
 def _product_requires_dimensions(components: List[Dict[str, Any]]) -> bool:
@@ -4890,6 +4909,15 @@ async def products_create(payload: ProductIn, user: dict = Depends(require_super
         m = await db.materials.find_one({"id": c.material_id})
         if not m:
             raise HTTPException(status_code=400, detail=f"Bahan {c.material_id} tidak ditemukan")
+    # Validasi sizing
+    if payload.has_sizes:
+        if not payload.sizes:
+            raise HTTPException(status_code=400, detail="Pilih minimal 1 ukuran untuk produk ini")
+        if payload.price_size_a <= 0:
+            raise HTTPException(status_code=400, detail="Harga S-XL harus > 0")
+        has_tier_b = any(_size_tier(s) == "B" for s in payload.sizes)
+        if has_tier_b and payload.price_size_b <= 0:
+            raise HTTPException(status_code=400, detail="Harga XXL keatas harus > 0")
     # Cek duplicate nama
     safe = re.escape(payload.name.strip())
     exists = await db.products.find_one({"name": {"$regex": f"^{safe}$", "$options": "i"}})
@@ -4906,6 +4934,11 @@ async def products_create(payload: ProductIn, user: dict = Depends(require_super
         "current_stock": round(float(payload.current_stock or 0), 4),
         "components": [c.model_dump() for c in payload.components],
         "active": payload.active,
+        # Sizing (kaos/jersey)
+        "has_sizes": bool(payload.has_sizes),
+        "sizes": list(payload.sizes) if payload.has_sizes else [],
+        "price_size_a": round(float(payload.price_size_a or 0), 2) if payload.has_sizes else 0,
+        "price_size_b": round(float(payload.price_size_b or 0), 2) if payload.has_sizes else 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.products.insert_one(doc)
@@ -4930,6 +4963,15 @@ async def products_update(product_id: str, payload: ProductIn, user: dict = Depe
         m = await db.materials.find_one({"id": c.material_id})
         if not m:
             raise HTTPException(status_code=400, detail=f"Bahan {c.material_id} tidak ditemukan")
+    # Validasi sizing
+    if payload.has_sizes:
+        if not payload.sizes:
+            raise HTTPException(status_code=400, detail="Pilih minimal 1 ukuran untuk produk ini")
+        if payload.price_size_a <= 0:
+            raise HTTPException(status_code=400, detail="Harga S-XL harus > 0")
+        has_tier_b = any(_size_tier(s) == "B" for s in payload.sizes)
+        if has_tier_b and payload.price_size_b <= 0:
+            raise HTTPException(status_code=400, detail="Harga XXL keatas harus > 0")
     upd = {
         "code": (payload.code or "").strip() or None,
         "name": payload.name.strip(),
@@ -4940,6 +4982,11 @@ async def products_update(product_id: str, payload: ProductIn, user: dict = Depe
         "current_stock": round(float(payload.current_stock or 0), 4),
         "components": [c.model_dump() for c in payload.components],
         "active": payload.active,
+        # Sizing
+        "has_sizes": bool(payload.has_sizes),
+        "sizes": list(payload.sizes) if payload.has_sizes else [],
+        "price_size_a": round(float(payload.price_size_a or 0), 2) if payload.has_sizes else 0,
+        "price_size_b": round(float(payload.price_size_b or 0), 2) if payload.has_sizes else 0,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.products.update_one({"id": product_id}, {"$set": upd})
@@ -4971,6 +5018,7 @@ class SaleItemIn(BaseModel):
     width_m: float = 0
     quantity: int = 1
     unit_price: float  # harga per m² (mode material) ATAU harga per unit (mode product fixed) ATAU per m² (product per_area)
+    size: Optional[str] = None  # NEW: untuk produk yang has_sizes (S/M/L/XL/XXL/XXXL)
 
 
 class SaleIn(BaseModel):
@@ -5057,9 +5105,30 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
                 bad_len = any(c.get("formula") == "length" for c in components) and it.length_m <= 0
                 if bad or bad_len:
                     raise HTTPException(status_code=400, detail=f"Ukuran P×L wajib diisi untuk {it.product_name}")
-            # Hitung harga sesuai pricing_mode
+
+            # ===== SIZING (kaos/jersey) =====
+            has_sizes = bool(prod.get("has_sizes"))
+            size_tier = "A"
+            size_used = None
+            if has_sizes:
+                if not it.size:
+                    raise HTTPException(status_code=400, detail=f"Ukuran wajib dipilih untuk {it.product_name}")
+                available = prod.get("sizes") or []
+                if it.size not in available:
+                    raise HTTPException(status_code=400, detail=f"Ukuran '{it.size}' tidak tersedia untuk {it.product_name}. Pilihan: {', '.join(available)}")
+                size_used = it.size
+                size_tier = _size_tier(it.size)
+
+            # Hitung harga sesuai pricing_mode & size tier
             pricing = prod.get("pricing_mode") or "fixed"
-            unit_price_use = float(it.unit_price if it.unit_price > 0 else prod.get("unit_price", 0))
+            if has_sizes:
+                # Harga otomatis dari tier (abaikan it.unit_price)
+                unit_price_use = float(prod.get("price_size_b", 0) if size_tier == "B" else prod.get("price_size_a", 0))
+                if unit_price_use <= 0:
+                    # Fallback ke unit_price umum agar tidak gratis
+                    unit_price_use = float(prod.get("unit_price", 0))
+            else:
+                unit_price_use = float(it.unit_price if it.unit_price > 0 else prod.get("unit_price", 0))
             if pricing == "per_area":
                 area_pc = float(it.length_m or 0) * float(it.width_m or 0)
                 area_total = round(area_pc * int(it.quantity), 4)
@@ -5069,11 +5138,16 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
                 area_total = round(area_pc * int(it.quantity), 4)
                 line_subtotal = round(unit_price_use * int(it.quantity), 2)
 
-            # Hitung konsumsi bahan per komponen
+            # Hitung konsumsi bahan per komponen (pakai quantity_size_b bila tier B & value ada)
             item_components = []
             for c in components:
+                factor_use = float(c.get("quantity", 1) or 0)
+                if has_sizes and size_tier == "B":
+                    qsb = c.get("quantity_size_b")
+                    if qsb is not None:
+                        factor_use = float(qsb or 0)
                 cons = _compute_component_consumption(
-                    c["formula"], c.get("quantity", 1), it.length_m, it.width_m, it.quantity,
+                    c["formula"], factor_use, it.length_m, it.width_m, it.quantity,
                 )
                 mat = await _get_mat(c["material_id"])
                 stock_deductions[c["material_id"]] = stock_deductions.get(c["material_id"], 0) + cons
@@ -5082,7 +5156,7 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
                     "material_name": mat.get("name"),
                     "material_unit": mat.get("unit"),
                     "formula": c["formula"],
-                    "factor": float(c.get("quantity", 1)),
+                    "factor": factor_use,
                     "consumption": cons,
                 })
 
@@ -5099,6 +5173,9 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
                 "unit_price": unit_price_use,
                 "subtotal": line_subtotal,
                 "components": item_components,
+                # size info
+                "size": size_used,
+                "size_tier": size_tier if has_sizes else None,
                 # legacy fields untuk struk kompatibel
                 "material_id": None,
                 "material_name": ", ".join(c["material_name"] for c in item_components) or "-",

@@ -1,0 +1,62 @@
+{
+  "summary": "End-to-end testing SIZING feature (produk kaos/jersey) untuk Master Produk, BOM per-tier, dan Kasir. Backend: 13/13 new tests di test_sizing.py PASSED (Product CRUD dengan has_sizes/sizes/price_size_a/b + quantity_size_b, validasi 400 untuk empty sizes/price_a<=0/tier B price_b<=0, update roundtrip, sale tier A M → price 85000 + cons 1.0, sale tier B XXL → price 95000 + cons 1.2, stock deduction verified via GET, missing/invalid size rejected, backward compat non-size product masih bekerja). Regression: test_sales.py + test_products_bom.py = 43/43 PASSED. Frontend UI: form Master Produk toggle prod-has-sizes memunculkan 6 tombol ukuran (biru S/M/L/XL, merah XXL/XXXL), 2 kolom harga (prod-price-a, prod-price-b), prod-price disabled ketika has_sizes on, tiap komponen BOM tampil kolom 'JUMLAH XXL+' (comp-qty-b-0) di bawah 'JUMLAH S-XL'. Kasir modal 'Transaksi Baru': pilih produk has_sizes → section 'Pilih Ukuran' render dengan tombol per size, default size = sizes[0] otomatis, harga auto = 85000 (tier A), klik XXL → harga otomatis ganti ke 95000 + preview 'Tier: XXL+ · Harga otomatis: Rp 95.000', klik M → balik ke 85000, dan produk tanpa has_sizes TIDAK menampilkan section size (backward compat). Cleanup product UITEST_ selesai.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Inventory ProductsTab modal (option) & Sales NewSaleModal (option)", "issues": ["React hydration warning: <span> tidak boleh menjadi child dari <option>. Ini disebabkan oleh emergent devtools inspector wrapper (data-ve-dynamic) yang inject <span style='display:contents'> ke dalam <option>. Bukan bug bisnis dan tidak breaking tapi console error terus muncul pada semua environment. Tidak dapat difix di app code (source dari tool inspector eksternal)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sizing.py",
+    "/app/test_reports/pytest/pytest_sizing.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py sekarang 6517 lines — makin urgent untuk split ke module terpisah (products.py, sales.py, sizing helper) untuk maintainability.",
+    "Validasi sizing di POST dan PUT products duplikat identik (lines 4913-4920 vs 4967-4974). Ekstrak ke helper `_validate_sizing(payload)`.",
+    "Klaus payload has_sizes=False, backend cek payload.price_size_a saat has_sizes=True, tapi bila payload.has_sizes=False maka price_size_a & price_size_b force ke 0 (sudah bagus, tapi tidak reject bila user kirim price_size_a > 0 dengan has_sizes=False — silent overwrite). Consider: kalau ingin strict, throw 400 atau tolerate seperti sekarang (lebih forgiving).",
+    "SIZE_TIER_A hard-coded {S,M,L,XL} tidak konfigurable via env — bila di masa depan ada tier C (misal 4XL keatas dengan harga berbeda), butuh refactor besar. Untuk sekarang OK.",
+    "sales_create tidak validasi it.size untuk produk NON has_sizes (silently ignored). Sudah OK karena field size Optional. Test backward compat verified.",
+    "Frontend Sales.jsx line ~633: hard-code array `['S','M','L','XL']` untuk isTierB check — duplicate dengan TIER_A_SIZES constant di line 299. DRY: pakai sizeTier(s) === 'B' saja.",
+    "Frontend Inventory ProductsTab: onChange input quantity_size_b handles empty string → null di submit (line 1677), bagus. Tapi kalau user isi 0 (bukan kosong), tidak dianggap 'kosong' — akan menyimpan factor 0 untuk tier B → produk XXL tidak konsumsi bahan. Consider validasi: quantity_size_b jika di-set harus > 0."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sizing.py (new — 13 test cases)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 new + 43/43 regression = 56/56)",
+    "frontend": "100% (semua data-testid render, auto price tier switch works, backward compat verified)"
+  },
+  "test_credentials": "admin@payroll.id / admin123 (super_admin)",
+  "seed_data_creation": "Backend tests menggunakan uuid-prefixed TEST_SIZING_* materials/products & auto-cleanup di teardown fixture. Frontend test membuat UITEST_Kaos_* product via API dan sudah di-cleanup via curl DELETE.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fitur SIZING fully working end-to-end. Backend field baru pada Product: has_sizes, sizes (array subset dari [S,M,L,XL,XXL,XXXL]), price_size_a (tier A harga), price_size_b (tier B harga). Component baru: quantity_size_b (Optional[float] — fallback ke quantity bila None). SaleItem baru: size (Optional[str]). Response sales item punya size + size_tier (A|B). TIER_A_SIZES = {S,M,L,XL} → tier A; else tier B. Harga & konsumsi auto sesuai tier. Data-testid frontend: prod-has-sizes, prod-size-{S..XXXL}, prod-price-a, prod-price-b, comp-qty-b-{i}, sale-item-size-{idx}-{S..XXXL}, sale-item-price-{idx}. Validasi backend: has_sizes=true+sizes=[] → 400 'Pilih minimal 1 ukuran', price_size_a<=0 → 400 'Harga S-XL harus > 0', tier B present + price_size_b<=0 → 400 'Harga XXL keatas harus > 0'. Sales validasi: has_sizes prod tanpa size → 400 'Ukuran wajib dipilih', size tidak ada di prod.sizes → 400 'Ukuran ... tidak tersedia'.",
+  "verified_scenarios": [
+    "POST /api/products has_sizes=true dgn full sizing → 200, has_sizes/sizes/price_size_a/b/components[].quantity_size_b tersimpan dan GET verify persistence ✓",
+    "POST /api/products has_sizes=true + sizes=[] → 400 'Pilih minimal 1 ukuran' ✓",
+    "POST /api/products has_sizes=true + price_size_a=0 → 400 'Harga S-XL harus > 0' ✓",
+    "POST /api/products has_sizes=true + sizes=[M,L,XXL] + price_size_b=0 → 400 'Harga XXL keatas harus > 0' ✓",
+    "POST /api/products has_sizes=true + sizes=[S,M,L,XL] + price_size_b=0 → 200 (tidak ada tier B jadi price_b boleh 0) ✓",
+    "PUT /api/products/{id} update sizes/price_size_a/b/quantity_size_b → 200 dan persisted ✓",
+    "PUT /api/products/{id} matikan has_sizes → sizes=[] & prices=0 di server ✓",
+    "POST /api/sales item.size='M' → unit_price=85000, size_tier='A', consumption=quantity(1.0*qty), stock deducted correctly ✓",
+    "POST /api/sales item.size='XXL' → unit_price=95000, size_tier='B', consumption=quantity_size_b(1.2*qty), stock deducted 1.2 ✓",
+    "POST /api/sales produk has_sizes tanpa item.size → 400 'Ukuran wajib dipilih' ✓",
+    "POST /api/sales item.size='XXXXL' (tidak ada di sizes) → 400 'Ukuran ... tidak tersedia' ✓",
+    "POST /api/sales produk non-has_sizes tanpa size → 200, harga tetap dari unit_price, size/size_tier=None ✓",
+    "POST /api/sales produk non-has_sizes DENGAN size='M' (stray) → 200 tidak error, harga tetap default (backward compat) ✓",
+    "Frontend Inventory: prod-has-sizes toggle ada, klik → tampil grid 6 size (S..XXXL), harga 2 kolom (prod-price-a & prod-price-b), prod-price disabled ✓",
+    "Frontend Inventory: komponen BOM menampilkan JUMLAH S-XL + JUMLAH XXL+ ketika has_sizes=true (comp-qty-b-0) ✓",
+    "Frontend Sales: pilih produk has_sizes → section 'Pilih Ukuran' render, default first size auto-selected, harga otomatis dari tier A ✓",
+    "Frontend Sales: klik XXL → sale-item-price-0 otomatis ganti ke 95000, preview 'Tier: XXL+ · Harga otomatis: Rp 95.000' merah ✓",
+    "Frontend Sales: klik M → price otomatis balik ke 85000, preview 'Tier: S-XL' biru ✓",
+    "Frontend Sales: pilih produk non-has_sizes → tidak ada section 'Pilih Ukuran' (0 size buttons rendered) ✓",
+    "Regression test_sales.py (20/20) + test_products_bom.py (23/23) tetap PASSED ✓"
+  ]
+}
