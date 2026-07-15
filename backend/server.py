@@ -5387,6 +5387,400 @@ async def sales_receipt_html(sale_id: str, user: dict = Depends(require_super_ad
     return HTMLResponse(content=html)
 
 
+@api_router.get("/sales/{sale_id}/invoice-pdf")
+async def sales_invoice_pdf(sale_id: str, user: dict = Depends(require_super_admin)):
+    """Cetak Nota A4 profesional (untuk customer korporat)."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+
+    s = await db.sales.find_one({"id": sale_id}, {"_id": 0})
+    if not s:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    ci = _company_info()
+
+    def _idr(n):
+        return f"Rp {float(n or 0):,.0f}".replace(",", ".")
+
+    def _num(n):
+        return f"{float(n or 0):.4f}".rstrip("0").rstrip(".") or "0"
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=18 * mm, rightMargin=18 * mm,
+        topMargin=15 * mm, bottomMargin=15 * mm,
+        title=f"Nota {s.get('sale_no')}",
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Company header
+    company_style = ParagraphStyle("company", parent=styles["Normal"], fontSize=16, textColor=colors.HexColor("#002FA7"),
+                                   alignment=TA_LEFT, spaceAfter=2, leading=18, fontName="Helvetica-Bold")
+    story.append(Paragraph(ci["name"].upper(), company_style))
+    story.append(Paragraph(f"{ci['address']}<br/>HP: {ci['phone']}", ParagraphStyle("addr", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#333333"), leading=12)))
+    story.append(Spacer(1, 8 * mm))
+
+    # Title
+    story.append(Paragraph("<b>NOTA PENJUALAN</b>", ParagraphStyle("title", parent=styles["Normal"], fontSize=14, alignment=TA_CENTER, spaceAfter=6 * mm, fontName="Helvetica-Bold")))
+
+    # Meta table (2 kolom: kiri = No/Tgl, kanan = Pelanggan)
+    created = s.get("created_at", "")[:19].replace("T", " ")
+    meta_data = [
+        [Paragraph("<b>No. Nota</b>", styles["Normal"]), Paragraph(str(s.get("sale_no", "")), styles["Normal"]),
+         Paragraph("<b>Pelanggan</b>", styles["Normal"]), Paragraph(str(s.get("customer_name", "Umum")), styles["Normal"])],
+        [Paragraph("<b>Tanggal</b>", styles["Normal"]), Paragraph(created, styles["Normal"]),
+         Paragraph("<b>Telp</b>", styles["Normal"]), Paragraph(str(s.get("customer_phone", "-") or "-"), styles["Normal"])],
+        [Paragraph("<b>Kasir</b>", styles["Normal"]), Paragraph(str(s.get("cashier_name", "")), styles["Normal"]),
+         Paragraph("<b>Metode</b>", styles["Normal"]), Paragraph((s.get("payment_method") or "tunai").upper(), styles["Normal"])],
+    ]
+    meta_tbl = Table(meta_data, colWidths=[28 * mm, 55 * mm, 25 * mm, 66 * mm])
+    meta_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#eeeeee")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(meta_tbl)
+    story.append(Spacer(1, 6 * mm))
+
+    # Items table
+    right = ParagraphStyle("r", parent=styles["Normal"], alignment=TA_RIGHT)
+    header_row = [
+        Paragraph("<b>No</b>", ParagraphStyle("hn", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Deskripsi</b>", ParagraphStyle("hd", parent=styles["Normal"], textColor=colors.white)),
+        Paragraph("<b>Qty / Dim</b>", ParagraphStyle("hq", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Harga</b>", ParagraphStyle("hp", parent=styles["Normal"], alignment=TA_RIGHT, textColor=colors.white)),
+        Paragraph("<b>Subtotal</b>", ParagraphStyle("hs", parent=styles["Normal"], alignment=TA_RIGHT, textColor=colors.white)),
+    ]
+    rows = [header_row]
+    for idx, it in enumerate(s.get("items") or [], 1):
+        pricing_mode = it.get("product_pricing_mode")
+        is_fixed = it.get("product_id") and pricing_mode == "fixed"
+        name = it.get("product_name") or it.get("material_name") or "-"
+        # Bahan breakdown
+        comps = it.get("components") or []
+        if len(comps) > 1:
+            mat_bits = " + ".join(f"{c.get('material_name', '-')} {_num(c.get('consumption'))}{c.get('material_unit', '')}" for c in comps)
+            desc = f"{name}<br/><font size=7 color='#666'>Bahan: {mat_bits}</font>"
+        elif it.get("material_name") and not it.get("product_name"):
+            desc = name
+        elif comps:
+            c = comps[0]
+            desc = f"{name}<br/><font size=7 color='#666'>{c.get('material_name', '')}</font>"
+        else:
+            desc = name
+        if is_fixed:
+            qty_dim = f"{int(it.get('quantity', 1))} pcs"
+            harga = f"{_idr(it.get('unit_price'))}"
+        else:
+            qty_dim = f"{_num(it.get('length_m'))}m × {_num(it.get('width_m'))}m × {int(it.get('quantity', 1))}<br/><font size=7 color='#666'>= {_num(it.get('area_total'))} m²</font>"
+            harga = f"{_idr(it.get('unit_price'))}/m²"
+        rows.append([
+            Paragraph(str(idx), ParagraphStyle("n", parent=styles["Normal"], alignment=TA_CENTER)),
+            Paragraph(desc, styles["Normal"]),
+            Paragraph(qty_dim, ParagraphStyle("q", parent=styles["Normal"], alignment=TA_CENTER)),
+            Paragraph(harga, right),
+            Paragraph(_idr(it.get("subtotal")), right),
+        ])
+    items_tbl = Table(rows, colWidths=[10 * mm, 65 * mm, 34 * mm, 30 * mm, 35 * mm], repeatRows=1)
+    items_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#002FA7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#dddddd")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f8f8")]),
+    ]))
+    story.append(items_tbl)
+    story.append(Spacer(1, 4 * mm))
+
+    # Totals (kanan)
+    total_rows = [
+        [Paragraph("Subtotal", right), Paragraph(_idr(s.get("subtotal")), right)],
+    ]
+    if float(s.get("discount", 0)) > 0:
+        total_rows.append([Paragraph("Diskon", right), Paragraph(f"- {_idr(s.get('discount'))}", right)])
+    total_rows.append([
+        Paragraph("<b><font size=12>TOTAL</font></b>", right),
+        Paragraph(f"<b><font size=12 color='#002FA7'>{_idr(s.get('total'))}</font></b>", right),
+    ])
+    total_rows.append([Paragraph("Bayar (Tunai)", right), Paragraph(_idr(s.get("cash_paid")), right)])
+    total_rows.append([Paragraph("Kembali", right), Paragraph(_idr(s.get("change")), right)])
+    total_tbl = Table(total_rows, colWidths=[100 * mm, 55 * mm], hAlign="RIGHT")
+    total_tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEABOVE", (0, -3), (-1, -3), 1.5, colors.HexColor("#002FA7")),
+        ("LINEBELOW", (0, -3), (-1, -3), 0.5, colors.HexColor("#cccccc")),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(total_tbl)
+
+    if s.get("notes"):
+        story.append(Spacer(1, 6 * mm))
+        story.append(Paragraph(f"<b>Catatan:</b> {s.get('notes')}", ParagraphStyle("notes", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#555"))))
+
+    # Footer signatures
+    story.append(Spacer(1, 15 * mm))
+    sign_rows = [[
+        Paragraph("<b>Pelanggan</b><br/><br/><br/><br/><br/>(_______________________)", ParagraphStyle("sc", parent=styles["Normal"], alignment=TA_CENTER, fontSize=9)),
+        Paragraph("", styles["Normal"]),
+        Paragraph(f"<b>Hormat kami</b><br/>{ci['name']}<br/><br/><br/><br/>(_______________________)", ParagraphStyle("ss", parent=styles["Normal"], alignment=TA_CENTER, fontSize=9)),
+    ]]
+    sign_tbl = Table(sign_rows, colWidths=[60 * mm, 30 * mm, 65 * mm])
+    story.append(sign_tbl)
+
+    doc.build(story)
+    buf.seek(0)
+    fname = f"Nota_{s.get('sale_no', 'penjualan').replace('/', '_')}.pdf"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename={fname}"},
+    )
+
+
+@api_router.get("/sales/report/pdf")
+async def sales_report_pdf(
+    user: dict = Depends(require_super_admin),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    month: Optional[str] = None,  # YYYY-MM (opsional, override date_from/to)
+):
+    """Laporan Penjualan PDF landscape untuk periode tertentu."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+
+    # Tentukan range
+    if month:
+        try:
+            year, m = month.split("-")
+            date_from = f"{year}-{int(m):02d}-01"
+            if int(m) == 12:
+                date_to = f"{int(year)+1}-01-01"
+            else:
+                date_to = f"{year}-{int(m)+1:02d}-01"
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format month salah, gunakan YYYY-MM")
+
+    q = {}
+    if date_from or date_to:
+        q["date"] = {}
+        if date_from:
+            q["date"]["$gte"] = date_from
+        if date_to:
+            q["date"]["$lt"] = date_to
+    items = await db.sales.find(q, {"_id": 0}).sort("created_at", 1).to_list(length=20000)
+    ci = _company_info()
+
+    def _idr(n):
+        return f"Rp {float(n or 0):,.0f}".replace(",", ".")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=12 * mm, rightMargin=12 * mm,
+        topMargin=12 * mm, bottomMargin=12 * mm,
+        title=f"Laporan Penjualan {date_from or ''} - {date_to or ''}",
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Header
+    story.append(Paragraph(ci["name"].upper(), ParagraphStyle("co", parent=styles["Normal"], fontSize=13, textColor=colors.HexColor("#002FA7"), fontName="Helvetica-Bold")))
+    story.append(Paragraph(f"{ci['address']} · HP: {ci['phone']}", ParagraphStyle("addr", parent=styles["Normal"], fontSize=8, textColor=colors.HexColor("#555"))))
+    story.append(Spacer(1, 4 * mm))
+
+    period_label = f"{date_from or '(awal)'} s/d {date_to or '(sekarang)'}"
+    if month:
+        period_label = f"Bulan {month}"
+    story.append(Paragraph(f"<b>LAPORAN PENJUALAN</b>", ParagraphStyle("t", parent=styles["Normal"], fontSize=14, alignment=TA_CENTER, fontName="Helvetica-Bold")))
+    story.append(Paragraph(f"Periode: <b>{period_label}</b> · Total transaksi: <b>{len(items)}</b>", ParagraphStyle("p", parent=styles["Normal"], fontSize=9, alignment=TA_CENTER, textColor=colors.HexColor("#555"))))
+    story.append(Spacer(1, 5 * mm))
+
+    right = ParagraphStyle("r", parent=styles["Normal"], alignment=TA_RIGHT, fontSize=9)
+    center = ParagraphStyle("c", parent=styles["Normal"], alignment=TA_CENTER, fontSize=9)
+    normal_sm = ParagraphStyle("ns", parent=styles["Normal"], fontSize=9)
+
+    header_row = [
+        Paragraph("<b>No</b>", ParagraphStyle("hn", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Tanggal</b>", ParagraphStyle("hd", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>No. Nota</b>", ParagraphStyle("hno", parent=styles["Normal"], textColor=colors.white)),
+        Paragraph("<b>Pelanggan</b>", ParagraphStyle("hc", parent=styles["Normal"], textColor=colors.white)),
+        Paragraph("<b>Kasir</b>", ParagraphStyle("hk", parent=styles["Normal"], textColor=colors.white)),
+        Paragraph("<b>Item</b>", ParagraphStyle("hi", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Subtotal</b>", ParagraphStyle("hs", parent=styles["Normal"], alignment=TA_RIGHT, textColor=colors.white)),
+        Paragraph("<b>Diskon</b>", ParagraphStyle("hd2", parent=styles["Normal"], alignment=TA_RIGHT, textColor=colors.white)),
+        Paragraph("<b>Total</b>", ParagraphStyle("ht", parent=styles["Normal"], alignment=TA_RIGHT, textColor=colors.white)),
+    ]
+    rows = [header_row]
+    total_subtotal = 0.0
+    total_discount = 0.0
+    total_grand = 0.0
+    for idx, s in enumerate(items, 1):
+        item_count = len(s.get("items") or [])
+        rows.append([
+            Paragraph(str(idx), center),
+            Paragraph(str(s.get("date", "")), center),
+            Paragraph(str(s.get("sale_no", "")), normal_sm),
+            Paragraph(str(s.get("customer_name", "Umum") or "Umum")[:35], normal_sm),
+            Paragraph(str(s.get("cashier_name", ""))[:20], normal_sm),
+            Paragraph(f"{item_count}", center),
+            Paragraph(_idr(s.get("subtotal")), right),
+            Paragraph(_idr(s.get("discount")), right),
+            Paragraph(_idr(s.get("total")), right),
+        ])
+        total_subtotal += float(s.get("subtotal", 0) or 0)
+        total_discount += float(s.get("discount", 0) or 0)
+        total_grand += float(s.get("total", 0) or 0)
+    # Total row
+    rows.append([
+        Paragraph(""),
+        Paragraph(""),
+        Paragraph(""),
+        Paragraph(""),
+        Paragraph(""),
+        Paragraph("<b>TOTAL</b>", ParagraphStyle("tt", parent=styles["Normal"], alignment=TA_RIGHT, fontSize=10, fontName="Helvetica-Bold")),
+        Paragraph(f"<b>{_idr(total_subtotal)}</b>", ParagraphStyle("ts", parent=styles["Normal"], alignment=TA_RIGHT, fontSize=10, fontName="Helvetica-Bold")),
+        Paragraph(f"<b>{_idr(total_discount)}</b>", ParagraphStyle("td", parent=styles["Normal"], alignment=TA_RIGHT, fontSize=10, fontName="Helvetica-Bold")),
+        Paragraph(f"<b>{_idr(total_grand)}</b>", ParagraphStyle("tg", parent=styles["Normal"], alignment=TA_RIGHT, fontSize=10, fontName="Helvetica-Bold", textColor=colors.HexColor("#002FA7"))),
+    ])
+
+    tbl = Table(rows, colWidths=[10 * mm, 22 * mm, 30 * mm, 55 * mm, 30 * mm, 14 * mm, 32 * mm, 30 * mm, 35 * mm], repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#002FA7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#dddddd")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f8f8f8")]),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e8ecf7")),
+        ("LINEABOVE", (0, -1), (-1, -1), 1.5, colors.HexColor("#002FA7")),
+    ]))
+    story.append(tbl)
+
+    if not items:
+        story.append(Spacer(1, 10 * mm))
+        story.append(Paragraph("<i>Belum ada transaksi pada periode ini.</i>", ParagraphStyle("empty", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.HexColor("#999"))))
+
+    doc.build(story)
+    buf.seek(0)
+    fname_period = month or (f"{date_from}_sd_{date_to}" if (date_from or date_to) else "semua")
+    fname = f"Laporan_Penjualan_{fname_period}.pdf"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename={fname}"},
+    )
+
+
+@api_router.get("/sales/report/excel")
+async def sales_report_excel(
+    user: dict = Depends(require_super_admin),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    month: Optional[str] = None,
+):
+    """Laporan Penjualan Excel untuk periode tertentu."""
+    import pandas as pd
+    if month:
+        try:
+            year, m = month.split("-")
+            date_from = f"{year}-{int(m):02d}-01"
+            if int(m) == 12:
+                date_to = f"{int(year)+1}-01-01"
+            else:
+                date_to = f"{year}-{int(m)+1:02d}-01"
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format month salah, gunakan YYYY-MM")
+
+    q = {}
+    if date_from or date_to:
+        q["date"] = {}
+        if date_from:
+            q["date"]["$gte"] = date_from
+        if date_to:
+            q["date"]["$lt"] = date_to
+    items = await db.sales.find(q, {"_id": 0}).sort("created_at", 1).to_list(length=20000)
+    ci = _company_info()
+
+    rows = []
+    for s in items:
+        rows.append({
+            "Tanggal": s.get("date", ""),
+            "No. Nota": s.get("sale_no", ""),
+            "Pelanggan": s.get("customer_name", "Umum") or "Umum",
+            "No. Telepon": s.get("customer_phone", "") or "",
+            "Kasir": s.get("cashier_name", ""),
+            "Jumlah Item": len(s.get("items") or []),
+            "Subtotal": float(s.get("subtotal", 0) or 0),
+            "Diskon": float(s.get("discount", 0) or 0),
+            "Total": float(s.get("total", 0) or 0),
+            "Bayar Tunai": float(s.get("cash_paid", 0) or 0),
+            "Kembali": float(s.get("change", 0) or 0),
+            "Metode": (s.get("payment_method") or "tunai").upper(),
+            "Catatan": s.get("notes", "") or "",
+        })
+    if not rows:
+        rows.append({
+            "Tanggal": "", "No. Nota": "", "Pelanggan": "(Tidak ada transaksi pada periode ini)",
+            "No. Telepon": "", "Kasir": "", "Jumlah Item": 0, "Subtotal": 0, "Diskon": 0,
+            "Total": 0, "Bayar Tunai": 0, "Kembali": 0, "Metode": "", "Catatan": "",
+        })
+    df = pd.DataFrame(rows)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        sheet_name = f"Penjualan {month or 'periode'}"[:31]
+        df.to_excel(writer, index=False, sheet_name=sheet_name, startrow=3)
+        ws = writer.sheets[sheet_name]
+        # Header perusahaan
+        ws["A1"] = ci["name"].upper()
+        ws["A2"] = f"{ci['address']} · HP: {ci['phone']}"
+        period_label = f"Bulan {month}" if month else f"{date_from or '(awal)'} s/d {date_to or '(sekarang)'}"
+        ws["A3"] = f"Laporan Penjualan · Periode: {period_label} · {len(items)} transaksi"
+        # Auto width
+        for col_idx, col in enumerate(df.columns, 1):
+            max_len = max((len(str(v)) for v in df[col].astype(str).values), default=10)
+            max_len = max(max_len, len(str(col)))
+            ws.column_dimensions[ws.cell(row=4, column=col_idx).column_letter].width = min(max_len + 2, 45)
+        # Total footer row
+        if items:
+            total_row = len(rows) + 5
+            ws.cell(row=total_row, column=1, value="TOTAL")
+            ws.cell(row=total_row, column=7, value=sum(float(s.get("subtotal", 0) or 0) for s in items))
+            ws.cell(row=total_row, column=8, value=sum(float(s.get("discount", 0) or 0) for s in items))
+            ws.cell(row=total_row, column=9, value=sum(float(s.get("total", 0) or 0) for s in items))
+    buf.seek(0)
+    fname_period = month or (f"{date_from}_sd_{date_to}" if (date_from or date_to) else "semua")
+    fname = f"Laporan_Penjualan_{fname_period}.xlsx"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
 @api_router.get("/sales/stats/today")
 async def sales_stats_today(user: dict = Depends(require_super_admin)):
     today = datetime.now(timezone.utc).date().isoformat()

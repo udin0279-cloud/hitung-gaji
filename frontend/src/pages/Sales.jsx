@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { Plus, Trash2, X, Search, ShoppingBag, Printer, Receipt, DollarSign, TrendingUp } from "lucide-react";
+import { Plus, Trash2, X, Search, ShoppingBag, Printer, Receipt, DollarSign, TrendingUp, FileText, Download, FileSpreadsheet } from "lucide-react";
 
 const inputCls = "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none";
 
@@ -19,6 +19,7 @@ export default function Sales() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [openNew, setOpenNew] = useState(false);
+  const [openReport, setOpenReport] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -57,6 +58,11 @@ export default function Sales() {
     window.open(url, "_blank", "width=380,height=650");
   };
 
+  const openInvoiceA4 = (s) => {
+    const url = `${API}/sales/${s.id}/invoice-pdf`;
+    window.open(url, "_blank");
+  };
+
   const remove = async (s) => {
     if (!window.confirm(`Hapus transaksi ${s.sale_no}? Stok akan dikembalikan.`)) return;
     try { await api.delete(`/sales/${s.id}`); toast.success("Transaksi dihapus, stok dikembalikan"); await loadAll(); }
@@ -84,9 +90,14 @@ export default function Sales() {
           <h1 className="font-heading text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Penjualan / Kasir</h1>
           <p className="text-sm text-zinc-500 mt-1">POS digital printing — hitung otomatis berdasarkan luas (P×L×Qty) &amp; cetak struk thermal 80mm.</p>
         </div>
-        <button data-testid="new-sale-button" onClick={openNewSale} className="rounded-none bg-[#002FA7] text-white px-6 py-3 text-sm font-bold uppercase tracking-wider hover:bg-[#002FA7]/90 inline-flex items-center gap-2">
-          <Plus className="w-4 h-4" /> Transaksi Baru
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button data-testid="open-sales-report-button" onClick={() => setOpenReport(true)} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-4 py-2.5 text-sm hover:bg-zinc-50 inline-flex items-center gap-2">
+            <FileText className="w-4 h-4" /> Laporan Bulanan
+          </button>
+          <button data-testid="new-sale-button" onClick={openNewSale} className="rounded-none bg-[#002FA7] text-white px-6 py-3 text-sm font-bold uppercase tracking-wider hover:bg-[#002FA7]/90 inline-flex items-center gap-2">
+            <Plus className="w-4 h-4" /> Transaksi Baru
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -150,14 +161,22 @@ export default function Sales() {
                     <div className={s.change > 0 ? "text-[#008A00] font-semibold" : ""}>Kembali: {formatIDR(s.change)}</div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
+                    <div className="flex items-center justify-end gap-1.5 flex-wrap">
                       <button
                         data-testid="print-receipt-button"
                         onClick={() => openReceipt(s)}
                         className="inline-flex items-center gap-1.5 rounded-none border border-[#002FA7] bg-[#002FA7] text-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-[#002080] transition-colors"
                         title="Cetak Nota Thermal 80mm"
                       >
-                        <Printer className="w-3.5 h-3.5" /> Cetak Nota
+                        <Printer className="w-3.5 h-3.5" /> Struk 80mm
+                      </button>
+                      <button
+                        data-testid="invoice-a4-button"
+                        onClick={() => openInvoiceA4(s)}
+                        className="inline-flex items-center gap-1.5 rounded-none border border-zinc-300 bg-white text-zinc-900 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-zinc-50 transition-colors"
+                        title="Nota A4 Profesional (PDF)"
+                      >
+                        <FileText className="w-3.5 h-3.5" /> Nota A4
                       </button>
                       <button data-testid="delete-sale-button" onClick={() => remove(s)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123] border border-transparent hover:border-[#E81123]/30" title="Hapus"><Trash2 className="w-3.5 h-3.5" /></button>
                     </div>
@@ -170,6 +189,91 @@ export default function Sales() {
       </div>
 
       {openNew && <NewSaleModal materials={materials} products={products} customers={customers} onClose={() => setOpenNew(false)} onSaved={async (created) => { setOpenNew(false); await loadAll(); openReceipt(created, true); }} />}
+      {openReport && <SalesReportModal onClose={() => setOpenReport(false)} />}
+    </div>
+  );
+}
+
+function SalesReportModal({ onClose }) {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [downloading, setDownloading] = useState("");
+
+  const download = async (format) => {
+    setDownloading(format);
+    try {
+      const url = `/sales/report/${format}?month=${month}`;
+      const res = await api.get(url, { responseType: "blob" });
+      const mime = format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      const blob = new Blob([res.data], { type: mime });
+      const objUrl = window.URL.createObjectURL(blob);
+      // PDF → open in new tab; Excel → download
+      if (format === "pdf") {
+        window.open(objUrl, "_blank");
+      } else {
+        const a = document.createElement("a");
+        a.href = objUrl;
+        a.download = `Laporan_Penjualan_${month}.xlsx`;
+        document.body.appendChild(a); a.click(); a.remove();
+        window.URL.revokeObjectURL(objUrl);
+      }
+      toast.success(`Laporan ${format.toUpperCase()} berhasil dibuat`);
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal membuat laporan");
+    } finally {
+      setDownloading("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white border border-zinc-300 w-full max-w-lg">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-200">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 flex items-center justify-center bg-[#002FA7]">
+              <FileText className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Cetak / Export</div>
+              <h3 className="font-bold text-zinc-900 text-lg">Laporan Penjualan Bulanan</h3>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-zinc-100"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5 space-y-5">
+          <div>
+            <label className="block">
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-1.5">Pilih Bulan</div>
+              <input
+                data-testid="sales-report-month"
+                type="month" value={month} onChange={(e) => setMonth(e.target.value)}
+                className="rounded-none border border-zinc-300 bg-white px-3 py-2.5 text-sm font-mono focus:border-[#002FA7] focus:outline-none w-full"
+              />
+            </label>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              data-testid="sales-report-pdf-btn"
+              onClick={() => download("pdf")}
+              disabled={!!downloading}
+              className="rounded-none bg-[#E81123] hover:bg-[#c00e1f] disabled:opacity-40 text-white px-5 py-3 text-sm font-bold uppercase tracking-wider inline-flex items-center justify-center gap-2 transition-colors"
+            >
+              <FileText className="w-4 h-4" /> {downloading === "pdf" ? "Membuat…" : "Cetak PDF"}
+            </button>
+            <button
+              data-testid="sales-report-excel-btn"
+              onClick={() => download("excel")}
+              disabled={!!downloading}
+              className="rounded-none bg-[#008A00] hover:bg-[#006D00] disabled:opacity-40 text-white px-5 py-3 text-sm font-bold uppercase tracking-wider inline-flex items-center justify-center gap-2 transition-colors"
+            >
+              <FileSpreadsheet className="w-4 h-4" /> {downloading === "excel" ? "Membuat…" : "Export Excel"}
+            </button>
+          </div>
+          <div className="text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-200 p-3">
+            <b>PDF:</b> Buka di tab baru untuk preview & cetak (landscape A4) · <b>Excel:</b> Otomatis diunduh (bisa diedit ulang).
+            Laporan berisi kolom: Tanggal, No. Nota, Pelanggan, Kasir, Jumlah Item, Subtotal, Diskon, Total (+ grand total di footer).
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
