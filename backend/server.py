@@ -4699,6 +4699,10 @@ async def po_delete(po_id: str, user: dict = Depends(require_super_admin)):
                 new_stock = round(float(mat.get("current_stock", 0)) - float(si.get("quantity", 0)), 4)
                 await db.materials.update_one({"id": si["material_id"]}, {"$set": {"current_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}})
         await db.stock_in.delete_many({"po_id": po_id})
+    # Rollback cash transactions AUTO yang dibuat dari pembayaran PO ini
+    po_no = po.get("po_no")
+    if po_no:
+        await db.cash_transactions.delete_many({"reference": po_no, "auto": True, "account_code": "201"})
     await db.purchase_orders.delete_one({"id": po_id})
     return {"ok": True}
 
@@ -6098,15 +6102,55 @@ async def cash_transaction_update(tx_id: str, payload: CashTransactionIn, user: 
     return await db.cash_transactions.find_one({"id": tx_id}, {"_id": 0})
 
 
+async def _is_cash_tx_orphaned(tx: Dict[str, Any]) -> bool:
+    """Cek apakah cash transaction AUTO adalah orphan (sumbernya sudah tidak ada)."""
+    if not tx.get("auto"):
+        return False
+    ref = tx.get("reference")
+    if not ref:
+        return False
+    code = tx.get("account_code")
+    # code 201 = auto dari PO payment (reference = po_no)
+    if code == "201":
+        po = await db.purchase_orders.find_one({"po_no": ref}, {"_id": 0, "id": 1})
+        return po is None
+    # code 301 = auto dari Sales (reference = sale_no)
+    if code == "301":
+        sale = await db.sales.find_one({"sale_no": ref}, {"_id": 0, "id": 1})
+        return sale is None
+    return False
+
+
 @api_router.delete("/cashbook/transactions/{tx_id}")
-async def cash_transaction_delete(tx_id: str, user: dict = Depends(require_super_admin)):
+async def cash_transaction_delete(tx_id: str, force: bool = False, user: dict = Depends(require_super_admin)):
     existing = await db.cash_transactions.find_one({"id": tx_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
-    if existing.get("auto"):
-        raise HTTPException(status_code=400, detail="Transaksi otomatis tidak bisa dihapus dari sini. Batalkan di modul sumbernya.")
+    if existing.get("auto") and not force:
+        # Cek apakah orphan — kalau iya, izinkan hapus tanpa force
+        orphan = await _is_cash_tx_orphaned(existing)
+        if not orphan:
+            raise HTTPException(status_code=400, detail="Transaksi otomatis tidak bisa dihapus dari sini. Batalkan di modul sumbernya.")
     await db.cash_transactions.delete_one({"id": tx_id})
-    return {"ok": True}
+    return {"ok": True, "was_orphan": existing.get("auto", False)}
+
+
+@api_router.get("/cashbook/transactions/{tx_id}/orphan-check")
+async def cash_transaction_orphan_check(tx_id: str, user: dict = Depends(require_super_admin)):
+    """Cek apakah transaksi kas AUTO adalah orphan (sumbernya sudah dihapus)."""
+    existing = await db.cash_transactions.find_one({"id": tx_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    if not existing.get("auto"):
+        return {"is_auto": False, "is_orphan": False, "reference": existing.get("reference")}
+    orphan = await _is_cash_tx_orphaned(existing)
+    return {
+        "is_auto": True,
+        "is_orphan": orphan,
+        "reference": existing.get("reference"),
+        "account_code": existing.get("account_code"),
+        "source_type": "PO" if existing.get("account_code") == "201" else ("Sale" if existing.get("account_code") == "301" else "Unknown"),
+    }
 
 
 @api_router.get("/cashbook/balance")

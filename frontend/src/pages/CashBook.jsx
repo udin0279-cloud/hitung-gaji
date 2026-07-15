@@ -64,8 +64,25 @@ export default function CashBook() {
   });
 
   const removeTx = async (t) => {
-    if (t.auto) { toast.error("Transaksi otomatis dari Sales/PO — batalkan di modul sumbernya."); return; }
-    if (!window.confirm(`Hapus transaksi "${t.description}"?`)) return;
+    if (t.auto) {
+      // Cek dulu apakah orphan (sumber PO/Sale sudah dihapus)
+      try {
+        const chk = await api.get(`/cashbook/transactions/${t.id}/orphan-check`);
+        if (!chk.data.is_orphan) {
+          toast.error(`Transaksi otomatis dari ${chk.data.source_type} ${chk.data.reference}. Batalkan / hapus di modul sumbernya.`);
+          return;
+        }
+        // Orphan — konfirmasi khusus
+        if (!window.confirm(
+          `Transaksi ini dibuat otomatis dari ${chk.data.source_type} ${chk.data.reference}, tapi sumbernya sudah dihapus (orphan).\n\nHapus transaksi kas ini sekarang?`
+        )) return;
+      } catch (err) {
+        toast.error("Gagal cek status transaksi");
+        return;
+      }
+    } else {
+      if (!window.confirm(`Hapus transaksi "${t.description}"?`)) return;
+    }
     try { await api.delete(`/cashbook/transactions/${t.id}`); toast.success("Transaksi dihapus"); await loadAll(); }
     catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
   };
@@ -272,8 +289,8 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
                 <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-zinc-900">{formatIDR(t.balance)}</td>
                 <td className="px-3 py-2.5">
                   <div className="flex items-center justify-end gap-1">
-                    <button data-testid="edit-tx-button" onClick={() => onEdit(t)} disabled={t.auto} className="p-1.5 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed" title={t.auto ? "Transaksi otomatis" : "Edit"}><Pencil className="w-3.5 h-3.5" /></button>
-                    <button data-testid="del-tx-button" onClick={() => onRemove(t)} disabled={t.auto} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123] disabled:opacity-30 disabled:cursor-not-allowed" title={t.auto ? "Transaksi otomatis" : "Hapus"}><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button data-testid="edit-tx-button" onClick={() => onEdit(t)} disabled={t.auto} className="p-1.5 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed" title={t.auto ? "Transaksi otomatis — edit di modul sumbernya" : "Edit"}><Pencil className="w-3.5 h-3.5" /></button>
+                    <button data-testid="del-tx-button" onClick={() => onRemove(t)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]" title={t.auto ? "Coba hapus (sistem akan cek orphan)" : "Hapus"}><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 </td>
               </tr>
