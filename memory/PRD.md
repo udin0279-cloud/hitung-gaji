@@ -620,3 +620,48 @@ User meminta 3 fitur cetak/export di modul Penjualan/Kasir:
 ### Files Changed
 - `backend/server.py` — 3 endpoint baru (~380 baris) sebelum `/sales/stats/today`, memakai `_company_info()` + `io.BytesIO()` + reportlab/openpyxl
 - `frontend/src/pages/Sales.jsx` — Import icons (FileText, FileSpreadsheet), function `openInvoiceA4()`, tombol "Laporan Bulanan" di header, tombol "NOTA A4" di kolom aksi row (label struk 80mm juga diringkas), komponen `SalesReportModal` di akhir file (picker bulan + 2 tombol PDF/Excel)
+
+---
+## Update: 2026-07-15 (session 3) — Sizing untuk Kaos/Jersey
+
+### Implemented (Iteration 27 — 56/56 tests passed)
+Fitur ukuran (size) untuk produk kaos/jersey dengan sistem 2-tier harga & konsumsi bahan.
+
+**Konvensi Tier:**
+- **Tier A** (S, M, L, XL) → gunakan `price_size_a` dan `quantity` component
+- **Tier B** (XXL, XXXL, dst) → gunakan `price_size_b` dan `quantity_size_b` (fallback `quantity`)
+
+**Backend:**
+- `ProductComponent` + field `quantity_size_b: Optional[float]`
+- `ProductIn` + fields: `has_sizes`, `sizes: List[str]`, `price_size_a`, `price_size_b`
+- Constant `SIZE_TIER_A = {S,M,L,XL}` + helper `_size_tier(size)`
+- `SaleItemIn` + field `size: Optional[str]`
+- `sales_create` logic: validasi size wajib untuk has_sizes produk, harga otomatis dari tier, konsumsi bahan pakai quantity_size_b bila tier B
+- Response sale item include: `size`, `size_tier`
+
+**Frontend Inventory (Master Produk):**
+- Toggle **"Produk ini memiliki ukuran (kaos / jersey)"**
+- Grid multi-select size dengan warna: biru (tier A) & merah (tier B)
+- 2 kolom harga: `price_size_a` (biru) & `price_size_b` (merah)
+- Setiap komponen BOM tampil kolom tambahan **"JUMLAH XXL+"** (opsional) saat has_sizes aktif
+- Input `unit_price` disabled saat has_sizes aktif
+
+**Frontend Sales (Kasir):**
+- Setelah pilih produk has_sizes, muncul section "Pilih Ukuran" dengan buttons per size
+- Klik size → harga otomatis ganti ke tier sesuai (auto-refresh dari `price_size_a` / `price_size_b`)
+- Live preview: "Tier: XXL+ · Harga otomatis: Rp 95.000"
+- Validasi: submit disabled bila has_sizes tapi belum pilih size
+- Konsumsi bahan real-time menyesuaikan tier (untuk display live stock warning)
+
+### Contoh
+Produk **Kaos Sablon**: harga S-XL = 85rb, harga XXL+ = 95rb. Komponen: 1 kaos polos per_qty (S-XL) / 1.2 kaos polos (XXL+ untuk kompensasi ukuran besar).
+- Jual ukuran M → harga 85.000, stok kaos berkurang 1
+- Jual ukuran XXL → harga 95.000, stok kaos berkurang 1.2
+
+### Files Changed
+- `backend/server.py` — model + validasi + logic sales
+- `frontend/src/pages/Inventory.jsx` — ProductsTab: sizing section + kolom XXL+ per komponen
+- `frontend/src/pages/Sales.jsx` — NewSaleModal: sizeTier helper, onSizeChange, size selector UI, canSubmit validation
+
+### Testing
+Iteration 27: 13 new + 43 regression = **56/56 PASSED** backend + full frontend E2E via testing agent.
