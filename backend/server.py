@@ -5415,13 +5415,21 @@ DEFAULT_CASH_ACCOUNTS = [
     {"code": "302", "name": "Terima Piutang", "type": "in", "system": False},
     {"code": "303", "name": "Modal / Setoran Kas", "type": "in", "system": False},
     {"code": "304", "name": "Pendapatan Lain-lain", "type": "in", "system": False},
-    # Pengeluaran (expense)
+    # Kode Akun Akuntansi Standar (Assets & Expense) — permintaan user
+    {"code": "101", "name": "Kas", "type": "in", "system": False},
+    {"code": "103", "name": "Persediaan Barang", "type": "out", "system": False},
+    {"code": "103-01", "name": "Bahan Baku Mesin", "type": "out", "system": False},
+    {"code": "104", "name": "Perlengkapan Kantor", "type": "out", "system": False},
+    {"code": "105", "name": "BBM dan Maintenance Kendaraan", "type": "out", "system": False},
+    {"code": "106", "name": "Pengiriman Dokumen", "type": "out", "system": False},
+    {"code": "108", "name": "Makan dan Entertainment", "type": "out", "system": False},
+    # Pengeluaran (expense) — kode lama tetap kompatibel
     {"code": "201", "name": "Bayar Utang Usaha", "type": "out", "system": True},
     {"code": "401", "name": "Pembelian Bahan Baku", "type": "out", "system": False},
     {"code": "402", "name": "Perlengkapan Kantor", "type": "out", "system": False},
     {"code": "403", "name": "Alat Tulis Kantor", "type": "out", "system": False},
     {"code": "501", "name": "BBM, Parkir & Maintenance Kendaraan", "type": "out", "system": False},
-    {"code": "502", "name": "Listrik, Air, Telepon, Internet", "type": "out", "system": False},
+    {"code": "502", "name": "Beban Listrik, Air, Telepon", "type": "out", "system": False},
     {"code": "503", "name": "Sewa Kendaraan", "type": "out", "system": False},
     {"code": "504", "name": "Sewa Bangunan / Mess", "type": "out", "system": False},
     {"code": "505", "name": "Gaji Karyawan", "type": "out", "system": False},
@@ -5437,19 +5445,20 @@ DEFAULT_CASH_ACCOUNTS = [
 
 
 async def _ensure_cash_accounts():
-    """Seed default chart of accounts once."""
-    count = await db.cash_accounts.count_documents({})
-    if count == 0:
-        for a in DEFAULT_CASH_ACCOUNTS:
-            await db.cash_accounts.insert_one({
-                "id": str(uuid.uuid4()),
-                "code": a["code"],
-                "name": a["name"],
-                "type": a["type"],
-                "system": a["system"],
-                "active": True,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
+    """Seed default chart of accounts idempotently (per kode akun)."""
+    for a in DEFAULT_CASH_ACCOUNTS:
+        exists = await db.cash_accounts.find_one({"code": a["code"]})
+        if exists:
+            continue
+        await db.cash_accounts.insert_one({
+            "id": str(uuid.uuid4()),
+            "code": a["code"],
+            "name": a["name"],
+            "type": a["type"],
+            "system": a["system"],
+            "active": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
 
 
 class CashAccountIn(BaseModel):
@@ -5853,6 +5862,130 @@ async def cash_export(user: dict = Depends(require_super_admin), month: Optional
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={fname}"},
     )
+
+
+# ================================================================
+# ==================== KASBON SEMENTARA (Cash Advance) ============
+# ================================================================
+class KasbonIn(BaseModel):
+    date: str  # YYYY-MM-DD
+    name: str
+    description: Optional[str] = ""
+    amount: float
+
+
+@api_router.get("/cashbook/kasbon")
+async def kasbon_list(
+    user: dict = Depends(require_super_admin),
+    month: Optional[str] = None,  # YYYY-MM (opsional)
+    status: Optional[str] = None,  # "open" | "settled"
+):
+    q: Dict[str, Any] = {}
+    if month:
+        try:
+            year, m = month.split("-")
+            first = f"{year}-{int(m):02d}-01"
+            if int(m) == 12:
+                nxt = f"{int(year)+1}-01-01"
+            else:
+                nxt = f"{year}-{int(m)+1:02d}-01"
+            q["date"] = {"$gte": first, "$lt": nxt}
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format bulan salah, gunakan YYYY-MM")
+    if status in ("open", "settled"):
+        q["status"] = status
+    items = await db.kasbon_sementara.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(length=5000)
+    total_open = sum(float(i.get("amount", 0)) for i in items if i.get("status") == "open")
+    total_settled = sum(float(i.get("amount", 0)) for i in items if i.get("status") == "settled")
+    total_all = sum(float(i.get("amount", 0)) for i in items)
+    return {
+        "items": items,
+        "total_open": round(total_open, 2),
+        "total_settled": round(total_settled, 2),
+        "total_all": round(total_all, 2),
+        "count": len(items),
+    }
+
+
+@api_router.post("/cashbook/kasbon")
+async def kasbon_create(payload: KasbonIn, user: dict = Depends(require_super_admin)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Nama wajib diisi")
+    if payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Jumlah harus > 0")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": payload.date,
+        "name": payload.name.strip(),
+        "description": (payload.description or "").strip(),
+        "amount": round(float(payload.amount), 2),
+        "status": "open",
+        "settled_at": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": user.get("email"),
+    }
+    await db.kasbon_sementara.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/cashbook/kasbon/{kasbon_id}")
+async def kasbon_update(kasbon_id: str, payload: KasbonIn, user: dict = Depends(require_super_admin)):
+    existing = await db.kasbon_sementara.find_one({"id": kasbon_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Kasbon tidak ditemukan")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Nama wajib diisi")
+    if payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Jumlah harus > 0")
+    await db.kasbon_sementara.update_one(
+        {"id": kasbon_id},
+        {"$set": {
+            "date": payload.date,
+            "name": payload.name.strip(),
+            "description": (payload.description or "").strip(),
+            "amount": round(float(payload.amount), 2),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    doc = await db.kasbon_sementara.find_one({"id": kasbon_id}, {"_id": 0})
+    return doc
+
+
+@api_router.put("/cashbook/kasbon/{kasbon_id}/settle")
+async def kasbon_settle(kasbon_id: str, user: dict = Depends(require_super_admin)):
+    existing = await db.kasbon_sementara.find_one({"id": kasbon_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Kasbon tidak ditemukan")
+    if existing.get("status") == "settled":
+        raise HTTPException(status_code=400, detail="Kasbon sudah dilunaskan")
+    await db.kasbon_sementara.update_one(
+        {"id": kasbon_id},
+        {"$set": {"status": "settled", "settled_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    doc = await db.kasbon_sementara.find_one({"id": kasbon_id}, {"_id": 0})
+    return doc
+
+
+@api_router.put("/cashbook/kasbon/{kasbon_id}/reopen")
+async def kasbon_reopen(kasbon_id: str, user: dict = Depends(require_super_admin)):
+    existing = await db.kasbon_sementara.find_one({"id": kasbon_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Kasbon tidak ditemukan")
+    await db.kasbon_sementara.update_one(
+        {"id": kasbon_id},
+        {"$set": {"status": "open", "settled_at": None}},
+    )
+    doc = await db.kasbon_sementara.find_one({"id": kasbon_id}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/cashbook/kasbon/{kasbon_id}")
+async def kasbon_delete(kasbon_id: str, user: dict = Depends(require_super_admin)):
+    res = await db.kasbon_sementara.delete_one({"id": kasbon_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Kasbon tidak ditemukan")
+    return {"ok": True}
 
 
 # Include router

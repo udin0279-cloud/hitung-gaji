@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import {
   Plus, Trash2, X, Search, Wallet, TrendingUp, TrendingDown, Download,
   Pencil, ArrowUpCircle, ArrowDownCircle, Settings, ChevronRight, Lock,
+  BookOpen, Users, CheckCircle2, RotateCcw,
 } from "lucide-react";
 
 const inputCls = "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none";
@@ -118,20 +119,32 @@ export default function CashBook() {
       </div>
 
       {/* Tabs */}
-      <div className="mt-6 border-b border-zinc-200 flex items-center gap-1">
+      <div className="mt-6 border-b border-zinc-200 flex items-center gap-1 flex-wrap">
         <TabBtn active={tab === "book"} onClick={() => setTab("book")} testId="tab-book">Buku Kas</TabBtn>
+        <TabBtn active={tab === "journal"} onClick={() => setTab("journal")} testId="tab-journal"><BookOpen className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Jurnal Akuntansi</TabBtn>
+        <TabBtn active={tab === "kasbon"} onClick={() => setTab("kasbon")} testId="tab-kasbon"><Users className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Kasbon Sementara</TabBtn>
         <TabBtn active={tab === "summary"} onClick={() => setTab("summary")} testId="tab-summary">Ringkasan Kategori</TabBtn>
       </div>
 
       <div className="mt-5">
-        {tab === "book" ? (
+        {tab === "book" && (
           <BookTab
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
             txData={txData} filtered={filtered} loading={loading}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
           />
-        ) : (
+        )}
+        {tab === "journal" && (
+          <JournalTab
+            month={month} setMonth={setMonth} search={search} setSearch={setSearch}
+            txData={txData} filtered={filtered} loading={loading}
+          />
+        )}
+        {tab === "kasbon" && (
+          <KasbonTab month={month} setMonth={setMonth} />
+        )}
+        {tab === "summary" && (
           <SummaryTab summary={summary} month={month} setMonth={setMonth} />
         )}
       </div>
@@ -601,3 +614,348 @@ function Field({ label, hint, children }) {
     </label>
   );
 }
+
+/* ================================================================
+   ============= TAB: JURNAL AKUNTANSI (Debet/Kredit) =============
+   Format akuntansi klasik: Kolom Debet (kas +) / Kredit (kas −)
+   Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
+   ================================================================ */
+function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading }) {
+  const totalDebet = filtered.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
+  const totalKredit = filtered.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <input
+            type="month" value={month} onChange={(e) => setMonth(e.target.value)}
+            data-testid="journal-month-filter"
+            className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none"
+          />
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+            <input
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Cari kode / nama akun / keterangan…"
+              data-testid="journal-search"
+              className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
+            />
+          </div>
+        </div>
+        <div className="text-xs text-zinc-500 font-mono">
+          {filtered.length} jurnal · Debet <b className="text-[#008A00]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#E81123]">{formatIDR(totalKredit)}</b>
+        </div>
+      </div>
+
+      <div className="border border-zinc-900 bg-white overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="bg-zinc-900 text-white text-[11px] font-bold uppercase tracking-widest">
+              <th className="px-3 py-3 border-r border-zinc-700">Kode Akun</th>
+              <th className="px-3 py-3 border-r border-zinc-700">Nama Akun</th>
+              <th className="px-3 py-3 border-r border-zinc-700 whitespace-nowrap">Tanggal</th>
+              <th className="px-3 py-3 border-r border-zinc-700">Keterangan</th>
+              <th className="px-3 py-3 text-right border-r border-zinc-700 bg-[#008A00]/90">Debet</th>
+              <th className="px-3 py-3 text-right border-r border-zinc-700 bg-[#E81123]/90">Kredit</th>
+              <th className="px-3 py-3 text-right">Saldo</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-zinc-200 bg-[#002FA7]/5">
+              <td colSpan={4} className="px-3 py-2.5">
+                <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Saldo Awal {monthLabel(month)}</span>
+              </td>
+              <td className="px-3 py-2.5"></td>
+              <td className="px-3 py-2.5"></td>
+              <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]">{formatIDR(txData.opening_balance)}</td>
+            </tr>
+            {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {!loading && filtered.length === 0 && (
+              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada jurnal bulan ini.</td></tr>
+            )}
+            {filtered.map((t) => (
+              <tr key={t.id} data-testid="journal-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${t.auto ? "bg-amber-50/40" : ""}`}>
+                <td className="px-3 py-2.5 font-mono text-xs font-bold text-zinc-700 whitespace-nowrap">{t.account_code}</td>
+                <td className="px-3 py-2.5 text-xs">
+                  {t.account_name}
+                  {t.auto && <span className="ml-2 text-[9px] uppercase tracking-widest font-bold text-amber-700 inline-flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Auto</span>}
+                </td>
+                <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{t.date}</td>
+                <td className="px-3 py-2.5 text-xs">
+                  <div>{t.description}</div>
+                  {t.reference && <div className="text-[10px] font-mono text-zinc-400 mt-0.5">ref: {t.reference}</div>}
+                </td>
+                <td className="px-3 py-2.5 text-right font-mono text-xs bg-[#008A00]/5">
+                  {t.type === "in" ? <span className="text-[#008A00] font-bold">{formatIDR(t.amount)}</span> : <span className="text-zinc-300">—</span>}
+                </td>
+                <td className="px-3 py-2.5 text-right font-mono text-xs bg-[#E81123]/5">
+                  {t.type === "out" ? <span className="text-[#E81123] font-bold">{formatIDR(t.amount)}</span> : <span className="text-zinc-300">—</span>}
+                </td>
+                <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-zinc-900">{formatIDR(t.balance)}</td>
+              </tr>
+            ))}
+            {!loading && filtered.length > 0 && (
+              <tr className="border-t-2 border-zinc-900 bg-zinc-50">
+                <td colSpan={4} className="px-3 py-3">
+                  <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total Debet / Kredit</span>
+                </td>
+                <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalDebet)}</td>
+                <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalKredit)}</td>
+                <td className="px-3 py-3 text-right font-mono font-bold text-lg text-zinc-900">{formatIDR(txData.closing_balance)}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-3 text-[11px] text-zinc-500">
+        <b>Konvensi:</b> Debet = kas bertambah (pemasukan) · Kredit = kas berkurang (pengeluaran) · Saldo = saldo berjalan.
+        Untuk menambah transaksi, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================
+   ================== TAB: KASBON SEMENTARA =======================
+   Kasbon staff/karyawan pending — bisa dilunaskan atau dihapus.
+   ================================================================ */
+function KasbonTab({ month, setMonth }) {
+  const [data, setData] = useState({ items: [], total_open: 0, total_settled: 0, total_all: 0, count: 0 });
+  const [loading, setLoading] = useState(true);
+  const [filterStatus, setFilterStatus] = useState(""); // "" | "open" | "settled"
+  const [search, setSearch] = useState("");
+  const [openForm, setOpenForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = { month };
+      if (filterStatus) params.status = filterStatus;
+      const res = await api.get("/cashbook/kasbon", { params });
+      setData(res.data);
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat kasbon");
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [month, filterStatus]);
+
+  const filtered = data.items.filter((k) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (k.name || "").toLowerCase().includes(q) || (k.description || "").toLowerCase().includes(q);
+  });
+
+  const settle = async (k) => {
+    if (!window.confirm(`Tandai kasbon ${k.name} (${formatIDR(k.amount)}) sebagai LUNAS?`)) return;
+    try { await api.put(`/cashbook/kasbon/${k.id}/settle`); toast.success("Kasbon dilunaskan"); await load(); }
+    catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
+  };
+  const reopen = async (k) => {
+    try { await api.put(`/cashbook/kasbon/${k.id}/reopen`); toast.success("Kasbon dibuka kembali"); await load(); }
+    catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
+  };
+  const remove = async (k) => {
+    if (!window.confirm(`Hapus kasbon ${k.name}?`)) return;
+    try { await api.delete(`/cashbook/kasbon/${k.id}`); toast.success("Kasbon dihapus"); await load(); }
+    catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
+  };
+
+  return (
+    <div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-zinc-200 border border-zinc-200 mb-5">
+        <div className="bg-white p-4">
+          <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Kasbon Belum Lunas</div>
+          <div data-testid="kasbon-total-open" className="font-mono text-2xl font-bold mt-1 text-[#E81123]">{formatIDR(data.total_open)}</div>
+        </div>
+        <div className="bg-white p-4">
+          <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Sudah Dilunaskan</div>
+          <div data-testid="kasbon-total-settled" className="font-mono text-2xl font-bold mt-1 text-[#008A00]">{formatIDR(data.total_settled)}</div>
+        </div>
+        <div className="bg-white p-4">
+          <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Total Semua Kasbon Bulan Ini</div>
+          <div className="font-mono text-2xl font-bold mt-1 text-zinc-900">{formatIDR(data.total_all)}</div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} data-testid="kasbon-month-filter"
+            className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none" />
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} data-testid="kasbon-status-filter"
+            className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-[#002FA7] focus:outline-none">
+            <option value="">Semua Status</option>
+            <option value="open">Belum Lunas</option>
+            <option value="settled">Sudah Lunas</option>
+          </select>
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / keterangan…" data-testid="kasbon-search"
+              className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-72 focus:border-[#002FA7] focus:outline-none" />
+          </div>
+        </div>
+        <button data-testid="kasbon-add-button" onClick={() => { setEditing(null); setOpenForm(true); }}
+          className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-[#001E7A] inline-flex items-center gap-2">
+          <Plus className="w-4 h-4" /> Tambah Kasbon
+        </button>
+      </div>
+
+      <div className="border border-zinc-200 bg-white overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
+              <th className="px-3 py-3 whitespace-nowrap">Tanggal</th>
+              <th className="px-3 py-3">Nama</th>
+              <th className="px-3 py-3">Keterangan</th>
+              <th className="px-3 py-3 text-right">Jumlah</th>
+              <th className="px-3 py-3">Status</th>
+              <th className="px-3 py-3 text-right">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={6} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {!loading && filtered.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada kasbon.</td></tr>
+            )}
+            {filtered.map((k) => (
+              <tr key={k.id} data-testid="kasbon-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${k.status === "settled" ? "opacity-60" : ""}`}>
+                <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{k.date}</td>
+                <td className="px-3 py-2.5 text-sm font-semibold text-zinc-900">{k.name}</td>
+                <td className="px-3 py-2.5 text-xs text-zinc-600">{k.description || "—"}</td>
+                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold text-zinc-900">{formatIDR(k.amount)}</td>
+                <td className="px-3 py-2.5">
+                  {k.status === "settled" ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold text-[#008A00] bg-[#008A00]/10 px-2 py-1">
+                      <CheckCircle2 className="w-3 h-3" /> Lunas
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold text-[#E81123] bg-[#E81123]/10 px-2 py-1">
+                      Belum Lunas
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5">
+                  <div className="flex items-center justify-end gap-1">
+                    {k.status === "open" ? (
+                      <button data-testid="kasbon-settle-btn" onClick={() => settle(k)} className="p-1.5 hover:bg-[#008A00]/10 text-[#008A00]" title="Tandai lunas">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <button data-testid="kasbon-reopen-btn" onClick={() => reopen(k)} className="p-1.5 hover:bg-amber-100 text-amber-700" title="Buka kembali">
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button data-testid="kasbon-edit-btn" onClick={() => { setEditing(k); setOpenForm(true); }} className="p-1.5 hover:bg-zinc-100 text-zinc-700" title="Edit">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button data-testid="kasbon-del-btn" onClick={() => remove(k)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]" title="Hapus">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {!loading && filtered.length > 0 && (
+              <tr className="border-t-2 border-zinc-900 bg-zinc-50">
+                <td colSpan={3} className="px-3 py-3">
+                  <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">TOTAL {filterStatus === "settled" ? "LUNAS" : filterStatus === "open" ? "BELUM LUNAS" : "SEMUA KASBON"}</span>
+                </td>
+                <td className="px-3 py-3 text-right font-mono font-bold text-lg text-zinc-900">
+                  {formatIDR(
+                    filtered.reduce((s, k) => s + Number(k.amount || 0), 0)
+                  )}
+                </td>
+                <td colSpan={2}></td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {openForm && (
+        <KasbonFormModal
+          initial={editing}
+          onClose={() => { setOpenForm(false); setEditing(null); }}
+          onSaved={async () => { setOpenForm(false); setEditing(null); await load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function KasbonFormModal({ initial, onClose, onSaved }) {
+  const isEdit = initial && initial.id;
+  const [form, setForm] = useState({
+    date: initial?.date || todayISO(),
+    name: initial?.name || "",
+    description: initial?.description || "",
+    amount: initial?.amount || 0,
+  });
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) { toast.error("Nama wajib diisi"); return; }
+    if (Number(form.amount) <= 0) { toast.error("Jumlah harus > 0"); return; }
+    setSaving(true);
+    try {
+      const payload = {
+        date: form.date,
+        name: form.name.trim(),
+        description: form.description.trim(),
+        amount: Number(form.amount),
+      };
+      if (isEdit) {
+        await api.put(`/cashbook/kasbon/${initial.id}`, payload);
+        toast.success("Kasbon diperbarui");
+      } else {
+        await api.post("/cashbook/kasbon", payload);
+        toast.success("Kasbon ditambahkan");
+      }
+      await onSaved();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal menyimpan");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white border border-zinc-300 w-full max-w-lg">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-200">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 flex items-center justify-center bg-[#002FA7]">
+              <Users className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Kasbon Sementara</div>
+              <h3 className="font-bold text-zinc-900 text-lg">{isEdit ? "Edit Kasbon" : "Tambah Kasbon"}</h3>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-zinc-100"><X className="w-4 h-4" /></button>
+        </div>
+        <form onSubmit={submit} className="p-5 space-y-4">
+          <Field label="Tanggal">
+            <input data-testid="kasbon-form-date" type="date" required value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className={inputCls} />
+          </Field>
+          <Field label="Nama Penerima Kasbon">
+            <input data-testid="kasbon-form-name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="cth: Budi Santoso" className={inputCls} />
+          </Field>
+          <Field label="Keterangan">
+            <input data-testid="kasbon-form-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Untuk keperluan..." className={inputCls} />
+          </Field>
+          <Field label="Jumlah (Rp)">
+            <input data-testid="kasbon-form-amount" type="number" required min="0" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={inputCls} />
+          </Field>
+          <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200">
+            <button type="button" onClick={onClose} className="rounded-none bg-white border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-50">Batal</button>
+            <button data-testid="kasbon-form-save" type="submit" disabled={saving} className="rounded-none bg-[#002FA7] text-white px-6 py-2 text-sm font-bold uppercase tracking-wider disabled:opacity-40">
+              {saving ? "…" : "Simpan"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
