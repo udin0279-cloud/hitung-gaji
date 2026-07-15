@@ -1343,7 +1343,7 @@ function BroadcastWAModal({ customers, onClose }) {
   );
   const [selectedIds, setSelectedIds] = useState(() => eligible.map((c) => c.id));
   const [message, setMessage] = useState(
-    "Halo {name}, terima kasih sudah menjadi pelanggan setia kami. 🙏\n\nKami info: minggu ini promo cetak banner Flexy hanya Rp 20.000/m² (min 5m²). Info lebih lanjut hubungi kami ya.\n\n— Payroll Indonesia"
+    "Halo {name}, terima kasih sudah menjadi pelanggan setia kami. 🙏\n\nKami info: minggu ini promo cetak banner Flexy hanya Rp 20.000/m² (min 5m²). Info lebih lanjut hubungi kami ya.\n\n— Plazakreasi Digital Printing"
   );
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
@@ -1472,7 +1472,7 @@ function BroadcastWAModal({ customers, onClose }) {
                 <button
                   type="button"
                   onClick={() => setMessage(
-                    "Halo {name}, terima kasih sudah menjadi pelanggan setia kami.\n\n[Isi pesan di sini]\n\n— Payroll Indonesia"
+                    "Halo {name}, terima kasih sudah menjadi pelanggan setia kami.\n\n[Isi pesan di sini]\n\n— Plazakreasi Digital Printing"
                   )}
                   className="text-[#002FA7] hover:underline"
                 >Reset Template</button>

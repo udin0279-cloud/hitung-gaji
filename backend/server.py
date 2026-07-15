@@ -29,7 +29,7 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 # ---------------- App ----------------
-app = FastAPI(title="Payroll Indonesia API")
+app = FastAPI(title="HRIS API")
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -646,7 +646,7 @@ def _build_bukti_potong_pdf(employee: Dict[str, Any], summary: Dict[str, Any]) -
     bold_style = ParagraphStyle("bold", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=8.5, leading=11)
     tiny = ParagraphStyle("tiny", parent=styles["Normal"], fontName="Helvetica", fontSize=7, textColor=colors.HexColor("#71717a"))
 
-    company = os.environ.get("COMPANY_NAME", "Payroll Indonesia")
+    company = os.environ.get("COMPANY_NAME", "PLAZAKREASI DIGITAL PRINTING")
     year = summary["year"]
     totals = summary["totals"]
 
@@ -867,7 +867,7 @@ async def portal_forgot(payload: ForgotPortalIn):
         frontend_base = ""
     magic_link = f"{frontend_base}/portal/magic-login?token={token}"
 
-    company = os.environ.get("COMPANY_NAME", "Payroll Indonesia")
+    company = os.environ.get("COMPANY_NAME", "PLAZAKREASI DIGITAL PRINTING")
     html = f"""
     <table width="100%" cellpadding="0" cellspacing="0" style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #18181b;">
       <tr><td style="padding: 24px 0; border-bottom: 2px solid #18181b;">
@@ -1954,7 +1954,7 @@ async def thr_slips(period: str, user: dict = Depends(require_super_admin)):
 # ---------------- Email Payslip ----------------
 def _payslip_html(slip: Dict[str, Any]) -> str:
     e, d = slip["earnings"], slip["deductions"]
-    company = os.environ.get("COMPANY_NAME", "Payroll Indonesia")
+    company = os.environ.get("COMPANY_NAME", "PLAZAKREASI DIGITAL PRINTING")
     return f"""
     <table width="100%" cellpadding="0" cellspacing="0" style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
       <tr><td style="padding: 24px 0; border-bottom: 2px solid #18181b;">
@@ -2294,7 +2294,7 @@ def _normalize_phone_id(phone: str) -> Optional[str]:
 
 
 def _whatsapp_slip_message(slip: Dict[str, Any], employee: Dict[str, Any]) -> str:
-    company = os.environ.get("COMPANY_NAME", "Payroll Indonesia")
+    company = os.environ.get("COMPANY_NAME", "PLAZAKREASI DIGITAL PRINTING")
     portal = (os.environ.get("PUBLIC_APP_URL", "").rstrip("/")) + "/portal/login"
     take_home = f"{int(round(slip['net_salary'])):,}".replace(",", ".")
     gross = f"{int(round(slip['earnings']['gross'])):,}".replace(",", ".")
@@ -2809,7 +2809,7 @@ async def leave_report_excel(period: str, user: dict = Depends(require_leave_acc
     ws.merge_cells("A1:I1")
     ws.row_dimensions[1].height = 28
 
-    ws["A2"] = f"Perusahaan: {os.environ.get('COMPANY_NAME', 'Payroll Indonesia')}"
+    ws["A2"] = f"Perusahaan: {os.environ.get('COMPANY_NAME', 'PLAZAKREASI DIGITAL PRINTING')}"
     ws["A2"].font = Font(italic=True, size=10, color="666666")
     ws.merge_cells("A2:I2")
 
@@ -2907,7 +2907,7 @@ async def leave_report_pdf(period: str, user: dict = Depends(require_leave_acces
 
     story = []
     story.append(Paragraph("LAPORAN IZIN KARYAWAN", title_style))
-    story.append(Paragraph(f"Periode: <b>{period}</b> &nbsp;|&nbsp; Perusahaan: {os.environ.get('COMPANY_NAME', 'Payroll Indonesia')}", sub_style))
+    story.append(Paragraph(f"Periode: <b>{period}</b> &nbsp;|&nbsp; Perusahaan: {os.environ.get('COMPANY_NAME', 'PLAZAKREASI DIGITAL PRINTING')}", sub_style))
     story.append(Paragraph(f"Dicetak: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", sub_style))
     story.append(Spacer(1, 8))
 
@@ -3123,7 +3123,7 @@ async def delete_user(user_id: str, user: dict = Depends(require_super_admin)):
 # ---------------- Health ----------------
 @api_router.get("/")
 async def root():
-    return {"message": "Payroll Indonesia API", "ok": True}
+    return {"message": "HRIS API", "ok": True}
 
 
 # ---------------- Startup ----------------
@@ -4988,9 +4988,9 @@ async def _next_sale_no() -> str:
 
 def _company_info() -> Dict[str, str]:
     return {
-        "name": os.environ.get("COMPANY_NAME", "Plazakreasi"),
-        "address": os.environ.get("COMPANY_ADDRESS", "Jl. Kreasi No. 1, Jakarta"),
-        "phone": os.environ.get("COMPANY_PHONE", "0812-3456-7890"),
+        "name": os.environ.get("COMPANY_NAME", "PLAZAKREASI DIGITAL PRINTING"),
+        "address": os.environ.get("COMPANY_ADDRESS", "Jl. Ruko Sentralan B72 Driyorejo Gresik"),
+        "phone": os.environ.get("COMPANY_PHONE", "081235598288"),
     }
 
 
@@ -5349,7 +5349,7 @@ async def sales_receipt_html(sale_id: str, user: dict = Depends(require_super_ad
 <div class="receipt">
   <div class="header">
     <div class="name">{ci['name'].upper()}</div>
-    <div class="addr">{ci['address']}<br>Telp: {ci['phone']}</div>
+    <div class="addr">{ci['address']}<br>HP : {ci['phone']}</div>
   </div>
   <div class="meta">
     <div class="row"><span>No. Nota</span><span class="strong">{s.get('sale_no', '')}</span></div>

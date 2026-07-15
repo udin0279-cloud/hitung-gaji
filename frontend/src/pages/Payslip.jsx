@@ -112,7 +112,7 @@ export default function Payslip() {
               <div className="w-8 h-8 bg-[#002FA7] flex items-center justify-center">
                 <Square className="w-4 h-4 text-white" fill="white" />
               </div>
-              <div className="font-heading font-black text-xl tracking-tight text-zinc-900">PAYROLL.ID</div>
+              <div className="font-heading font-black text-xl tracking-tight text-zinc-900">HRIS</div>
             </div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500 mt-1">HR · Tax · BPJS</div>
           </div>

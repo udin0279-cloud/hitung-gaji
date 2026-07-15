@@ -38,7 +38,7 @@ export default function PortalLogin() {
               <IdCard className="w-4 h-4 text-[#002FA7]" />
             </div>
             <div>
-              <div className="font-heading font-black text-xl tracking-tight">PAYROLL.ID</div>
+              <div className="font-heading font-black text-xl tracking-tight">HRIS</div>
               <div className="text-[10px] uppercase tracking-[0.2em] text-white/70">Employee Portal</div>
             </div>
           </div>

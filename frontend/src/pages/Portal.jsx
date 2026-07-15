@@ -52,7 +52,7 @@ export function PortalDashboard() {
               <Square className="w-4 h-4 text-white" fill="white" />
             </div>
             <div>
-              <div className="font-heading font-bold text-zinc-900 leading-none">PAYROLL.ID</div>
+              <div className="font-heading font-bold text-zinc-900 leading-none">HRIS</div>
               <div className="text-[10px] text-zinc-500 uppercase tracking-widest mt-0.5">Employee Portal</div>
             </div>
           </Link>
@@ -279,7 +279,7 @@ export function PortalPayslip() {
               <div className="w-8 h-8 bg-[#002FA7] flex items-center justify-center">
                 <Square className="w-4 h-4 text-white" fill="white" />
               </div>
-              <div className="font-heading font-black text-xl tracking-tight">PAYROLL.ID</div>
+              <div className="font-heading font-black text-xl tracking-tight">HRIS</div>
             </div>
           </div>
           <div className="text-right">

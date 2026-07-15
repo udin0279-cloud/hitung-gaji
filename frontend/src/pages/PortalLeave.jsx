@@ -65,7 +65,7 @@ export default function PortalLeave() {
               <Square className="w-4 h-4 text-white" fill="white" />
             </div>
             <div>
-              <div className="font-heading font-bold text-zinc-900 leading-none">PAYROLL.ID</div>
+              <div className="font-heading font-bold text-zinc-900 leading-none">HRIS</div>
               <div className="text-[10px] text-zinc-500 uppercase tracking-widest mt-0.5">Employee Portal</div>
             </div>
           </Link>

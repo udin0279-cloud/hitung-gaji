@@ -77,8 +77,8 @@ export default function Layout() {
             <Square className="w-4 h-4 text-white" strokeWidth={2.5} fill="white" />
           </div>
           <div>
-            <div className="font-heading font-bold text-zinc-900 leading-none tracking-tight">PAYROLL.ID</div>
-            <div className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">HR Console</div>
+            <div className="font-heading font-bold text-zinc-900 leading-none tracking-tight">HRIS</div>
+            <div className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Human Resource Info System</div>
           </div>
         </Link>
         <button
@@ -170,7 +170,7 @@ export default function Layout() {
           <div className="w-6 h-6 bg-[#002FA7] flex items-center justify-center">
             <Square className="w-3 h-3 text-white" strokeWidth={2.5} fill="white" />
           </div>
-          <div className="font-heading font-bold text-sm text-zinc-900 tracking-tight">PAYROLL.ID</div>
+          <div className="font-heading font-bold text-sm text-zinc-900 tracking-tight">HRIS</div>
         </Link>
         <div className="w-8" />{/* spacer to balance */}
       </div>

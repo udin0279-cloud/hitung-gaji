@@ -41,8 +41,8 @@ export default function Login() {
               <Square className="w-4 h-4 text-zinc-900" fill="currentColor" />
             </div>
             <div>
-              <div className="font-heading font-black text-xl tracking-tight">PAYROLL.ID</div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">HR · Tax · BPJS Console</div>
+              <div className="font-heading font-black text-xl tracking-tight">HRIS</div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Human Resource Information System</div>
             </div>
           </div>
         </div>
