@@ -586,3 +586,37 @@ User meminta 2 tab baru di modul `/cashbook`:
 
 ### Testing
 Iteration 25: 22 new backend + 26 regression + full frontend E2E = **48/48 PASSED**.
+
+---
+## Update: 2026-07-15 (session 2) — Sales/Kasir: Cetak PDF & Export Excel
+
+### Implemented (Iteration 26 — 34/34 tests passed)
+User meminta 3 fitur cetak/export di modul Penjualan/Kasir:
+
+**1. Nota A4 PDF Profesional per Transaksi** — untuk customer korporat/pemerintahan
+- Kop perusahaan (PLAZAKREASI DIGITAL PRINTING) + alamat + HP
+- Meta table: No Nota, Tanggal, Pelanggan, Telp, Kasir, Metode
+- Item table dengan header biru: No, Deskripsi (+ bahan BOM), Qty/Dim, Harga, Subtotal
+- Total table dengan garis biru highlight, subtotal + diskon + TOTAL + bayar + kembali
+- Footer signature: Pelanggan + Hormat kami
+
+**2. Laporan Penjualan PDF Landscape (Bulanan/Periode)**
+- Header perusahaan + judul "LAPORAN PENJUALAN" + periode label
+- 9-kolom table: No, Tanggal, No.Nota, Pelanggan, Kasir, Item, Subtotal, Diskon, Total
+- Row alternating background + grand total footer biru
+- Support filter `?month=YYYY-MM` atau `?date_from=&date_to=`
+- Handle empty state ("Belum ada transaksi pada periode ini")
+
+**3. Export Excel Laporan Penjualan**
+- 13 kolom: Tanggal, No.Nota, Pelanggan, No.Telepon, Kasir, Jumlah Item, Subtotal, Diskon, Total, Bayar Tunai, Kembali, Metode, Catatan
+- Header perusahaan di A1-A3, data mulai row 4
+- Auto column width + TOTAL row footer dengan sum
+
+### API Endpoints Baru
+- `GET /api/sales/{sale_id}/invoice-pdf` — Nota A4 PDF (inline)
+- `GET /api/sales/report/pdf?month=YYYY-MM` atau `?date_from=&date_to=` — Laporan PDF landscape
+- `GET /api/sales/report/excel?month=YYYY-MM` — Excel (.xlsx)
+
+### Files Changed
+- `backend/server.py` — 3 endpoint baru (~380 baris) sebelum `/sales/stats/today`, memakai `_company_info()` + `io.BytesIO()` + reportlab/openpyxl
+- `frontend/src/pages/Sales.jsx` — Import icons (FileText, FileSpreadsheet), function `openInvoiceA4()`, tombol "Laporan Bulanan" di header, tombol "NOTA A4" di kolom aksi row (label struk 80mm juga diringkas), komponen `SalesReportModal` di akhir file (picker bulan + 2 tombol PDF/Excel)
