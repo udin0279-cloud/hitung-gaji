@@ -617,12 +617,15 @@ function Field({ label, hint, children }) {
 
 /* ================================================================
    ============= TAB: JURNAL AKUNTANSI (Debet/Kredit) =============
-   Format akuntansi klasik: Kolom Debet (kas +) / Kredit (kas −)
+   Konvensi kustom (permintaan user):
+   - KREDIT = pemasukan / pengisian saldo kas (kas bertambah)
+   - DEBET  = pengeluaran (kas berkurang)
+   - Saldo berjalan = saldo sebelumnya + Kredit − Debet
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
 function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading }) {
-  const totalDebet = filtered.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
-  const totalKredit = filtered.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
+  const totalKredit = filtered.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
+  const totalDebet = filtered.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -643,7 +646,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
           </div>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
-          {filtered.length} jurnal · Debet <b className="text-[#008A00]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#E81123]">{formatIDR(totalKredit)}</b>
+          {filtered.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
         </div>
       </div>
 
@@ -655,8 +658,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               <th className="px-3 py-3 border-r border-zinc-700">Nama Akun</th>
               <th className="px-3 py-3 border-r border-zinc-700 whitespace-nowrap">Tanggal</th>
               <th className="px-3 py-3 border-r border-zinc-700">Keterangan</th>
-              <th className="px-3 py-3 text-right border-r border-zinc-700 bg-[#008A00]/90">Debet</th>
-              <th className="px-3 py-3 text-right border-r border-zinc-700 bg-[#E81123]/90">Kredit</th>
+              <th className="px-3 py-3 text-right border-r border-zinc-700 bg-[#E81123]/90">Debet</th>
+              <th className="px-3 py-3 text-right border-r border-zinc-700 bg-[#008A00]/90">Kredit</th>
               <th className="px-3 py-3 text-right">Saldo</th>
             </tr>
           </thead>
@@ -685,11 +688,11 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                   <div>{t.description}</div>
                   {t.reference && <div className="text-[10px] font-mono text-zinc-400 mt-0.5">ref: {t.reference}</div>}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-xs bg-[#008A00]/5">
-                  {t.type === "in" ? <span className="text-[#008A00] font-bold">{formatIDR(t.amount)}</span> : <span className="text-zinc-300">—</span>}
-                </td>
                 <td className="px-3 py-2.5 text-right font-mono text-xs bg-[#E81123]/5">
                   {t.type === "out" ? <span className="text-[#E81123] font-bold">{formatIDR(t.amount)}</span> : <span className="text-zinc-300">—</span>}
+                </td>
+                <td className="px-3 py-2.5 text-right font-mono text-xs bg-[#008A00]/5">
+                  {t.type === "in" ? <span className="text-[#008A00] font-bold">{formatIDR(t.amount)}</span> : <span className="text-zinc-300">—</span>}
                 </td>
                 <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-zinc-900">{formatIDR(t.balance)}</td>
               </tr>
@@ -699,8 +702,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                 <td colSpan={4} className="px-3 py-3">
                   <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total Debet / Kredit</span>
                 </td>
-                <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalDebet)}</td>
-                <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalKredit)}</td>
+                <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebet)}</td>
+                <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalKredit)}</td>
                 <td className="px-3 py-3 text-right font-mono font-bold text-lg text-zinc-900">{formatIDR(txData.closing_balance)}</td>
               </tr>
             )}
@@ -708,7 +711,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         </table>
       </div>
       <div className="mt-3 text-[11px] text-zinc-500">
-        <b>Konvensi:</b> Debet = kas bertambah (pemasukan) · Kredit = kas berkurang (pengeluaran) · Saldo = saldo berjalan.
+        <b>Konvensi:</b> Debet = pengeluaran (kas berkurang) · Kredit = pemasukan / pengisian saldo (kas bertambah) · Saldo = saldo berjalan (Saldo sebelumnya + Kredit − Debet).
         Untuk menambah transaksi, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
       </div>
     </div>
