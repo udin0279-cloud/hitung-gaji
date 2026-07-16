@@ -1,0 +1,53 @@
+{
+  "summary": "End-to-end testing fitur EDIT transaksi Sales (PUT /api/sales/{sale_id}). Backend: 6/6 test PASSED di test_sales_edit.py — preserve id+sale_no+created_at+date, updated_at & updated_by populated, rollback+reapply stock correctness (qty 2→5 net -5 dari stok, bukan -3/-7), cash tx sync (never duplicated), error state restore (400 saat stok tidak cukup dengan stok+cash tx original DIKEMBALIKAN), 404 untuk sale_id invalid, dan size tier change M→XXL (harga 85k→95k, consumption 1.0→1.2). Regression test_sales.py (15 tests) + test_sizing.py (13 tests) = 28/28 tetap PASSED. Frontend E2E: tombol EDIT (data-testid='edit-sale-button', icon Pencil) muncul di setiap baris di samping STRUK 80MM/NOTA A4/Delete; klik Edit → modal open dengan title 'Edit Transaksi NOTA-20260711-0001' (sale_no injected), semua field ter-populate (customer name 'Bu Ani', phone, produk 'Banner Frontlite 3x2', panjang 3, lebar 2, qty 5, harga 35000, subtotal 1.050.000, discount 50000, cash 1200000); button submit BENAR 'SIMPAN PERUBAHAN' (bukan 'Bayar & Cetak'); submit → modal close, list refresh dengan data baru (customer→'TEST_UI_EditUpdated', total 1.000.000→Rp 530.000 sesuai qty 5→3 & discount 50k→100k), sale_no NOTA-20260711-0001 PRESERVED, TIDAK auto-open print window (0 new page opened setelah submit), stats 'Omset Bulan Ini' juga refresh ke 530.000. Auto-save pelanggan baru ke Master tetap works (toast konfirmasi). Sale state sudah di-revert kembali ke original setelah testing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Sales NewSaleModal (option)", "issues": ["React hydration warning existing (bukan bug baru): <span> in <option> berasal dari emergent devtools inspector wrapper. Sudah dicatat di iteration_27, tidak breaking."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sales_edit.py",
+    "/app/test_reports/pytest/pytest_sales_edit.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sales_update (server.py ~L5319-5370): error restore path juga bisa exception di tengah (misal insert cash tx gagal). Sudah di-catch dan di-log tapi state bisa partial (stock deducted, cash tx tidak insert). Consider audit / alarm pada log 'Rollback restore failed'.",
+    "_rollback_sale_effects (L5290) & delete rollback (L5378) duplikat logic aggregation. Ekstrak ke helper `_aggregate_stock_from_items(items)` untuk DRY. Delete rollback saat ini tidak menghapus cash tx auto — pastikan intentional atau tambahkan `delete_many({reference: sale_no, auto: True})` di sales_delete juga untuk konsistensi (currently delete sale meninggalkan cash tx orphan).",
+    "server.py sudah 6605 lines — makin urgent untuk split module (sales.py, cashbook.py). Sudah dicatat di iteration_27.",
+    "Frontend Sales.jsx: onSaved callback bergantung pada `result._isUpdate` flag yang di-set manual di modal (`data = { ...res.data, _isUpdate: true }`). Robust tapi rawan — lebih baik pisah 2 prop callback `onCreated` dan `onUpdated` supaya intent jelas.",
+    "buildInitialItems (Sales.jsx L347): tidak restore quantity_size_b info per component. Aman karena backend recompute components dari product master, tapi kalau user edit sale lama sementara product-nya sudah diubah (mis. quantity_size_b berbeda), consumption saat save akan pakai config baru, bukan yang lama. Ini expected behaviour tapi worth documenting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sales_edit.py (new — 6 test cases untuk PUT /api/sales/{sale_id})"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 new + 28/28 regression = 34/34)",
+    "frontend": "100% (Edit button visible, modal populated correctly, title & button label correct, submit closes modal, list refresh dengan sale_no preserved, no auto-print)"
+  },
+  "test_credentials": "admin@payroll.id / admin123 (super_admin)",
+  "seed_data_creation": "Backend test menggunakan TEST_EDIT_ prefixed material + product (di-teardown module fixture). Frontend test hanya modifikasi sale existing NOTA-20260711-0001 dan sudah di-revert ke state original + customer TEST_UI_EditUpdated dihapus dari master.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fitur Edit Sale fully working end-to-end. Backend endpoint PUT /api/sales/{sale_id} accepts SaleIn payload dan preserve id/sale_no/created_at/date, tambah updated_at + updated_by. Flow: 1) rollback stock+delete auto cash tx old, 2) call _build_and_persist_sale dengan is_update=True. On error → reapply old stock & re-insert old cash tx sehingga state kembali persis sebelum PUT. Cash tx dedupe: delete_many({reference: sale_no, auto:True, account_code:'301'}) dulu, lalu insert baru — verified 1 tx before, 1 tx after (bukan 2). Size tier bisa berubah antar M↔XXL, harga & consumption auto sesuai product.price_size_a/b + quantity_size_b. Frontend: NewSaleModal reused untuk edit via prop `edit={sale}`. isEdit=!!edit; buildInitialItems() populate state dari edit.items dengan picker_id (prod:XXX atau mat:XXX). Submit isEdit ? PUT : POST. onSaved({...res.data, _isUpdate: true}) skip auto-open struk print. Semua data-testid intact.",
+  "verified_scenarios": [
+    "Backend PUT /api/sales/{id} preserve sale_no+id+created_at+date, add updated_at+updated_by ✓",
+    "Backend PUT rollback+reapply stock: qty 2→5 → stock = initial - 5 (not -3, not -7) ✓",
+    "Backend PUT cash tx sync: after edit hanya ada 1 cash tx dengan amount baru (bukan 2) ✓",
+    "Backend PUT insufficient stock error → 400, state DIKEMBALIKAN (stok lama masih terpotong, cash tx original ada) ✓",
+    "Backend PUT sale_id invalid → 404 ✓",
+    "Backend PUT change size M→XXL: harga 85k→95k, consumption 1.0→1.2 auto update ✓",
+    "Frontend row: tombol EDIT visible (data-testid=edit-sale-button) beside Struk 80mm / Nota A4 / Delete ✓",
+    "Frontend klik Edit: modal open dengan title 'Edit Transaksi NOTA-XXX-YYYY' ✓",
+    "Frontend semua field pre-populated: customer_name, phone, produk picker, panjang, lebar, qty, harga, subtotal, diskon, cash_paid ✓",
+    "Frontend button submit label 'SIMPAN PERUBAHAN' (bukan 'Bayar & Cetak Struk') ✓",
+    "Frontend submit: modal close, list refresh, sale_no preserved, TIDAK auto-open struk print window ✓",
+    "Frontend edit bisa ubah qty & discount, backend menerima dan menghitung ulang total dengan benar ✓",
+    "Regression: test_sales.py + test_sizing.py = 28/28 tetap PASSED ✓"
+  ]
+}

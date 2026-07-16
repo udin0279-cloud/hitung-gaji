@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { Plus, Trash2, X, Search, ShoppingBag, Printer, Receipt, DollarSign, TrendingUp, FileText, Download, FileSpreadsheet } from "lucide-react";
+import { Plus, Trash2, X, Search, ShoppingBag, Printer, Receipt, DollarSign, TrendingUp, FileText, Download, FileSpreadsheet, Pencil } from "lucide-react";
 
 const inputCls = "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none";
 
@@ -20,6 +20,7 @@ export default function Sales() {
   const [search, setSearch] = useState("");
   const [openNew, setOpenNew] = useState(false);
   const [openReport, setOpenReport] = useState(false);
+  const [editingSale, setEditingSale] = useState(null);
 
   const loadAll = async () => {
     setLoading(true);
@@ -79,6 +80,20 @@ export default function Sales() {
       setMaterials(m.data);
       setProducts(p.data);
     } catch (_err) { /* fallback tetap pakai state existing */ }
+    setEditingSale(null);
+    setOpenNew(true);
+  };
+
+  const openEditSale = async (s) => {
+    try {
+      const [m, p] = await Promise.all([
+        api.get("/inventory/materials"),
+        api.get("/products", { params: { only_active: true } }),
+      ]);
+      setMaterials(m.data);
+      setProducts(p.data);
+    } catch (_err) { /* keep existing */ }
+    setEditingSale(s);
     setOpenNew(true);
   };
 
@@ -178,6 +193,14 @@ export default function Sales() {
                       >
                         <FileText className="w-3.5 h-3.5" /> Nota A4
                       </button>
+                      <button
+                        data-testid="edit-sale-button"
+                        onClick={() => openEditSale(s)}
+                        className="inline-flex items-center gap-1.5 rounded-none border border-zinc-300 bg-white text-zinc-900 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-zinc-50 transition-colors"
+                        title="Edit transaksi"
+                      >
+                        <Pencil className="w-3.5 h-3.5" /> Edit
+                      </button>
                       <button data-testid="delete-sale-button" onClick={() => remove(s)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123] border border-transparent hover:border-[#E81123]/30" title="Hapus"><Trash2 className="w-3.5 h-3.5" /></button>
                     </div>
                   </td>
@@ -188,7 +211,7 @@ export default function Sales() {
         </div>
       </div>
 
-      {openNew && <NewSaleModal materials={materials} products={products} customers={customers} onClose={() => setOpenNew(false)} onSaved={async (created) => { setOpenNew(false); await loadAll(); openReceipt(created, true); }} />}
+      {openNew && <NewSaleModal materials={materials} products={products} customers={customers} edit={editingSale} onClose={() => { setOpenNew(false); setEditingSale(null); }} onSaved={async (result) => { setOpenNew(false); setEditingSale(null); await loadAll(); if (result && !result._isUpdate) openReceipt(result, true); }} />}
       {openReport && <SalesReportModal onClose={() => setOpenReport(false)} />}
     </div>
   );
@@ -314,15 +337,36 @@ function computeConsumption(formula, factor, L, W, qty) {
   return 0;
 }
 
-function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
+function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }) {
   const activeMats = materials.filter((m) => m.active !== false);
   const activeProducts = (products || []).filter((p) => p.active !== false);
   const activeCustomers = (customers || []).filter((c) => c.active !== false);
-  const [customer, setCustomer] = useState({ name: "", phone: "" });
-  const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
-  const [discount, setDiscount] = useState(0);
-  const [cashPaid, setCashPaid] = useState(0);
-  const [notes, setNotes] = useState("");
+  const isEdit = !!edit;
+
+  // Initialize state from edit sale (jika ada)
+  const buildInitialItems = () => {
+    if (!edit || !edit.items || edit.items.length === 0) return [{ ...EMPTY_ITEM }];
+    return edit.items.map((it) => ({
+      picker_id: it.product_id ? `prod:${it.product_id}` : (it.material_id ? `mat:${it.material_id}` : ""),
+      product_id: it.product_id || null,
+      material_id: it.material_id || null,
+      product_name: it.product_name || "",
+      length_m: Number(it.length_m) || 0,
+      width_m: Number(it.width_m) || 0,
+      quantity: Number(it.quantity) || 1,
+      unit_price: Number(it.unit_price) || 0,
+      size: it.size || "",
+    }));
+  };
+
+  const [customer, setCustomer] = useState({
+    name: edit?.customer_name || "",
+    phone: edit?.customer_phone || "",
+  });
+  const [items, setItems] = useState(buildInitialItems());
+  const [discount, setDiscount] = useState(edit?.discount || 0);
+  const [cashPaid, setCashPaid] = useState(edit?.cash_paid || 0);
+  const [notes, setNotes] = useState(edit?.notes || "");
   const [saving, setSaving] = useState(false);
 
   const addItem = () => setItems((arr) => [...arr, { ...EMPTY_ITEM }]);
@@ -498,8 +542,16 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
           size: it.size || null,
         })),
       };
-      const { data } = await api.post("/sales", payload);
-      toast.success(`Transaksi ${data.sale_no} berhasil`);
+      let data;
+      if (isEdit) {
+        const res = await api.put(`/sales/${edit.id}`, payload);
+        data = { ...res.data, _isUpdate: true };
+        toast.success(`Transaksi ${data.sale_no} diperbarui`);
+      } else {
+        const res = await api.post("/sales", payload);
+        data = res.data;
+        toast.success(`Transaksi ${data.sale_no} berhasil`);
+      }
       // Auto-save pelanggan baru ke Master (fire-and-forget)
       const nameClean = customer.name.trim();
       if (nameClean && nameClean.toLowerCase() !== "umum" && !isExistingCustomer()) {
@@ -524,7 +576,7 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
         <div className="flex items-center justify-between p-5 border-b border-zinc-200 sticky top-0 bg-white z-10">
           <div>
             <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Kasir</div>
-            <div className="font-heading text-xl font-bold text-zinc-900">Transaksi Baru</div>
+            <div className="font-heading text-xl font-bold text-zinc-900">{isEdit ? `Edit Transaksi ${edit.sale_no}` : "Transaksi Baru"}</div>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-zinc-100" data-testid="close-new-sale-modal"><X className="w-4 h-4" /></button>
         </div>
@@ -770,7 +822,7 @@ function NewSaleModal({ materials, products, customers, onClose, onSaved }) {
           <div className="flex items-center justify-end gap-2 pt-4 border-t border-zinc-200">
             <button type="button" onClick={onClose} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-5 py-2.5 text-sm font-medium hover:bg-zinc-50">Batal</button>
             <button data-testid="save-sale-button" type="submit" disabled={saving || !canSubmit} className="rounded-none bg-[#002FA7] text-white px-8 py-3 text-sm font-bold uppercase tracking-wider hover:bg-[#002FA7]/90 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2">
-              <Printer className="w-4 h-4" /> {saving ? "Menyimpan…" : "Bayar & Cetak Struk"}
+              <Printer className="w-4 h-4" /> {saving ? "Menyimpan…" : (isEdit ? "Simpan Perubahan" : "Bayar & Cetak Struk")}
             </button>
           </div>
         </form>

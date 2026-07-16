@@ -5068,15 +5068,23 @@ async def sales_get(sale_id: str, user: dict = Depends(require_super_admin)):
     return s
 
 
-@api_router.post("/sales")
-async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin)):
+async def _build_and_persist_sale(
+    payload: SaleIn,
+    user: dict,
+    *,
+    sale_no: Optional[str] = None,
+    sale_id: Optional[str] = None,
+    created_at_iso: Optional[str] = None,
+    date_iso: Optional[str] = None,
+    is_update: bool = False,
+) -> Dict[str, Any]:
+    """Compute + validate + persist a sale (create atau update).
+    Untuk update, pastikan rollback stok+cash sudah dilakukan SEBELUM memanggil helper ini."""
     if not payload.items:
         raise HTTPException(status_code=400, detail="Item transaksi tidak boleh kosong")
-    # Validate + hitung + kumpulkan konsumsi bahan per material
-    items_out = []
+    items_out: List[Dict[str, Any]] = []
     subtotal = 0.0
-    # Track penggunaan stok agar kita hitung total per material (agregat kalau item yang sama muncul 2x)
-    stock_deductions: Dict[str, float] = {}  # material_id -> total qty dikurangi
+    stock_deductions: Dict[str, float] = {}
     material_cache: Dict[str, Dict[str, Any]] = {}
 
     async def _get_mat(mid: str) -> Dict[str, Any]:
@@ -5091,22 +5099,17 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
     for it in payload.items:
         if it.quantity <= 0:
             raise HTTPException(status_code=400, detail=f"Qty {it.product_name} harus > 0")
-
-        # ===== MODE 2: PRODUCT (BOM) =====
         if it.product_id:
             prod = await db.products.find_one({"id": it.product_id}, {"_id": 0})
             if not prod:
-                raise HTTPException(status_code=400, detail=f"Produk tidak ditemukan")
+                raise HTTPException(status_code=400, detail="Produk tidak ditemukan")
             components = prod.get("components") or []
             needs_dim = any(c.get("formula") in ("area", "length") for c in components)
             if needs_dim and (it.length_m <= 0 or it.width_m <= 0):
-                # Untuk formula 'length', width boleh 0
                 bad = any(c.get("formula") == "area" for c in components) and (it.length_m <= 0 or it.width_m <= 0)
                 bad_len = any(c.get("formula") == "length" for c in components) and it.length_m <= 0
                 if bad or bad_len:
                     raise HTTPException(status_code=400, detail=f"Ukuran P×L wajib diisi untuk {it.product_name}")
-
-            # ===== SIZING (kaos/jersey) =====
             has_sizes = bool(prod.get("has_sizes"))
             size_tier = "A"
             size_used = None
@@ -5118,14 +5121,10 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
                     raise HTTPException(status_code=400, detail=f"Ukuran '{it.size}' tidak tersedia untuk {it.product_name}. Pilihan: {', '.join(available)}")
                 size_used = it.size
                 size_tier = _size_tier(it.size)
-
-            # Hitung harga sesuai pricing_mode & size tier
             pricing = prod.get("pricing_mode") or "fixed"
             if has_sizes:
-                # Harga otomatis dari tier (abaikan it.unit_price)
                 unit_price_use = float(prod.get("price_size_b", 0) if size_tier == "B" else prod.get("price_size_a", 0))
                 if unit_price_use <= 0:
-                    # Fallback ke unit_price umum agar tidak gratis
                     unit_price_use = float(prod.get("unit_price", 0))
             else:
                 unit_price_use = float(it.unit_price if it.unit_price > 0 else prod.get("unit_price", 0))
@@ -5133,12 +5132,10 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
                 area_pc = float(it.length_m or 0) * float(it.width_m or 0)
                 area_total = round(area_pc * int(it.quantity), 4)
                 line_subtotal = round(area_total * unit_price_use, 2)
-            else:  # fixed
+            else:
                 area_pc = float(it.length_m or 0) * float(it.width_m or 0)
                 area_total = round(area_pc * int(it.quantity), 4)
                 line_subtotal = round(unit_price_use * int(it.quantity), 2)
-
-            # Hitung konsumsi bahan per komponen (pakai quantity_size_b bila tier B & value ada)
             item_components = []
             for c in components:
                 factor_use = float(c.get("quantity", 1) or 0)
@@ -5159,7 +5156,6 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
                     "factor": factor_use,
                     "consumption": cons,
                 })
-
             items_out.append({
                 "product_id": it.product_id,
                 "product_code": prod.get("code"),
@@ -5173,17 +5169,13 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
                 "unit_price": unit_price_use,
                 "subtotal": line_subtotal,
                 "components": item_components,
-                # size info
                 "size": size_used,
                 "size_tier": size_tier if has_sizes else None,
-                # legacy fields untuk struk kompatibel
                 "material_id": None,
                 "material_name": ", ".join(c["material_name"] for c in item_components) or "-",
                 "material_unit": item_components[0]["material_unit"] if item_components else "",
             })
             subtotal += line_subtotal
-
-        # ===== MODE 1: MATERIAL langsung (legacy) =====
         else:
             if not it.material_id:
                 raise HTTPException(status_code=400, detail=f"{it.product_name}: pilih Produk atau Bahan")
@@ -5218,7 +5210,7 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
             })
             subtotal += line_subtotal
 
-    # Validasi stok total (agregat)
+    # Validasi stok
     for mid, total_needed in stock_deductions.items():
         mat = material_cache.get(mid) or await _get_mat(mid)
         current = float(mat.get("current_stock", 0))
@@ -5235,11 +5227,14 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
         raise HTTPException(status_code=400, detail=f"Uang tunai kurang. Total Rp {total:,.0f}, dibayar Rp {cash_paid:,.0f}")
     change = round(cash_paid - total, 2)
     now = datetime.now(timezone.utc)
-    sale_no = await _next_sale_no()
+    final_sale_no = sale_no or await _next_sale_no()
+    final_id = sale_id or str(uuid.uuid4())
+    final_created = created_at_iso or now.isoformat()
+    final_date = date_iso or now.date().isoformat()
     doc = {
-        "id": str(uuid.uuid4()),
-        "sale_no": sale_no,
-        "date": now.date().isoformat(),
+        "id": final_id,
+        "sale_no": final_sale_no,
+        "date": final_date,
         "customer_name": (payload.customer_name or "Umum").strip() or "Umum",
         "customer_phone": (payload.customer_phone or "").strip(),
         "cashier": user.get("email"),
@@ -5253,23 +5248,28 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
         "payment_method": payload.payment_method or "tunai",
         "notes": payload.notes,
         "status": "paid",
-        "created_at": now.isoformat(),
+        "created_at": final_created,
     }
-    await db.sales.insert_one(doc)
-    # Auto-insert ke Kas Operasional (Pemasukan Penjualan Tunai)
+    if is_update:
+        doc["updated_at"] = now.isoformat()
+        doc["updated_by"] = user.get("email")
+        await db.sales.update_one({"id": final_id}, {"$set": doc})
+    else:
+        await db.sales.insert_one(doc)
+    # Auto cash tx
     try:
         await _insert_cash_transaction(
             account_code="301",
-            description=f"Penjualan {sale_no} — {doc['customer_name']}",
+            description=f"Penjualan {final_sale_no} — {doc['customer_name']}",
             amount=total,
-            reference=sale_no,
+            reference=final_sale_no,
             date_iso=doc["date"],
             auto=True,
             created_by=user.get("email"),
         )
     except Exception as ex:
         logger.warning(f"Cashbook auto-insert (sale) failed: {ex}")
-    # Kurangi stok agregat per material
+    # Apply stock deduction (net dari state saat ini)
     for mid, qty_used in stock_deductions.items():
         mat = material_cache.get(mid)
         if mat:
@@ -5280,6 +5280,94 @@ async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin
             )
     doc.pop("_id", None)
     return doc
+
+
+@api_router.post("/sales")
+async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin)):
+    return await _build_and_persist_sale(payload, user)
+
+
+async def _rollback_sale_effects(sale: Dict[str, Any]) -> None:
+    """Rollback stock deduction dan hapus auto cash transaction untuk sale ini."""
+    rollback: Dict[str, float] = {}
+    for it in sale.get("items") or []:
+        comps = it.get("components")
+        if comps:
+            for c in comps:
+                mid = c.get("material_id")
+                if mid:
+                    rollback[mid] = rollback.get(mid, 0) + float(c.get("consumption", 0))
+        else:
+            mid = it.get("material_id")
+            if mid:
+                rollback[mid] = rollback.get(mid, 0) + float(it.get("area_total", 0))
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for mid, qty in rollback.items():
+        mat = await db.materials.find_one({"id": mid})
+        if mat:
+            new_stock = round(float(mat.get("current_stock", 0)) + float(qty), 4)
+            await db.materials.update_one(
+                {"id": mid},
+                {"$set": {"current_stock": new_stock, "updated_at": now_iso}},
+            )
+    try:
+        await db.cash_transactions.delete_many({"reference": sale.get("sale_no"), "auto": True, "account_code": "301"})
+    except Exception as ex:
+        logger.warning(f"Cashbook rollback (sale) failed: {ex}")
+
+
+@api_router.put("/sales/{sale_id}")
+async def sales_update(sale_id: str, payload: SaleIn, user: dict = Depends(require_super_admin)):
+    existing = await db.sales.find_one({"id": sale_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    # 1. Rollback dulu (stok + cash tx)
+    await _rollback_sale_effects(existing)
+    # 2. Recompute + apply — preserve sale_no, id, created_at, date
+    try:
+        return await _build_and_persist_sale(
+            payload, user,
+            sale_no=existing.get("sale_no"),
+            sale_id=existing.get("id"),
+            created_at_iso=existing.get("created_at"),
+            date_iso=existing.get("date"),
+            is_update=True,
+        )
+    except HTTPException:
+        # Reapply original stock deduction & cash tx supaya state konsisten
+        try:
+            # Deduct kembali stok
+            rededuct: Dict[str, float] = {}
+            for it in existing.get("items") or []:
+                comps = it.get("components") or []
+                if comps:
+                    for c in comps:
+                        mid = c.get("material_id")
+                        if mid:
+                            rededuct[mid] = rededuct.get(mid, 0) + float(c.get("consumption", 0))
+                else:
+                    mid = it.get("material_id")
+                    if mid:
+                        rededuct[mid] = rededuct.get(mid, 0) + float(it.get("area_total", 0))
+            now_iso = datetime.now(timezone.utc).isoformat()
+            for mid, qty in rededuct.items():
+                mat = await db.materials.find_one({"id": mid})
+                if mat:
+                    new_stock = round(float(mat.get("current_stock", 0)) - float(qty), 4)
+                    await db.materials.update_one({"id": mid}, {"$set": {"current_stock": new_stock, "updated_at": now_iso}})
+            # Reinsert cash tx
+            await _insert_cash_transaction(
+                account_code="301",
+                description=f"Penjualan {existing.get('sale_no')} — {existing.get('customer_name')}",
+                amount=float(existing.get("total", 0)),
+                reference=existing.get("sale_no"),
+                date_iso=existing.get("date"),
+                auto=True,
+                created_by=user.get("email"),
+            )
+        except Exception as ex:
+            logger.error(f"Rollback restore failed after update error: {ex}")
+        raise
 
 
 @api_router.delete("/sales/{sale_id}")
