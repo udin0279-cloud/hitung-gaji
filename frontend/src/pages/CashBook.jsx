@@ -664,8 +664,19 @@ function Field({ label, hint, children }) {
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
 function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading }) {
-  const totalKredit = filtered.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
-  const totalDebet = filtered.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
+  // Jurnal Akuntansi hanya menampilkan transaksi Kode Akun 101 Kas
+  const kasOnly = filtered.filter((t) => t.account_code === "101");
+  // Recompute running balance khusus untuk 101 Kas
+  const jurnal = (() => {
+    let running = Number(txData.opening_balance || 0);
+    return kasOnly.map((t) => {
+      running = t.type === "in" ? running + Number(t.amount || 0) : running - Number(t.amount || 0);
+      return { ...t, balance: running };
+    });
+  })();
+  const totalKredit = kasOnly.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
+  const totalDebet = kasOnly.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
+  const closingBalance = Number(txData.opening_balance || 0) + totalKredit - totalDebet;
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -679,14 +690,15 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input
               value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari kode / nama akun / keterangan…"
+              placeholder="Cari keterangan…"
               data-testid="journal-search"
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Filter: 101 Kas</span>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
-          {filtered.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
+          {jurnal.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
         </div>
       </div>
 
@@ -713,10 +725,10 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]">{formatIDR(txData.opening_balance)}</td>
             </tr>
             {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
-            {!loading && filtered.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada jurnal bulan ini.</td></tr>
+            {!loading && jurnal.length === 0 && (
+              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi kas (101) bulan ini.</td></tr>
             )}
-            {filtered.map((t) => (
+            {jurnal.map((t) => (
               <tr key={t.id} data-testid="journal-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${t.auto ? "bg-amber-50/40" : ""}`}>
                 <td className="px-3 py-2.5 font-mono text-xs font-bold text-zinc-700 whitespace-nowrap">{t.account_code}</td>
                 <td className="px-3 py-2.5 text-xs">
@@ -737,21 +749,21 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                 <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-zinc-900">{formatIDR(t.balance)}</td>
               </tr>
             ))}
-            {!loading && filtered.length > 0 && (
+            {!loading && jurnal.length > 0 && (
               <tr className="border-t-2 border-zinc-900 bg-zinc-50">
                 <td colSpan={4} className="px-3 py-3">
                   <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total Debet / Kredit</span>
                 </td>
                 <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebet)}</td>
                 <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalKredit)}</td>
-                <td className="px-3 py-3 text-right font-mono font-bold text-lg text-zinc-900">{formatIDR(txData.closing_balance)}</td>
+                <td className="px-3 py-3 text-right font-mono font-bold text-lg text-zinc-900">{formatIDR(closingBalance)}</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
       <div className="mt-3 text-[11px] text-zinc-500">
-        <b>Konvensi:</b> Debet = pengeluaran (kas berkurang) · Kredit = pemasukan / pengisian saldo (kas bertambah) · Saldo = saldo berjalan (Saldo sebelumnya + Kredit − Debet).
+        <b>Konvensi:</b> Debet = pengeluaran (kas berkurang) · Kredit = pemasukan / pengisian saldo (kas bertambah) · Saldo = saldo berjalan (Saldo sebelumnya + Kredit − Debet). Jurnal ini <b>khusus akun 101 Kas</b>.
         Untuk menambah transaksi, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
       </div>
     </div>
