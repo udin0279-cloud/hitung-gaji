@@ -238,6 +238,7 @@ export default function SalesReport() {
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
+                <th className="px-3 py-3 text-center w-12">No</th>
                 <th className="px-3 py-3 whitespace-nowrap">Tanggal</th>
                 <th className="px-3 py-3">No. Nota</th>
                 <th className="px-3 py-3">Pelanggan</th>
@@ -249,12 +250,13 @@ export default function SalesReport() {
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+              {loading && <tr><td colSpan={9} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi pada periode ini.</td></tr>
+                <tr><td colSpan={9} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi pada periode ini.</td></tr>
               )}
               {rows.map((r, idx) => (
                 <tr key={idx} data-testid="report-row" className="border-b border-zinc-100 hover:bg-zinc-50">
+                  <td className="px-3 py-2.5 text-center font-mono text-xs font-bold text-zinc-500">{idx + 1}</td>
                   <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{r.date}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">{r.sale_no}</td>
                   <td className="px-3 py-2.5 text-sm font-semibold text-zinc-900">{r.customer_name}</td>
@@ -273,7 +275,7 @@ export default function SalesReport() {
               ))}
               {!loading && rows.length > 0 && (
                 <tr className="border-t-2 border-zinc-900 bg-zinc-50">
-                  <td colSpan={5} className="px-3 py-3">
+                  <td colSpan={6} className="px-3 py-3">
                     <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total {searchRow ? "(Filtered)" : ""}</span>
                   </td>
                   <td className="px-3 py-3 text-center font-mono font-bold text-zinc-900">{totalRowsQty}</td>

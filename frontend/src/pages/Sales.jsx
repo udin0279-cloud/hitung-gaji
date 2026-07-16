@@ -173,6 +173,7 @@ export default function Sales() {
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
+                <th className="px-4 py-3 text-center w-12">No</th>
                 <th className="px-4 py-3">No. Nota</th>
                 <th className="px-4 py-3">Pelanggan</th>
                 <th className="px-4 py-3">Item</th>
@@ -183,12 +184,13 @@ export default function Sales() {
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+              {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi. Klik &ldquo;Transaksi Baru&rdquo;.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi. Klik &ldquo;Transaksi Baru&rdquo;.</td></tr>
               )}
-              {filtered.map((s) => (
+              {filtered.map((s, idx) => (
                 <tr key={s.id} data-testid="sale-row" className="border-b border-zinc-100 hover:bg-zinc-50/80 align-top">
+                  <td className="px-4 py-3 text-center font-mono text-xs font-bold text-zinc-500">{(page - 1) * pageSize + idx + 1}</td>
                   <td className="px-4 py-3 font-mono text-xs">
                     <div className="font-semibold text-zinc-900">{s.sale_no}</div>
                     <div className="text-[10px] text-zinc-500 mt-0.5">{s.date}</div>
