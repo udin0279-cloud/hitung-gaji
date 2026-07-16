@@ -5950,6 +5950,94 @@ async def sales_report_excel(
     )
 
 
+@api_router.get("/sales/report/analytics")
+async def sales_analytics(
+    user: dict = Depends(require_super_admin),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    customer: Optional[str] = None,
+):
+    """Analytics untuk Laporan Penjualan (rows flatten per-item + summary + charts data)."""
+    q: Dict[str, Any] = {}
+    if date_from or date_to:
+        q["date"] = {}
+        if date_from:
+            q["date"]["$gte"] = date_from
+        if date_to:
+            q["date"]["$lte"] = date_to
+    if customer:
+        safe = re.escape(customer.strip())
+        q["customer_name"] = {"$regex": safe, "$options": "i"}
+    sales = await db.sales.find(q, {"_id": 0}).sort("created_at", 1).to_list(length=20000)
+
+    # Flatten per-item rows
+    rows: List[Dict[str, Any]] = []
+    product_totals: Dict[str, Dict[str, float]] = {}  # key = product/material name → {qty, total}
+    daily_series: Dict[str, float] = {}
+    weekly_total = 0.0
+    period_total = 0.0
+
+    # Batas periode "minggu ini" (Senin – Minggu) relative to now (server tz)
+    today = datetime.now(timezone.utc).date()
+    week_start = today - timedelta(days=today.weekday())
+    week_start_iso = week_start.isoformat()
+
+    for s in sales:
+        s_date = s.get("date") or ""
+        s_customer = s.get("customer_name") or "Umum"
+        for it in s.get("items") or []:
+            name = it.get("product_name") or it.get("material_name") or "-"
+            qty = int(it.get("quantity") or 0)
+            unit_price = float(it.get("unit_price") or 0)
+            subtotal = float(it.get("subtotal") or 0)
+            size = it.get("size") or "-"
+            rows.append({
+                "date": s_date,
+                "customer_name": s_customer,
+                "sale_no": s.get("sale_no"),
+                "product_name": name,
+                "size": size,
+                "quantity": qty,
+                "unit_price": unit_price,
+                "total": subtotal,
+            })
+            pk = name
+            if pk not in product_totals:
+                product_totals[pk] = {"qty": 0, "total": 0.0}
+            product_totals[pk]["qty"] += qty
+            product_totals[pk]["total"] += subtotal
+        # Aggregations pakai sale.total (setelah diskon)
+        stotal = float(s.get("total") or 0)
+        period_total += stotal
+        daily_series[s_date] = daily_series.get(s_date, 0) + stotal
+        if s_date >= week_start_iso:
+            weekly_total += stotal
+
+    # Top produk (by total omzet)
+    top_products = sorted(
+        [{"name": k, "qty": int(v["qty"]), "total": round(v["total"], 2)} for k, v in product_totals.items()],
+        key=lambda x: x["total"], reverse=True,
+    )
+    top_product = top_products[0]["name"] if top_products else None
+
+    # Sort daily series by date
+    daily_data = [{"date": d, "total": round(v, 2)} for d, v in sorted(daily_series.items())]
+
+    return {
+        "rows": rows,
+        "summary": {
+            "period_total": round(period_total, 2),
+            "weekly_total": round(weekly_total, 2),
+            "week_start": week_start_iso,
+            "transaction_count": len(sales),
+            "item_count": len(rows),
+            "top_product": top_product,
+        },
+        "top_products": top_products[:10],
+        "daily_series": daily_data,
+    }
+
+
 @api_router.get("/sales/stats/today")
 async def sales_stats_today(user: dict = Depends(require_super_admin)):
     today = datetime.now(timezone.utc).date().isoformat()

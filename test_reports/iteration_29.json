@@ -1,0 +1,83 @@
+{
+  "summary": "End-to-end testing modul baru 'Laporan Penjualan' (GET /api/sales/report/analytics + halaman /laporan-penjualan). Backend: 20/20 pytest PASS di test_sales_analytics.py — verifikasi schema response {rows, summary, top_products, daily_series}, per-item flatten (4 sales → 4 rows), auth guard (401/403), filter date_from/date_to inclusive kedua sisi, filter customer substring case-insensitive, empty-state (no rows/tx/top_products/daily_series), summary.period_total (Σ sale.total setelah diskon), summary.weekly_total (Σ mulai Senin minggu ini) cross-check vs daily_series, week_start selalu Senin & ≤ hari ini, top_products sorted DESC by total dengan qty:int + total:rounded, aggregation qty & total lintas sale untuk product yang sama (Banner qty s1+s2+s3=2+1+3=6 → 180k), daily_series sorted ASC dengan format YYYY-MM-DD dan sum multiple sales di tanggal sama (4 sales today → 1 entry = 230k). Regression test_sales.py + test_sales_reports.py = 34/34 tetap PASSED. Frontend E2E: nav 'Laporan Penjualan' (data-testid='nav-sales-report') klik → route /laporan-penjualan render OK; default date_from = firstDayOfMonth (2026-07-01), date_to = today (2026-07-16); 4 summary cards visible (period-total Rp 1.000.000, weekly-total Rp 0 karena sale existing tgl 07-11 sebelum week_start Sen 07-13, top-product 'Banner Frontlite 3x2', Pelanggan Unik=1); Bar Chart (recharts BarChart 2 bars: Omzet biru + Qty merah) & Line Chart (recharts LineChart 1 dot untuk 1 hari) render dengan SVG; tabel Detail per Item 8 kolom (Tanggal, No.Nota, Pelanggan, Produk, Ukuran, Qty, Harga Satuan, Total) + footer TOTAL row + row-search box; filter customer 'Bu Ani' + Terapkan → hanya 1 row Bu Ani; filter no-match → empty-state 'Belum ada transaksi pada periode ini.'; reset filter → rows kembali.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Bar Chart 'Produk Paling Laris'",
+        "issues": [
+          "Omzet (rupiah, sekala jutaan) & Qty (pcs, satuan) dipetakan pada Y-axis yang sama → bar Qty jadi tidak terlihat (rectangle tinggi 0 vs 1jt). Rekomendasi: gunakan dual Y-axis (yAxisId='left' untuk Omzet + yAxisId='right' untuk Qty) atau tampilkan dua chart terpisah supaya bar Qty merah bermakna secara visual."
+        ]
+      },
+      {
+        "screen": "Summary card 'Produk Terlaris'",
+        "issues": [
+          "Angka di card 'Rp 1.050.000' = Σ item.subtotal (sebelum diskon), tapi card 'Omzet Periode Ini' 'Rp 1.000.000' = Σ sale.total (sesudah diskon). Beda basis (sebelum vs sesudah diskon) sedikit membingungkan — tambahkan tooltip/label kecil '(sebelum diskon)' pada produk terlaris atau samakan basis."
+        ]
+      },
+      {
+        "screen": "Console warnings",
+        "issues": [
+          "Recharts ResponsiveContainer log 'width(-1) height(-1)' pada initial render (4× warning) — non-breaking (chart tetap render setelah resize) tapi bising di console. Bisa dihilangkan dengan set minWidth={0} minHeight={0} pada ResponsiveContainer atau memberi fixed height ke parent."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sales_analytics.py",
+    "/app/test_reports/pytest/pytest_sales_analytics.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: dual Y-axis di Bar Chart supaya Qty (pcs) terlihat di samping Omzet (rupiah), atau split menjadi 2 chart terpisah.",
+    "OPTIONAL: samakan basis 'Produk Terlaris' & 'Omzet Periode Ini' (sesudah diskon), atau tambahkan sub-label agar user tahu Rp 1.050.000 = subtotal sebelum diskon.",
+    "OPTIONAL: hilangkan warning recharts 'width(-1) height(-1)' dengan menambah minWidth={0} minHeight={0} atau memakai aspect ratio pada ResponsiveContainer.",
+    "OPTIONAL (backend contract): endpoint /sales/report/analytics tidak menerima paginasi — return semua rows sampai length=20000. Untuk toko yang lebih besar sebaiknya server-side aggregation via Mongo `$group` atau tambah `limit`/pagination."
+  ],
+  "critical_code_review_comments": [
+    "server.py sudah 6693 lines — makin urgent untuk split module (sales.py, cashbook.py, reports.py). Endpoint /sales/report/analytics juga campur logic aggregation di route function; bagusnya ekstrak `_aggregate_sales_analytics(sales)` helper untuk unit-testability.",
+    "Aggregation di server.py L5985-6014 melakukan iteration Python di app layer untuk sampai 20000 sales. Untuk performa: gunakan MongoDB aggregation pipeline `$unwind`+`$group` — mengurangi transfer data & CPU.",
+    "Top produk di-key by product_name (string). Bila ada 2 material/produk berbeda dengan nama sama (misal 'Banner') akan di-merge. Sebaiknya key composite (product_id, product_name) atau prefer material_id/product_id.",
+    "SalesReport.jsx (290 lines) OK. Namun `data-testid='report-row'` dipakai berulang di banyak <tr> → OK tapi tests harus pakai query_selector_all.",
+    "SalesReport.jsx: `formatIDR(r.unit_price)` untuk kolom Harga Satuan — namun bila item pakai product per-area, unit_price = harga per m² (bukan per pcs). UX bisa ambigu; pertimbangkan menambah suffix '/m²' atau '/pcs' berdasarkan mode item.",
+    "SalesReport.jsx L59-64: nama produk di-slice 17 char untuk sumbu X. Ini bagus untuk kompaksi, tapi tooltip menampilkan full_name via `payload?.[0]?.payload?.full_name` — sudah benar ✓."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sales_analytics.py (baru — 20 test cases untuk GET /api/sales/report/analytics)"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 test_sales_analytics + regression 34/34 test_sales & test_sales_reports)",
+    "frontend": "100% (nav, route, default filters, 4 summary cards, 2 charts SVG rendered, table 8 headers, row search, customer filter partial-match 'Bu Ani' → 1 row, empty state)"
+  },
+  "test_credentials": "admin@payroll.id / admin123 (super_admin)",
+  "seed_data_creation": "test_sales_analytics.py membuat 1 material TEST_ANALYTICS_Flex + 4 sales (TEST_ANALYTICS_BuAni, TEST_ANALYTICS_Umum) dan menghapusnya di teardown module fixture. Semua sale dibuat pada tanggal hari ini karena SaleIn model tidak menerima field `date` (server auto-assign today).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Modul Laporan Penjualan fully working end-to-end. Endpoint /sales/report/analytics returns {rows, summary, top_products, daily_series}. Filter date_from/date_to (ISO string) inclusive kedua sisi via Mongo `$gte`/`$lte`. Filter customer via `$regex` case-insensitive dengan re.escape. Weekly aggregation pakai `today - timedelta(days=today.weekday())` (Senin lokal UTC). Semua field summary sudah ter-round ke 2 desimal. Aggregation dilakukan di Python app layer (bukan Mongo aggregation) — masih OK untuk skala kecil (limit 20000 sales). Frontend page /laporan-penjualan pakai recharts 3.6.0 BarChart + LineChart. Data-testid intact: nav-sales-report, report-date-from, report-date-to, report-customer-filter, apply-filter-button, summary-period-total, summary-weekly-total, summary-top-product, top-products-chart, daily-trend-chart, report-row-search, report-row. TEST_ANALYTICS_ seed data sudah di-teardown, DB kembali ke state semula (sale existing NOTA-20260711-0001 'Bu Ani' Banner Frontlite 3x2 qty 5 total Rp 1.000.000 tetap ada).",
+  "verified_scenarios": [
+    "Backend GET /api/sales/report/analytics tanpa filter → schema OK dengan rows + summary + top_products + daily_series ✓",
+    "Backend auth guard: anon → 401/403 ✓",
+    "Backend rows per-item flatten (4 sales × 1 item = 4 rows) ✓",
+    "Backend date_from & date_to inclusive kedua sisi (today,today menyertakan seed; 1990-01-01,1990-01-31 empty) ✓",
+    "Backend date_to=yesterday excludes today; date_from=future returns empty ✓",
+    "Backend customer filter substring 'BuAni' matches 2 sales; case-insensitive 'buani' juga OK; no-match returns empty ✓",
+    "Backend summary.period_total = 230_000 (60k+30k+90k+50k); transaction_count=4; item_count=4 ✓",
+    "Backend summary.weekly_total = 230_000 (semua sales dalam minggu ini) & konsisten dengan daily_series[date >= week_start] ✓",
+    "Backend summary.week_start selalu Senin (weekday==0) & ≤ hari ini ✓",
+    "Backend summary.top_product == top_products[0].name ('TEST_ANALYTICS_Banner') ✓",
+    "Backend top_products sorted DESC by total; length ≤ 10; qty:int; aggregate lintas sale (Banner qty=6 total=180k) ✓",
+    "Backend daily_series sorted ASC dengan YYYY-MM-DD format; multiple sales tanggal sama di-sum (4 today = 230k) ✓",
+    "Frontend nav 'Laporan Penjualan' (nav-sales-report) klik → /laporan-penjualan ✓",
+    "Frontend default filter: date_from = firstDayOfMonth (2026-07-01), date_to = today (2026-07-16) ✓",
+    "Frontend 4 summary cards render dengan nilai benar (period 1jt, weekly 0, top-product Banner Frontlite 3x2, unik=1) ✓",
+    "Frontend Bar Chart & Line Chart render SVG (recharts) dengan data ✓",
+    "Frontend table Detail per Item 8 kolom + footer TOTAL + row-search filter ✓",
+    "Frontend customer filter 'Bu Ani' + Terapkan → hanya 1 row Bu Ani ✓",
+    "Frontend customer filter no-match → empty state 'Belum ada transaksi pada periode ini.' ✓",
+    "Regression: test_sales.py + test_sales_reports.py = 34/34 tetap PASSED ✓"
+  ]
+}

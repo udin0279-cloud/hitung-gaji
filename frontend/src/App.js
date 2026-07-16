@@ -17,6 +17,7 @@ import Inventory from "@/pages/Inventory";
 import Purchasing from "@/pages/Purchasing";
 import Sales from "@/pages/Sales";
 import Reports from "@/pages/Reports";
+import SalesReport from "@/pages/SalesReport";
 import CashBook from "@/pages/CashBook";
 import Categories from "@/pages/Categories";
 import Layout from "@/components/Layout";
@@ -76,6 +77,7 @@ function App() {
               <Route path="/cashbook" element={<ProtectedRoute allowedRoles={["super_admin"]}><CashBook /></ProtectedRoute>} />
               <Route path="/categories" element={<ProtectedRoute allowedRoles={["super_admin"]}><Categories /></ProtectedRoute>} />
               <Route path="/reports" element={<ProtectedRoute allowedRoles={["super_admin"]}><Reports /></ProtectedRoute>} />
+              <Route path="/laporan-penjualan" element={<ProtectedRoute allowedRoles={["super_admin"]}><SalesReport /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute allowedRoles={["super_admin"]}><Settings /></ProtectedRoute>} />
             </Route>
 
