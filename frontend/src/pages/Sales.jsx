@@ -21,22 +21,39 @@ export default function Sales() {
   const [openNew, setOpenNew] = useState(false);
   const [openReport, setOpenReport] = useState(false);
   const [editingSale, setEditingSale] = useState(null);
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
+  const loadSales = async (pageArg = page, pageSizeArg = pageSize, qArg = search) => {
+    try {
+      const res = await api.get("/sales", {
+        params: { paginate: true, page: pageArg, page_size: pageSizeArg, q: qArg.trim() || undefined },
+      });
+      setSales(res.data.items);
+      setTotalItems(res.data.total || 0);
+      setTotalPages(res.data.pages || 0);
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat transaksi");
+    }
+  };
 
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [s, m, c, p, st] = await Promise.all([
-        api.get("/sales"),
+      const [m, c, p, st] = await Promise.all([
         api.get("/inventory/materials"),
         api.get("/inventory/customers"),
         api.get("/products", { params: { only_active: true } }),
         api.get("/sales/stats/today"),
       ]);
-      setSales(s.data);
       setMaterials(m.data);
       setCustomers(c.data);
       setProducts(p.data);
       setStats(st.data);
+      await loadSales(page, pageSize, search);
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
     } finally {
@@ -44,15 +61,30 @@ export default function Sales() {
     }
   };
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, []);
 
-  const filtered = sales.filter((s) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (s.sale_no || "").toLowerCase().includes(q)
-      || (s.customer_name || "").toLowerCase().includes(q)
-      || (s.customer_phone || "").includes(q);
-  });
+  // Debounced search — reset ke page 1 saat search berubah
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setPage(1);
+      loadSales(1, pageSize, search);
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line
+  }, [search]);
+
+  const goToPage = async (newPage) => {
+    if (newPage < 1 || newPage > totalPages) return;
+    setPage(newPage);
+    await loadSales(newPage, pageSize, search);
+  };
+  const changePageSize = async (newSize) => {
+    setPageSize(newSize);
+    setPage(1);
+    await loadSales(1, newSize, search);
+  };
+
+  const filtered = sales; // Server-side sudah filter
 
   const openReceipt = (s, auto = false) => {
     const url = `${API}/sales/${s.id}/receipt${auto ? "?auto=1" : ""}`;
@@ -130,7 +162,11 @@ export default function Sales() {
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input data-testid="sales-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari No. Nota / nama pelanggan / telp…" className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none" />
           </div>
-          <div className="text-sm text-zinc-500">{filtered.length} transaksi</div>
+          <div className="text-sm text-zinc-500">
+            {totalItems === 0 ? "0 transaksi" : (
+              <>Menampilkan <b>{sales.length}</b> dari <b>{totalItems}</b> transaksi</>
+            )}
+          </div>
         </div>
 
         <div className="border border-zinc-200 bg-white overflow-x-auto">
@@ -209,6 +245,57 @@ export default function Sales() {
             </tbody>
           </table>
         </div>
+        {/* Pagination Controls */}
+        {totalItems > 0 && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border border-zinc-200 bg-white px-4 py-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="flex items-center gap-2 text-xs text-zinc-600">
+                <span className="uppercase tracking-widest font-bold">Per Halaman:</span>
+                <select
+                  data-testid="page-size-select"
+                  value={pageSize}
+                  onChange={(e) => changePageSize(Number(e.target.value))}
+                  className="rounded-none border border-zinc-300 bg-white px-2 py-1 text-xs font-mono focus:border-[#002FA7] focus:outline-none"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+              </label>
+              <div className="text-xs text-zinc-500 font-mono">
+                Halaman <b className="text-zinc-900">{page}</b> dari <b className="text-zinc-900">{totalPages || 1}</b>
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                data-testid="pagination-first"
+                onClick={() => goToPage(1)}
+                disabled={page <= 1}
+                className="rounded-none border border-zinc-300 bg-white text-zinc-700 px-3 py-1.5 text-xs font-bold uppercase tracking-wider hover:bg-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Halaman pertama"
+              >« First</button>
+              <button
+                data-testid="pagination-prev"
+                onClick={() => goToPage(page - 1)}
+                disabled={page <= 1}
+                className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-1.5 text-xs font-bold uppercase tracking-wider hover:bg-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed"
+              >‹ Previous</button>
+              <button
+                data-testid="pagination-next"
+                onClick={() => goToPage(page + 1)}
+                disabled={page >= totalPages}
+                className="rounded-none bg-[#002FA7] text-white px-4 py-1.5 text-xs font-bold uppercase tracking-wider hover:bg-[#001E7A] disabled:opacity-30 disabled:cursor-not-allowed"
+              >Next ›</button>
+              <button
+                data-testid="pagination-last"
+                onClick={() => goToPage(totalPages)}
+                disabled={page >= totalPages}
+                className="rounded-none border border-zinc-300 bg-white text-zinc-700 px-3 py-1.5 text-xs font-bold uppercase tracking-wider hover:bg-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Halaman terakhir"
+              >Last »</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {openNew && <NewSaleModal materials={materials} products={products} customers={customers} edit={editingSale} onClose={() => { setOpenNew(false); setEditingSale(null); }} onSaved={async (result) => { setOpenNew(false); setEditingSale(null); await loadAll(); if (result && !result._isUpdate) openReceipt(result, true); }} />}

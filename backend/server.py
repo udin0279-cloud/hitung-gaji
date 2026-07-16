@@ -5047,16 +5047,42 @@ def _company_info() -> Dict[str, str]:
 
 
 @api_router.get("/sales")
-async def sales_list(user: dict = Depends(require_super_admin), limit: int = 200, date_from: Optional[str] = None, date_to: Optional[str] = None):
-    q = {}
+async def sales_list(
+    user: dict = Depends(require_super_admin),
+    limit: int = 200,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 10,
+    q: Optional[str] = None,
+    paginate: bool = False,
+):
+    """Return either plain list (backward compat) atau {items,total,page,page_size,pages} bila paginate=true."""
+    query: Dict[str, Any] = {}
     if date_from or date_to:
         rng = {}
         if date_from:
             rng["$gte"] = date_from
         if date_to:
             rng["$lte"] = date_to
-        q["date"] = rng
-    items = await db.sales.find(q, {"_id": 0}).sort("created_at", -1).to_list(length=max(1, min(limit, 2000)))
+        query["date"] = rng
+    if q and q.strip():
+        safe = re.escape(q.strip())
+        query["$or"] = [
+            {"sale_no": {"$regex": safe, "$options": "i"}},
+            {"customer_name": {"$regex": safe, "$options": "i"}},
+            {"customer_phone": {"$regex": safe, "$options": "i"}},
+        ]
+    if paginate:
+        page = max(1, int(page))
+        page_size = max(1, min(int(page_size), 100))
+        total = await db.sales.count_documents(query)
+        skip = (page - 1) * page_size
+        items = await db.sales.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(page_size).to_list(length=page_size)
+        pages = (total + page_size - 1) // page_size if page_size else 0
+        return {"items": items, "total": total, "page": page, "page_size": page_size, "pages": pages}
+    # Backward-compat: plain list
+    items = await db.sales.find(query, {"_id": 0}).sort("created_at", -1).to_list(length=max(1, min(limit, 2000)))
     return items
 
 
