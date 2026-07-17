@@ -1,0 +1,36 @@
+{
+  "summary": "Retested UX fix for stale-state between Kasbon Sementara tab and Jurnal Akuntansi tab in /cashbook. The onCashChanged={loadAll} prop from CashBook to KasbonTab is correctly invoked after settle/reopen/remove, causing parent to refresh cash_transactions, balance and monthly summary. All 8 review scenarios pass without page reload.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_scenarios_results": [
+    "PASS - Login admin@payroll.id/admin123 and navigate to /cashbook",
+    "PASS - Create kasbon 'Budi UX' / 'Beli tinta' / Rp 80.000",
+    "PASS - Settle kasbon triggers loadAll(); no page reload required",
+    "PASS - Switching to Jurnal Akuntansi (no reload) shows 'Pelunasan Kasbon - Budi UX - Beli tinta' row",
+    "PASS - stat-balance updated Rp 1.884.500 -> Rp 1.804.500 without reload",
+    "PASS - stat-out-month updated Rp 115.500 -> Rp 195.500 without reload",
+    "PASS - Reopen kasbon triggers loadAll(); Jurnal row for Budi UX is gone (no reload)",
+    "PASS - Balance and pengeluaran restored to initial values (Rp 1.884.500 / Rp 115.500) after reopen",
+    "PASS - Settle again then delete kasbon; Jurnal row removed and stats not deducted (no reload)",
+    "PASS - Regression: Buku Kas tab still renders auto transactions correctly"
+  ],
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CashBook.jsx is now ~1032 lines; consider splitting KasbonTab, JournalTab, BookTab, and modal components into separate files under /pages/cashbook/ for maintainability (>700 line threshold).",
+    "KasbonTab has a local load() and receives onCashChanged. Both are awaited sequentially in settle/reopen/remove which is fine, but consider Promise.all(load(), onCashChanged?.()) to reduce perceived latency.",
+    "Console warnings from Recharts about width(-1)/height(-1) appear on non-cashbook pages during initial navigation; not related to this fix but worth investigating."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100%"},
+  "test_credentials": "admin@payroll.id / admin123 (Super Admin)",
+  "seed_data_creation": "Created ephemeral kasbon 'Budi UX' during test; deleted at end of flow. No residual data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fix at /app/frontend/src/pages/CashBook.jsx line 162 (onCashChanged={loadAll} passed to KasbonTab) and lines 814/822/831 (calling onCashChanged() after settle/reopen/remove) is verified working. No further action needed for this bug.",
+  "rca of the issue": "Original bug: KasbonTab maintained its own state and called load() only on its local list; parent CashBook's txData/balance/summary were not refreshed after settle/reopen/remove, so Jurnal Akuntansi tab and StatCards showed stale data until page reload. Fix: Pass parent's loadAll as onCashChanged prop and invoke it after each mutation, so parent re-fetches /cashbook/transactions, /cashbook/balance, /cashbook/summary and re-renders Jurnal tab and StatCards immediately."
+}

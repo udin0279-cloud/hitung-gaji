@@ -159,7 +159,7 @@ export default function CashBook() {
           />
         )}
         {tab === "kasbon" && (
-          <KasbonTab month={month} setMonth={setMonth} />
+          <KasbonTab month={month} setMonth={setMonth} onCashChanged={loadAll} />
         )}
         {tab === "summary" && (
           <SummaryTab summary={summary} month={month} setMonth={setMonth} />
@@ -777,7 +777,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
    ================== TAB: KASBON SEMENTARA =======================
    Kasbon staff/karyawan pending — bisa dilunaskan atau dihapus.
    ================================================================ */
-function KasbonTab({ month, setMonth }) {
+function KasbonTab({ month, setMonth, onCashChanged }) {
   const [data, setData] = useState({ items: [], total_open: 0, total_settled: 0, total_all: 0, count: 0 });
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState(""); // "" | "open" | "settled"
@@ -807,17 +807,29 @@ function KasbonTab({ month, setMonth }) {
 
   const settle = async (k) => {
     if (!window.confirm(`Tandai kasbon ${k.name} (${formatIDR(k.amount)}) sebagai LUNAS?`)) return;
-    try { await api.put(`/cashbook/kasbon/${k.id}/settle`); toast.success("Kasbon dilunaskan"); await load(); }
-    catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
+    try {
+      await api.put(`/cashbook/kasbon/${k.id}/settle`);
+      toast.success("Kasbon dilunaskan · Kas otomatis terpotong");
+      await load();
+      if (onCashChanged) await onCashChanged();
+    } catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
   };
   const reopen = async (k) => {
-    try { await api.put(`/cashbook/kasbon/${k.id}/reopen`); toast.success("Kasbon dibuka kembali"); await load(); }
-    catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
+    try {
+      await api.put(`/cashbook/kasbon/${k.id}/reopen`);
+      toast.success("Kasbon dibuka kembali · Transaksi kas dibatalkan");
+      await load();
+      if (onCashChanged) await onCashChanged();
+    } catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
   };
   const remove = async (k) => {
     if (!window.confirm(`Hapus kasbon ${k.name}?`)) return;
-    try { await api.delete(`/cashbook/kasbon/${k.id}`); toast.success("Kasbon dihapus"); await load(); }
-    catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
+    try {
+      await api.delete(`/cashbook/kasbon/${k.id}`);
+      toast.success("Kasbon dihapus");
+      await load();
+      if (onCashChanged) await onCashChanged();
+    } catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
   };
 
   return (
