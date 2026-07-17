@@ -69,8 +69,17 @@ export default function SalesReport() {
     total: d.total,
   }));
 
-  const totalRowsAmount = rows.reduce((s, r) => s + Number(r.total || 0), 0);
   const totalRowsQty = rows.reduce((s, r) => s + Number(r.quantity || 0), 0);
+  // Total Omzet Footer — SINKRON dengan summary.period_total:
+  // dedupe berdasarkan sale_no (tiap transaksi hanya dihitung 1x pakai sale_total setelah diskon)
+  const uniqueSaleTotals = new Map();
+  rows.forEach((r) => {
+    if (!uniqueSaleTotals.has(r.sale_no)) {
+      uniqueSaleTotals.set(r.sale_no, Number(r.sale_total || 0));
+    }
+  });
+  const totalRowsAmount = Array.from(uniqueSaleTotals.values()).reduce((s, v) => s + v, 0);
+  const totalRowsItemsSubtotal = rows.reduce((s, r) => s + Number(r.total || 0), 0);
 
   return (
     <div className="px-4 sm:px-6 lg:px-10 py-6 sm:py-8 max-w-7xl">
@@ -279,15 +288,28 @@ export default function SalesReport() {
                 </tr>
               ))}
               {!loading && rows.length > 0 && (
-                <tr className="border-t-2 border-zinc-900 bg-zinc-50">
-                  <td colSpan={6} className="px-3 py-3">
-                    <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total {searchRow ? "(Filtered)" : ""}</span>
-                  </td>
-                  <td className="px-3 py-3 text-center font-mono font-bold text-zinc-900">{totalRowsQty}</td>
-                  <td className="px-3 py-3"></td>
-                  <td className="px-3 py-3 text-right font-mono font-bold text-lg text-[#002FA7]">{formatIDR(totalRowsAmount)}</td>
-                  <td className="px-3 py-3"></td>
-                </tr>
+                <>
+                  <tr className="border-t-2 border-zinc-900 bg-zinc-50">
+                    <td colSpan={6} className="px-3 py-3">
+                      <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">Subtotal Item (sebelum diskon)</span>
+                    </td>
+                    <td className="px-3 py-3 text-center font-mono text-zinc-700">{totalRowsQty}</td>
+                    <td className="px-3 py-3"></td>
+                    <td className="px-3 py-3 text-right font-mono text-zinc-700">{formatIDR(totalRowsItemsSubtotal)}</td>
+                    <td className="px-3 py-3"></td>
+                  </tr>
+                  <tr className="border-t border-zinc-300 bg-[#002FA7]/5">
+                    <td colSpan={6} className="px-3 py-3">
+                      <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">
+                        Total Omzet {searchRow ? "(Filtered)" : ""} · {uniqueSaleTotals.size} transaksi
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-center font-mono font-bold text-zinc-900">{totalRowsQty}</td>
+                    <td className="px-3 py-3"></td>
+                    <td className="px-3 py-3 text-right font-mono font-bold text-lg text-[#002FA7]">{formatIDR(totalRowsAmount)}</td>
+                    <td className="px-3 py-3"></td>
+                  </tr>
+                </>
               )}
             </tbody>
           </table>

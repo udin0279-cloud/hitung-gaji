@@ -6000,7 +6000,7 @@ async def sales_analytics(
     customer: Optional[str] = None,
 ):
     """Analytics untuk Laporan Penjualan (rows flatten per-item + summary + charts data)."""
-    q: Dict[str, Any] = {}
+    q: Dict[str, Any] = {"status": {"$nin": ["cancelled", "void", "voided", "canceled"]}}
     if date_from or date_to:
         q["date"] = {}
         if date_from:
@@ -6031,6 +6031,8 @@ async def sales_analytics(
         s_method = s.get("payment_method") or "cash"
         s_bank = s.get("payment_bank") or ""
         s_pnotes = s.get("payment_notes") or ""
+        s_total_after_disc = float(s.get("total") or 0)  # setelah diskon
+        s_discount = float(s.get("discount") or 0)
         for it in s.get("items") or []:
             name = it.get("product_name") or it.get("material_name") or "-"
             qty = int(it.get("quantity") or 0)
@@ -6045,7 +6047,9 @@ async def sales_analytics(
                 "size": size,
                 "quantity": qty,
                 "unit_price": unit_price,
-                "total": subtotal,
+                "total": subtotal,  # subtotal item (belum diskon)
+                "sale_total": s_total_after_disc,  # total transaksi setelah diskon (untuk footer sinkron dgn summary)
+                "sale_discount": s_discount,
                 "payment_method": s_method,
                 "payment_bank": s_bank,
                 "payment_notes": s_pnotes,
