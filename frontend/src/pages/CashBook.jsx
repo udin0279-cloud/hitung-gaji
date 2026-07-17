@@ -664,9 +664,11 @@ function Field({ label, hint, children }) {
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
 function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading }) {
-  // Jurnal 101 Kas menampilkan SEMUA arus kas (setiap transaksi cash_ledger memengaruhi kas fisik).
-  // Tipe "in"  → Kredit (kas bertambah). Tipe "out" → Debet (kas berkurang).
-  const kasTx = filtered;
+  // KREDIT hanya untuk pemasukan yang masuk ke Akun 101 Kas (account_code === "101" & type=in)
+  // DEBET: semua pengeluaran kas (type=out) — tidak difilter berdasarkan account_code
+  const kasTx = filtered.filter((t) =>
+    t.type === "out" || (t.type === "in" && t.account_code === "101")
+  );
   // Recompute running balance dari saldo awal + Kredit − Debet
   const jurnal = (() => {
     let running = Number(txData.opening_balance || 0);
@@ -696,7 +698,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Akun: 101 Kas · Semua Arus Kas</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Debet: Semua · Kredit: Hanya 101 Kas</span>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
           {jurnal.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
@@ -764,8 +766,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         </table>
       </div>
       <div className="mt-3 text-[11px] text-zinc-500">
-        <b>Konvensi:</b> Debet = pengeluaran (kas berkurang) · Kredit = pemasukan / pengisian saldo (kas bertambah) · Saldo = saldo berjalan (Saldo sebelumnya + Kredit − Debet).
-        Semua transaksi cash ledger otomatis memengaruhi Akun 101 Kas. Untuk menambah transaksi, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
+        <b>Konvensi:</b> Debet = pengeluaran kas (semua arus keluar) · Kredit = pemasukan kas <b>khusus Akun 101 Kas</b> · Saldo = Saldo Awal + Kredit − Debet.
+        Pemasukan dari akun lain (misal 301 Penjualan Tunai / 301-BCA / Shopee) <b>tidak masuk kredit di jurnal ini</b>. Untuk menambah transaksi, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
       </div>
     </div>
   );
