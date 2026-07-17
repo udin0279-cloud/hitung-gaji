@@ -665,3 +665,27 @@ Produk **Kaos Sablon**: harga S-XL = 85rb, harga XXL+ = 95rb. Komponen: 1 kaos p
 
 ### Testing
 Iteration 27: 13 new + 43 regression = **56/56 PASSED** backend + full frontend E2E via testing agent.
+
+---
+
+## Update: 2026-07-17 — Integrasi Pelunasan Kasbon → Jurnal Kas Utama (Akun 101)
+
+### Feature
+Saat kasbon sementara ditandai LUNAS, sistem otomatis membuat transaksi pengeluaran (`type=out`) di `cash_transactions` dengan `account_code=101` (Kas), muncul di kolom **DEBET** Jurnal Akuntansi dan memotong saldo Kas real-time.
+
+### Behavior
+- **Settle** (`PUT /api/cashbook/kasbon/{id}/settle`)
+  - Set status kasbon = "settled"
+  - Insert auto cash-tx: `account_code=101`, `type=out`, `description="Pelunasan Kasbon - {Nama} - {Keterangan}"`, `reference=KASBON-{id}`, `auto=true`
+  - Idempotent: sebelum insert, cascade delete tx lama dgn `reference=KASBON-{id}`
+- **Reopen** (`PUT /api/cashbook/kasbon/{id}/reopen`) — hapus auto cash-tx pelunasan (rollback)
+- **Delete kasbon** — cascade hapus auto cash-tx pelunasan
+- Bypass `_insert_cash_transaction` helper karena akun 101 default `type=in`; di-hard-code `type=out` untuk konvensi DEBET
+
+### Files Changed
+- `backend/server.py` — helper `_kasbon_ref`, `_kasbon_create_settlement_tx`, `_kasbon_delete_settlement_tx`; update endpoint settle/reopen/delete
+- `frontend/src/pages/CashBook.jsx` — prop `onCashChanged={loadAll}` dari `CashBook` ke `KasbonTab`, dipanggil setelah settle/reopen/remove agar Jurnal + StatCards refresh tanpa reload
+
+### Testing
+Iteration 32 (backend): 6/6 pytest PASS di `/app/backend/tests/test_kasbon_settlement.py`
+Iteration 33 (frontend E2E): 10/10 skenario PASS — settle → Jurnal muncul, reopen → hilang, delete → hilang, stats real-time update, semua tanpa reload page
