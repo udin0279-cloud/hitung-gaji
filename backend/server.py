@@ -6707,6 +6707,48 @@ async def kasbon_update(kasbon_id: str, payload: KasbonIn, user: dict = Depends(
     return doc
 
 
+def _kasbon_ref(kasbon_id: str) -> str:
+    return f"KASBON-{kasbon_id}"
+
+
+async def _kasbon_create_settlement_tx(kasbon: Dict[str, Any], user_email: Optional[str]) -> None:
+    """Insert auto cash-out transaction on Akun 101 Kas untuk pelunasan kasbon.
+    Bypass _insert_cash_transaction karena akun 101 default type=in; kita perlu type=out
+    agar muncul di kolom DEBET dan mengurangi saldo Kas Utama.
+    """
+    await _ensure_cash_accounts()
+    kas_acc = await db.cash_accounts.find_one({"code": "101"}, {"_id": 0})
+    name = kasbon.get("name") or "-"
+    desc_extra = (kasbon.get("description") or "").strip()
+    description = f"Pelunasan Kasbon - {name}"
+    if desc_extra:
+        description += f" - {desc_extra}"
+    tx_doc = {
+        "id": str(uuid.uuid4()),
+        "date": datetime.now(timezone.utc).date().isoformat(),
+        "account_code": "101",
+        "account_name": (kas_acc.get("name") if kas_acc else "Kas"),
+        "type": "out",
+        "description": description,
+        "amount": round(float(kasbon.get("amount", 0)), 2),
+        "reference": _kasbon_ref(kasbon.get("id", "")),
+        "auto": True,
+        "created_by": user_email,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.cash_transactions.insert_one(tx_doc)
+
+
+async def _kasbon_delete_settlement_tx(kasbon_id: str) -> None:
+    """Hapus semua auto cash-tx pelunasan yang dibuat untuk kasbon ini."""
+    await db.cash_transactions.delete_many({
+        "reference": _kasbon_ref(kasbon_id),
+        "auto": True,
+        "account_code": "101",
+        "type": "out",
+    })
+
+
 @api_router.put("/cashbook/kasbon/{kasbon_id}/settle")
 async def kasbon_settle(kasbon_id: str, user: dict = Depends(require_super_admin)):
     existing = await db.kasbon_sementara.find_one({"id": kasbon_id})
@@ -6714,10 +6756,18 @@ async def kasbon_settle(kasbon_id: str, user: dict = Depends(require_super_admin
         raise HTTPException(status_code=404, detail="Kasbon tidak ditemukan")
     if existing.get("status") == "settled":
         raise HTTPException(status_code=400, detail="Kasbon sudah dilunaskan")
+    settled_at = datetime.now(timezone.utc).isoformat()
     await db.kasbon_sementara.update_one(
         {"id": kasbon_id},
-        {"$set": {"status": "settled", "settled_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {"status": "settled", "settled_at": settled_at}},
     )
+    # Auto-insert pengeluaran ke Jurnal Kas Utama (Akun 101, DEBET)
+    try:
+        # Bersihkan sisa tx lama (jika ada) sebelum insert baru — idempotent
+        await _kasbon_delete_settlement_tx(kasbon_id)
+        await _kasbon_create_settlement_tx(existing, user.get("email"))
+    except Exception as ex:
+        logger.warning(f"Cashbook auto-insert (kasbon settle) failed: {ex}")
     doc = await db.kasbon_sementara.find_one({"id": kasbon_id}, {"_id": 0})
     return doc
 
@@ -6731,6 +6781,11 @@ async def kasbon_reopen(kasbon_id: str, user: dict = Depends(require_super_admin
         {"id": kasbon_id},
         {"$set": {"status": "open", "settled_at": None}},
     )
+    # Rollback auto cash-tx pelunasan
+    try:
+        await _kasbon_delete_settlement_tx(kasbon_id)
+    except Exception as ex:
+        logger.warning(f"Cashbook auto-delete (kasbon reopen) failed: {ex}")
     doc = await db.kasbon_sementara.find_one({"id": kasbon_id}, {"_id": 0})
     return doc
 
@@ -6740,6 +6795,11 @@ async def kasbon_delete(kasbon_id: str, user: dict = Depends(require_super_admin
     res = await db.kasbon_sementara.delete_one({"id": kasbon_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Kasbon tidak ditemukan")
+    # Cascade: hapus auto cash-tx pelunasan jika ada
+    try:
+        await _kasbon_delete_settlement_tx(kasbon_id)
+    except Exception as ex:
+        logger.warning(f"Cashbook auto-delete (kasbon delete) failed: {ex}")
     return {"ok": True}
 
 
