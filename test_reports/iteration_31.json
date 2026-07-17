@@ -1,0 +1,33 @@
+{
+  "summary": "Retest bug fix sales_delete cascade cash tx untuk semua payment account codes. Re-ran /app/backend/tests/test_sales_payment_methods.py — 17/17 PASS (100%). 4 test yang FAIL di iteration_30 (transfer BCA/Mandiri, shopee_plaza, shopee_kastem delete rollback) sekarang PASS. Regression test cash (301) delete juga tetap PASS. Bug fully resolved.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sales_payment_methods.py",
+    "/app/test_reports/pytest/pytest_payment_methods_iter31.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix verified — sales_delete (L5441-5449) sekarang memanggil _rollback_sale_effects(s) helper (DRY, konsisten dengan sales_update). _rollback_sale_effects (L5352) menghapus cash tx dengan filter {account_code: {$in: list(PAYMENT_ACCOUNT_MAP.values())}} — cover semua 5 code (301, 301-BCA, 301-MDR, 301-SPP, 301-SPK).",
+    "Note (belum di-fix, low priority): Sale numbering (_next_sale_no) pakai count_documents — masih ada risiko duplikasi sale_no bila sale dihapus. Namun tidak berimbas ke rollback karena cash tx sekarang dihapus tuntas saat delete.",
+    "Note: server.py sudah 6753 lines — refactor split (sales.py, cashbook.py, reports.py) tetap direkomendasikan sebagai hygiene work."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (17/17 test PASS di test_sales_payment_methods.py)",
+    "frontend": "not tested (backend-only per request)"
+  },
+  "test_credentials": "admin@payroll.id / admin123",
+  "seed_data_creation": "test_sales_payment_methods.py membuat 1 material TEST_PAY_Flexy + N sales TEST_PAY_Customer dengan berbagai metode; auto-teardown via _cleanup fixture (semua bersih setelah run).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug fix untuk sales_delete cascade cash tx sudah TERVERIFIKASI. Semua 17 test di test_sales_payment_methods.py PASS (termasuk 5 skenario delete rollback: cash-301, transfer BCA-301-BCA, transfer Mandiri-301-MDR, shopee_plaza-301-SPP, shopee_kastem-301-SPK). sales_delete sekarang pakai _rollback_sale_effects helper. Tidak ada regressi terdeteksi. Fitur payment method sepenuhnya siap.",
+  "rca_of_the_issue": "Bug root cause (iteration_30): sales_delete di L5442 pakai hardcoded delete_many({account_code: '301'}), sehingga account_code payment method non-cash (301-BCA/MDR/SPP/SPK) tidak ikut terhapus. Fix: main agent mengganti body sales_delete menjadi `await _rollback_sale_effects(s); await db.sales.delete_one({id: sale_id})` — konsisten dengan sales_update rollback. Verifikasi: 5 skenario delete rollback semua PASS."
+}

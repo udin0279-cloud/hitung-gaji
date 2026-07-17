@@ -5443,35 +5443,9 @@ async def sales_delete(sale_id: str, user: dict = Depends(require_super_admin)):
     s = await db.sales.find_one({"id": sale_id})
     if not s:
         raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
-    # Rollback stok — agregat per material dari components (support multi-material BOM)
-    rollback: Dict[str, float] = {}
-    for it in s.get("items") or []:
-        comps = it.get("components")
-        if comps:
-            for c in comps:
-                mid = c.get("material_id")
-                if mid:
-                    rollback[mid] = rollback.get(mid, 0) + float(c.get("consumption", 0))
-        else:
-            # Legacy sale tanpa components — pakai material_id + area_total
-            mid = it.get("material_id")
-            if mid:
-                rollback[mid] = rollback.get(mid, 0) + float(it.get("area_total", 0))
-    now_iso = datetime.now(timezone.utc).isoformat()
-    for mid, qty in rollback.items():
-        mat = await db.materials.find_one({"id": mid})
-        if mat:
-            new_stock = round(float(mat.get("current_stock", 0)) + float(qty), 4)
-            await db.materials.update_one(
-                {"id": mid},
-                {"$set": {"current_stock": new_stock, "updated_at": now_iso}},
-            )
+    # Rollback stok + hapus semua auto cash tx (pakai helper konsisten dgn sales_update)
+    await _rollback_sale_effects(s)
     await db.sales.delete_one({"id": sale_id})
-    # Hapus auto cash transaction terkait
-    try:
-        await db.cash_transactions.delete_many({"reference": s.get("sale_no"), "auto": True, "account_code": "301"})
-    except Exception as ex:
-        logger.warning(f"Cashbook rollback (sale delete) failed: {ex}")
     return {"ok": True}
 
 
