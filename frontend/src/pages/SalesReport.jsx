@@ -6,6 +6,7 @@ import {
   ResponsiveContainer, Legend,
 } from "recharts";
 import { Search, TrendingUp, Package, Calendar, Award, Users } from "lucide-react";
+import { formatPaymentMethod } from "./Sales";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -247,12 +248,13 @@ export default function SalesReport() {
                 <th className="px-3 py-3 text-center">Qty</th>
                 <th className="px-3 py-3 text-right">Harga Satuan</th>
                 <th className="px-3 py-3 text-right">Total</th>
+                <th className="px-3 py-3">Metode</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={9} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+              {loading && <tr><td colSpan={10} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={9} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi pada periode ini.</td></tr>
+                <tr><td colSpan={10} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi pada periode ini.</td></tr>
               )}
               {rows.map((r, idx) => (
                 <tr key={idx} data-testid="report-row" className="border-b border-zinc-100 hover:bg-zinc-50">
@@ -271,6 +273,9 @@ export default function SalesReport() {
                   <td className="px-3 py-2.5 text-center font-mono text-xs">{r.quantity}</td>
                   <td className="px-3 py-2.5 text-right font-mono text-xs">{formatIDR(r.unit_price)}</td>
                   <td className="px-3 py-2.5 text-right font-mono text-sm font-bold text-zinc-900">{formatIDR(r.total)}</td>
+                  <td className="px-3 py-2.5">
+                    <PaymentBadgeMini row={r} />
+                  </td>
                 </tr>
               ))}
               {!loading && rows.length > 0 && (
@@ -281,6 +286,7 @@ export default function SalesReport() {
                   <td className="px-3 py-3 text-center font-mono font-bold text-zinc-900">{totalRowsQty}</td>
                   <td className="px-3 py-3"></td>
                   <td className="px-3 py-3 text-right font-mono font-bold text-lg text-[#002FA7]">{formatIDR(totalRowsAmount)}</td>
+                  <td className="px-3 py-3"></td>
                 </tr>
               )}
             </tbody>
@@ -290,3 +296,14 @@ export default function SalesReport() {
     </div>
   );
 }
+
+function PaymentBadgeMini({ row }) {
+  const p = formatPaymentMethod(row);
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className={`inline-block rounded-none px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border w-fit ${p.color}`}>{p.short}</span>
+      {row.payment_notes && <div className="text-[10px] font-mono text-zinc-500 truncate max-w-[120px]" title={row.payment_notes}>{row.payment_notes}</div>}
+    </div>
+  );
+}
+

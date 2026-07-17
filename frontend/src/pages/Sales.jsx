@@ -178,15 +178,16 @@ export default function Sales() {
                 <th className="px-4 py-3">Pelanggan</th>
                 <th className="px-4 py-3">Item</th>
                 <th className="px-4 py-3">Kasir</th>
+                <th className="px-4 py-3">Bayar</th>
                 <th className="px-4 py-3 text-right">Total</th>
                 <th className="px-4 py-3 text-right">Kembali</th>
                 <th className="px-4 py-3 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+              {loading && <tr><td colSpan={9} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi. Klik &ldquo;Transaksi Baru&rdquo;.</td></tr>
+                <tr><td colSpan={9} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi. Klik &ldquo;Transaksi Baru&rdquo;.</td></tr>
               )}
               {filtered.map((s, idx) => (
                 <tr key={s.id} data-testid="sale-row" className="border-b border-zinc-100 hover:bg-zinc-50/80 align-top">
@@ -208,6 +209,9 @@ export default function Sales() {
                     ))}
                   </td>
                   <td className="px-4 py-3 text-xs text-zinc-700">{s.cashier_name || s.cashier}</td>
+                  <td className="px-4 py-3">
+                    <PaymentBadge sale={s} />
+                  </td>
                   <td className="px-4 py-3 font-mono text-right text-zinc-900 font-bold">{formatIDR(s.total)}</td>
                   <td className="px-4 py-3 font-mono text-right text-zinc-500 text-xs">
                     <div>Bayar: {formatIDR(s.cash_paid)}</div>
@@ -455,6 +459,9 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
   const [items, setItems] = useState(buildInitialItems());
   const [discount, setDiscount] = useState(edit?.discount || 0);
   const [cashPaid, setCashPaid] = useState(edit?.cash_paid || 0);
+  const [paymentMethod, setPaymentMethod] = useState(edit?.payment_method || "cash");
+  const [paymentBank, setPaymentBank] = useState(edit?.payment_bank || "BCA");
+  const [paymentNotes, setPaymentNotes] = useState(edit?.payment_notes || "");
   const [notes, setNotes] = useState(edit?.notes || "");
   const [saving, setSaving] = useState(false);
 
@@ -618,7 +625,9 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
         customer_phone: customer.phone.trim(),
         discount: Number(discount) || 0,
         cash_paid: Number(cashPaid) || 0,
-        payment_method: "tunai",
+        payment_method: paymentMethod,
+        payment_bank: paymentMethod === "transfer" ? paymentBank : null,
+        payment_notes: paymentMethod === "transfer" ? (paymentNotes.trim() || null) : null,
         notes: notes.trim() || null,
         items: items.map((it) => ({
           material_id: it.material_id || null,
@@ -865,7 +874,50 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
               <Field label="Diskon (Rp)">
                 <input data-testid="sale-discount" type="number" step="0.01" min="0" value={discount} onChange={(e) => setDiscount(e.target.value)} className={inputCls + " font-mono"} />
               </Field>
-              <Field label="Tunai Diterima (Rp)">
+              <Field label="Metode Pembayaran">
+                <select
+                  data-testid="sale-payment-method"
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className={inputCls + " font-bold"}
+                >
+                  <option value="cash">💵 Cash (Uang Tunai)</option>
+                  <option value="transfer">🏦 Transfer Bank</option>
+                  <option value="shopee_plaza">🛒 Shopee Plaza</option>
+                  <option value="shopee_kastem">🛒 Shopee Kastem</option>
+                </select>
+              </Field>
+              {paymentMethod === "transfer" && (
+                <div className="border border-[#002FA7]/30 bg-[#002FA7]/5 p-3 space-y-3">
+                  <Field label="Bank Tujuan">
+                    <div className="flex gap-2">
+                      {["BCA", "Mandiri"].map((b) => (
+                        <button
+                          key={b}
+                          type="button"
+                          data-testid={`sale-bank-${b}`}
+                          onClick={() => setPaymentBank(b)}
+                          className={`flex-1 rounded-none px-4 py-2 text-sm font-bold uppercase tracking-wider border transition-colors ${
+                            paymentBank === b
+                              ? "bg-[#002FA7] text-white border-[#002FA7]"
+                              : "bg-white text-zinc-700 border-zinc-300 hover:border-zinc-500"
+                          }`}
+                        >{b}</button>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field label="Keterangan Transfer">
+                    <input
+                      data-testid="sale-payment-notes"
+                      value={paymentNotes}
+                      onChange={(e) => setPaymentNotes(e.target.value)}
+                      placeholder="cth: An/n Budi, ref 20260717001"
+                      className={inputCls}
+                    />
+                  </Field>
+                </div>
+              )}
+              <Field label={paymentMethod === "cash" ? "Tunai Diterima (Rp)" : "Nominal Diterima (Rp)"}>
                 <input data-testid="sale-cash-paid" type="number" step="0.01" min="0" required value={cashPaid} onChange={(e) => setCashPaid(e.target.value)} className={inputCls + " font-mono font-bold text-lg"} placeholder="0" />
               </Field>
               <Field label="Catatan (Opsional)">
@@ -939,3 +991,27 @@ function Field({ label, hint, children }) {
     </label>
   );
 }
+
+/* Helper: Payment method label + color */
+export function formatPaymentMethod(sale) {
+  const m = (sale.payment_method || "cash").toLowerCase();
+  if (m === "cash" || m === "tunai") return { label: "Cash", short: "Cash", color: "bg-[#008A00]/10 text-[#008A00] border-[#008A00]/30" };
+  if (m === "transfer") {
+    const bank = sale.payment_bank || "Bank";
+    return { label: `Transfer ${bank}`, short: `TF ${bank}`, color: "bg-[#002FA7]/10 text-[#002FA7] border-[#002FA7]/30" };
+  }
+  if (m === "shopee_plaza") return { label: "Shopee Plaza", short: "Shopee P", color: "bg-[#EE4D2D]/10 text-[#EE4D2D] border-[#EE4D2D]/30" };
+  if (m === "shopee_kastem") return { label: "Shopee Kastem", short: "Shopee K", color: "bg-[#EE4D2D]/10 text-[#EE4D2D] border-[#EE4D2D]/30" };
+  return { label: m, short: m, color: "bg-zinc-100 text-zinc-700 border-zinc-300" };
+}
+
+function PaymentBadge({ sale }) {
+  const p = formatPaymentMethod(sale);
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className={`inline-block rounded-none px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border w-fit ${p.color}`}>{p.short}</span>
+      {sale.payment_notes && <div className="text-[10px] font-mono text-zinc-500 truncate max-w-[120px]" title={sale.payment_notes}>{sale.payment_notes}</div>}
+    </div>
+  );
+}
+

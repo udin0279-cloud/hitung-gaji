@@ -12,7 +12,7 @@ import asyncio
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Form, Body
 from fastapi.responses import StreamingResponse, HTMLResponse
@@ -5027,8 +5027,38 @@ class SaleIn(BaseModel):
     items: List[SaleItemIn] = []
     discount: float = 0
     cash_paid: float = 0
-    payment_method: str = "tunai"
+    payment_method: str = "cash"  # cash | transfer | shopee_plaza | shopee_kastem
+    payment_bank: Optional[str] = None  # BCA | Mandiri (khusus transfer)
+    payment_notes: Optional[str] = None  # keterangan tambahan (khusus transfer)
     notes: Optional[str] = None
+
+
+# Mapping payment method → account_code untuk auto cash tx
+PAYMENT_ACCOUNT_MAP = {
+    "cash": "301",             # Penjualan Tunai (existing)
+    "transfer_bca": "301-BCA", # Transfer BCA
+    "transfer_mandiri": "301-MDR",
+    "shopee_plaza": "301-SPP",
+    "shopee_kastem": "301-SPK",
+}
+
+
+def _resolve_payment_account(payment_method: str, payment_bank: Optional[str] = None) -> Tuple[str, str]:
+    """Return (account_code, human_label) untuk auto cash tx."""
+    pm = (payment_method or "cash").lower()
+    if pm == "transfer":
+        b = (payment_bank or "").strip().lower()
+        if b == "mandiri":
+            return ("301-MDR", "Transfer Mandiri")
+        return ("301-BCA", "Transfer BCA")
+    if pm == "shopee_plaza":
+        return ("301-SPP", "Shopee Plaza")
+    if pm == "shopee_kastem":
+        return ("301-SPK", "Shopee Kastem")
+    if pm in ("cash", "tunai"):
+        return ("301", "Penjualan Tunai")
+    # Fallback (legacy "tunai" atau lainnya)
+    return ("301", "Penjualan Tunai")
 
 
 async def _next_sale_no() -> str:
@@ -5271,7 +5301,9 @@ async def _build_and_persist_sale(
         "total": total,
         "cash_paid": round(cash_paid, 2),
         "change": change,
-        "payment_method": payload.payment_method or "tunai",
+        "payment_method": payload.payment_method or "cash",
+        "payment_bank": (payload.payment_bank or "").strip() or None,
+        "payment_notes": (payload.payment_notes or "").strip() or None,
         "notes": payload.notes,
         "status": "paid",
         "created_at": final_created,
@@ -5282,11 +5314,15 @@ async def _build_and_persist_sale(
         await db.sales.update_one({"id": final_id}, {"$set": doc})
     else:
         await db.sales.insert_one(doc)
-    # Auto cash tx
+    # Auto cash tx — akun tergantung metode pembayaran
     try:
+        acc_code, acc_label = _resolve_payment_account(payload.payment_method, payload.payment_bank)
+        desc = f"Penjualan {final_sale_no} — {doc['customer_name']} · {acc_label}"
+        if doc.get("payment_notes"):
+            desc += f" ({doc['payment_notes']})"
         await _insert_cash_transaction(
-            account_code="301",
-            description=f"Penjualan {final_sale_no} — {doc['customer_name']}",
+            account_code=acc_code,
+            description=desc,
             amount=total,
             reference=final_sale_no,
             date_iso=doc["date"],
@@ -5337,7 +5373,13 @@ async def _rollback_sale_effects(sale: Dict[str, Any]) -> None:
                 {"$set": {"current_stock": new_stock, "updated_at": now_iso}},
             )
     try:
-        await db.cash_transactions.delete_many({"reference": sale.get("sale_no"), "auto": True, "account_code": "301"})
+        # Hapus semua auto cash tx untuk sale ini (semua account_code payment method)
+        payment_codes = list(PAYMENT_ACCOUNT_MAP.values())
+        await db.cash_transactions.delete_many({
+            "reference": sale.get("sale_no"),
+            "auto": True,
+            "account_code": {"$in": payment_codes},
+        })
     except Exception as ex:
         logger.warning(f"Cashbook rollback (sale) failed: {ex}")
 
@@ -6000,6 +6042,7 @@ async def sales_analytics(
     rows: List[Dict[str, Any]] = []
     product_totals: Dict[str, Dict[str, float]] = {}  # key = product/material name → {qty, total}
     daily_series: Dict[str, float] = {}
+    method_totals: Dict[str, float] = {}  # payment method breakdown
     weekly_total = 0.0
     period_total = 0.0
 
@@ -6011,6 +6054,9 @@ async def sales_analytics(
     for s in sales:
         s_date = s.get("date") or ""
         s_customer = s.get("customer_name") or "Umum"
+        s_method = s.get("payment_method") or "cash"
+        s_bank = s.get("payment_bank") or ""
+        s_pnotes = s.get("payment_notes") or ""
         for it in s.get("items") or []:
             name = it.get("product_name") or it.get("material_name") or "-"
             qty = int(it.get("quantity") or 0)
@@ -6026,6 +6072,9 @@ async def sales_analytics(
                 "quantity": qty,
                 "unit_price": unit_price,
                 "total": subtotal,
+                "payment_method": s_method,
+                "payment_bank": s_bank,
+                "payment_notes": s_pnotes,
             })
             pk = name
             if pk not in product_totals:
@@ -6036,6 +6085,10 @@ async def sales_analytics(
         stotal = float(s.get("total") or 0)
         period_total += stotal
         daily_series[s_date] = daily_series.get(s_date, 0) + stotal
+        mkey = s_method
+        if s_method == "transfer" and s_bank:
+            mkey = f"transfer_{s_bank.lower()}"
+        method_totals[mkey] = method_totals.get(mkey, 0) + stotal
         if s_date >= week_start_iso:
             weekly_total += stotal
 
@@ -6061,6 +6114,9 @@ async def sales_analytics(
         },
         "top_products": top_products[:10],
         "daily_series": daily_data,
+        "method_breakdown": [
+            {"method": k, "total": round(v, 2)} for k, v in sorted(method_totals.items(), key=lambda x: x[1], reverse=True)
+        ],
     }
 
 
@@ -6087,8 +6143,12 @@ async def sales_stats_today(user: dict = Depends(require_super_admin)):
 # ================================================================
 # Chart of Accounts default (bisa di-extend via UI)
 DEFAULT_CASH_ACCOUNTS = [
-    # Pemasukan (income)
+    # Pemasukan (income) — per metode pembayaran
     {"code": "301", "name": "Penjualan Tunai", "type": "in", "system": True},
+    {"code": "301-BCA", "name": "Penjualan via Transfer BCA", "type": "in", "system": True},
+    {"code": "301-MDR", "name": "Penjualan via Transfer Mandiri", "type": "in", "system": True},
+    {"code": "301-SPP", "name": "Penjualan via Shopee Plaza", "type": "in", "system": True},
+    {"code": "301-SPK", "name": "Penjualan via Shopee Kastem", "type": "in", "system": True},
     {"code": "302", "name": "Terima Piutang", "type": "in", "system": False},
     {"code": "303", "name": "Modal / Setoran Kas", "type": "in", "system": False},
     {"code": "304", "name": "Pendapatan Lain-lain", "type": "in", "system": False},
@@ -6393,8 +6453,8 @@ async def _is_cash_tx_orphaned(tx: Dict[str, Any]) -> bool:
     if code == "201":
         po = await db.purchase_orders.find_one({"po_no": ref}, {"_id": 0, "id": 1})
         return po is None
-    # code 301 = auto dari Sales (reference = sale_no)
-    if code == "301":
+    # code 301, 301-BCA, 301-MDR, 301-SPP, 301-SPK = auto dari Sales (reference = sale_no)
+    if code in PAYMENT_ACCOUNT_MAP.values():
         sale = await db.sales.find_one({"sale_no": ref}, {"_id": 0, "id": 1})
         return sale is None
     return False
@@ -6428,7 +6488,7 @@ async def cash_transaction_orphan_check(tx_id: str, user: dict = Depends(require
         "is_orphan": orphan,
         "reference": existing.get("reference"),
         "account_code": existing.get("account_code"),
-        "source_type": "PO" if existing.get("account_code") == "201" else ("Sale" if existing.get("account_code") == "301" else "Unknown"),
+        "source_type": "PO" if existing.get("account_code") == "201" else ("Sale" if existing.get("account_code") in PAYMENT_ACCOUNT_MAP.values() else "Unknown"),
     }
 
 

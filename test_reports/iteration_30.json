@@ -1,0 +1,52 @@
+{
+  "summary": "E2E test payment method dropdown (Cash/Transfer BCA-Mandiri/Shopee Plaza/Shopee Kastem). Backend pytest 13/17 PASS (76%) — 4 delete rollback tests FAIL karena bug di endpoint DELETE /api/sales/{id}. Frontend UI: modal Kasir dropdown 4 opsi OK, transfer section BCA/Mandiri buttons + notes input tampil/hilang sesuai metode OK, kolom BAYAR di Sales table dengan badge CASH hijau OK, kolom METODE di SalesReport dengan badge CASH hijau OK.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "DELETE /api/sales/{sale_id}",
+        "issue": "Rollback cash tx hanya menghapus account_code='301' (hardcoded di server.py line 5472). 4 payment code baru (301-BCA, 301-MDR, 301-SPP, 301-SPK) TIDAK ikut dihapus → menyisakan orphan cash tx setelah sale dihapus. Verified: sale created dengan payment_method='transfer'+bank='BCA' → cash tx 301-BCA muncul. Setelah DELETE sale, tx 301-BCA masih tetap ada di DB. Bug reproduksi konsisten untuk BCA/MDR/SPP/SPK. Cash (301) sendiri OK karena hardcode 301 kebetulan match.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "NewSaleModal item select (bukan bagian task ini)",
+        "issues": [
+          "Console hydration warning: <span> tidak boleh child dari <option> (di line 753 Sales.jsx pada optgroup activeProducts). Non-breaking tapi memicu React hydration error di console. Bisa diperbaiki dengan menghapus wrapping <span> di dalam <option>."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sales_payment_methods.py",
+    "/app/test_reports/pytest/pytest_payment_methods.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Perbaiki server.py line 5442-5475 (sales_delete endpoint). Ganti hardcoded `account_code: '301'` dengan menggunakan `_rollback_sale_effects(s)` helper (yang sudah benar) — atau ubah query menjadi `{'reference': s.get('sale_no'), 'auto': True, 'account_code': {'$in': list(PAYMENT_ACCOUNT_MAP.values())}}`. Setelah fix, test_delete_removes_cash_tx[transfer-BCA-301-BCA / Mandiri-301-MDR / shopee_plaza-301-SPP / shopee_kastem-301-SPK] akan PASS. Rekomendasi kuat: gunakan `_rollback_sale_effects(s)` di sales_delete supaya konsisten dengan sales_update rollback (DRY).",
+    "OPTIONAL: Hilangkan hydration warning <span> dalam <option> di Sales.jsx L753 (kemungkinan dari komponen wrapper x-source-var). Non-breaking."
+  ],
+  "critical_code_review_comments": [
+    "CRITICAL DRY violation & regression risk: sales_delete (L5442) & _rollback_sale_effects (L5352) melakukan hal yang mirip tapi TIDAK konsisten. sales_delete masih pakai delete_many({'account_code': '301'}) sementara _rollback_sale_effects (dipakai oleh sales_update PUT) sudah benar pakai `{$in: PAYMENT_ACCOUNT_MAP.values()}`. Solusi: refactor sales_delete untuk memanggil _rollback_sale_effects(s) lalu await db.sales.delete_one({...}) — ini persis pattern yang dipakai sales_update.",
+    "server.py sudah 6779 lines (naik dari 6693 di iteration 29). Modul sales+cashbook makin banyak. Prioritas: split sales.py, cashbook.py, reports.py.",
+    "Sale numbering (_next_sale_no) pakai `count_documents` — jika sale dihapus, sale_no baru bisa DUPLIKAT sale_no lama yang dihapus. Ini menyebabkan cash tx orphan (dari sale sebelumnya) berkolisi dengan sale baru. Untuk fix definitif, gunakan counter collection atau `max(sale_no) + 1` per tanggal.",
+    "PAYMENT_ACCOUNT_MAP di server.py L5037: bagus terpusat. Tapi `_resolve_payment_account` L5046 tidak konsisten dengan MAP — MAP key='transfer_bca' vs resolve mengembalikan tuple langsung. Pertimbangkan menyatukan single-source-of-truth. Contoh: MAP jadi dict of dict {'transfer_bca': {'code': '301-BCA', 'label': 'Transfer BCA'}}."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sales_payment_methods.py (baru — 17 test cases)"
+  ],
+  "success_rate": {
+    "backend": "76% (13/17 test PASS; 4 fail semua karena 1 bug yang sama di sales_delete)",
+    "frontend": "100% (modal dropdown 4 opsi, transfer section conditional, kolom BAYAR Sales, kolom METODE SalesReport)"
+  },
+  "test_credentials": "admin@payroll.id / admin123",
+  "seed_data_creation": "test_sales_payment_methods.py membuat 1 material TEST_PAY_Flexy + N sales TEST_PAY_Customer dengan berbagai metode; auto-teardown via _cleanup fixture.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fitur payment method dropdown FE lengkap dan bekerja OK. Backend: seed 4 akun (301-BCA/MDR/SPP/SPK) ter-seed idempotent, POST /api/sales dengan payment_method=cash/transfer+BCA/transfer+Mandiri/shopee_plaza/shopee_kastem semua create cash tx dengan account_code correct. Legacy 'tunai' → 301 juga OK. PUT /api/sales/{id} change method OK (old 301 dihapus, new 301-BCA dibuat, no dup). Analytics endpoint has payment_method/payment_bank/payment_notes di setiap row + method_breakdown array. Orphan-check return source_type='Sale' untuk 301-BCA. **BUG BLOCKER**: DELETE /api/sales/{id} tidak menghapus cash tx dengan account_code selain '301' (hardcoded di L5472). Setelah main agent fix (rekomendasi: ganti dengan _rollback_sale_effects(s) call), re-run test_sales_payment_methods.py → semua 17 harus PASS. Untuk re-test, jalankan: `pytest backend/tests/test_sales_payment_methods.py -v`. Regression test_sales/test_sales_reports/test_sales_analytics tidak dijalankan ulang; dianggap masih OK karena tidak menyentuh payment fields.",
+  "rca_of_the_issue": "RCA: server.py sales_delete endpoint (L5441-5475) masih pakai kode legacy `delete_many({'reference': s.sale_no, 'auto': True, 'account_code': '301'})`. Ketika fitur payment method baru ditambahkan, developer hanya mengupdate _rollback_sale_effects helper (dipakai oleh PUT) tapi LUPA update endpoint DELETE. Karena PUT & DELETE menjalankan rollback dengan cara yang berbeda, ada inkonsistensi. Reproduksi: (1) POST /api/sales dengan payment_method='transfer', payment_bank='BCA', (2) verify cash tx 301-BCA ada, (3) DELETE /api/sales/{id}, (4) cash tx 301-BCA masih ada = ORPHAN. Mitigasi: refactor sales_delete untuk memanggil _rollback_sale_effects(s) sebelum db.sales.delete_one, atau minimal ganti account_code filter jadi {'$in': list(PAYMENT_ACCOUNT_MAP.values())}."
+}
