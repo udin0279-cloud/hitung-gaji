@@ -664,18 +664,19 @@ function Field({ label, hint, children }) {
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
 function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading }) {
-  // Jurnal Akuntansi hanya menampilkan transaksi Kode Akun 101 Kas
-  const kasOnly = filtered.filter((t) => t.account_code === "101");
-  // Recompute running balance khusus untuk 101 Kas
+  // Jurnal 101 Kas menampilkan SEMUA arus kas (setiap transaksi cash_ledger memengaruhi kas fisik).
+  // Tipe "in"  → Kredit (kas bertambah). Tipe "out" → Debet (kas berkurang).
+  const kasTx = filtered;
+  // Recompute running balance dari saldo awal + Kredit − Debet
   const jurnal = (() => {
     let running = Number(txData.opening_balance || 0);
-    return kasOnly.map((t) => {
+    return kasTx.map((t) => {
       running = t.type === "in" ? running + Number(t.amount || 0) : running - Number(t.amount || 0);
       return { ...t, balance: running };
     });
   })();
-  const totalKredit = kasOnly.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
-  const totalDebet = kasOnly.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
+  const totalKredit = kasTx.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
+  const totalDebet = kasTx.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
   const closingBalance = Number(txData.opening_balance || 0) + totalKredit - totalDebet;
   return (
     <div>
@@ -695,7 +696,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Filter: 101 Kas</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Akun: 101 Kas · Semua Arus Kas</span>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
           {jurnal.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
@@ -726,7 +727,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             </tr>
             {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && jurnal.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi kas (101) bulan ini.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada arus kas bulan ini.</td></tr>
             )}
             {jurnal.map((t) => (
               <tr key={t.id} data-testid="journal-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${t.auto ? "bg-amber-50/40" : ""}`}>
@@ -763,8 +764,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         </table>
       </div>
       <div className="mt-3 text-[11px] text-zinc-500">
-        <b>Konvensi:</b> Debet = pengeluaran (kas berkurang) · Kredit = pemasukan / pengisian saldo (kas bertambah) · Saldo = saldo berjalan (Saldo sebelumnya + Kredit − Debet). Jurnal ini <b>khusus akun 101 Kas</b>.
-        Untuk menambah transaksi, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
+        <b>Konvensi:</b> Debet = pengeluaran (kas berkurang) · Kredit = pemasukan / pengisian saldo (kas bertambah) · Saldo = saldo berjalan (Saldo sebelumnya + Kredit − Debet).
+        Semua transaksi cash ledger otomatis memengaruhi Akun 101 Kas. Untuk menambah transaksi, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
       </div>
     </div>
   );
