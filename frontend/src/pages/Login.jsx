@@ -8,8 +8,8 @@ import { ArrowRight, Square } from "lucide-react";
 export default function Login() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@payroll.id");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -112,11 +112,6 @@ export default function Login() {
               {loading ? "Memproses…" : (<>Masuk <ArrowRight className="w-4 h-4" /></>)}
             </button>
           </form>
-
-          <div className="mt-8 p-4 border border-zinc-200 bg-zinc-50">
-            <div className="text-[10px] uppercase tracking-widest font-semibold text-zinc-500">Demo Account</div>
-            <div className="mt-1.5 font-mono text-xs text-zinc-700">admin@payroll.id / admin123</div>
-          </div>
 
           <div className="mt-4 text-xs text-zinc-500 text-center">
             Karyawan? <Link to="/portal/login" data-testid="goto-portal-link" className="font-semibold text-[#002FA7] hover:underline">Masuk Portal Karyawan →</Link>
