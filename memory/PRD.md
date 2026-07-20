@@ -689,3 +689,34 @@ Saat kasbon sementara ditandai LUNAS, sistem otomatis membuat transaksi pengelua
 ### Testing
 Iteration 32 (backend): 6/6 pytest PASS di `/app/backend/tests/test_kasbon_settlement.py`
 Iteration 33 (frontend E2E): 10/10 skenario PASS — settle → Jurnal muncul, reopen → hilang, delete → hilang, stats real-time update, semua tanpa reload page
+
+---
+
+## Update: 2026-07-20 — RBAC (Role-Based Access Control) untuk Menu
+
+### Feature
+Dua level user: **Super Admin** (akses semua menu) & **Admin dengan Privilege** (menu diatur via 13 checkbox di halaman Kelola User).
+
+**13 Menu Keys:** karyawan, payroll, inventory, pembelian, penjualan, laporan_penjualan, kas_operasional, laba_rugi, master_kategori, thr, izin_cuti, kelola_user, konfigurasi.
+
+### Backend Enforcement
+- `MENU_KEYS`, `PATH_MENU_RULES`, `RBAC_BYPASS_PREFIXES` di `server.py`.
+- `@app.middleware("http")` rbac_middleware decode JWT → cek role → jika `admin_privileged`, lookup menu berdasar path prefix, tolak 403 jika tidak ada di permissions.
+- Endpoint `/api/users` sekarang butuh perm `kelola_user`; `/api/config/*` butuh `konfigurasi`.
+- `require_super_admin` sekarang mengizinkan kedua role (menu enforcement dilakukan di middleware).
+- Migration otomatis di startup: `hr_leave` → `admin_privileged` dengan `permissions=["izin_cuti"]`; super_admin auto-populated dgn full MENU_KEYS.
+
+### Frontend Enforcement
+- `/app/frontend/src/lib/menuAccess.js` — `MENU_KEYS`, `MENU_LABELS`, `hasMenuAccess()`, `firstAccessibleRoute()`.
+- `App.js`: `ProtectedRoute` dgn prop `menuKey` render `<AccessDenied>` jika akses ditolak. `HomeRedirect` untuk admin_privileged redirect ke halaman pertama yg diakses.
+- `Layout.jsx`: sidebar filter menu via `hasMenuAccess()`.
+- `Users.jsx`: role picker + grid 13 checkbox permissions, tombol Pilih Semua/Kosongkan; kolom "Menu Akses" di tabel user.
+- `components/AccessDenied.jsx`: halaman 403 dengan data-testid `access-denied-title` & `access-denied-home`.
+
+### Testing
+Iteration 34: **backend 18/18 pytest PASS + frontend 19/19 E2E PASS** — semua skenario di review request lulus.
+
+### Files Changed
+- `backend/server.py` (+~150 lines): RBAC constants, middleware, user endpoint updates, migrations
+- `frontend/src/App.js`, `Layout.jsx`, `Users.jsx`: rewritten untuk menuKey system
+- `frontend/src/lib/menuAccess.js` (new), `components/AccessDenied.jsx` (new)
