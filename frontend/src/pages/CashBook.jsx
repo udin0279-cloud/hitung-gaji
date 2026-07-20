@@ -81,7 +81,7 @@ export default function CashBook() {
         return;
       }
     } else {
-      if (!window.confirm(`Hapus transaksi "${t.description}"?`)) return;
+      if (!window.confirm("Apakah Anda yakin ingin menghapus data ini?")) return;
     }
     try { await api.delete(`/cashbook/transactions/${t.id}`); toast.success("Transaksi dihapus"); await loadAll(); }
     catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
@@ -156,6 +156,8 @@ export default function CashBook() {
           <JournalTab
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
             txData={txData} filtered={filtered} loading={loading}
+            onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
+            onRemove={removeTx}
           />
         )}
         {tab === "kasbon" && (
@@ -663,7 +665,7 @@ function Field({ label, hint, children }) {
    - Saldo berjalan = saldo sebelumnya + Kredit − Debet
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
-function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading }) {
+function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove }) {
   // KREDIT hanya untuk pemasukan yang masuk ke Akun 101 Kas (account_code === "101" & type=in)
   // DEBET: semua pengeluaran kas (type=out) — tidak difilter berdasarkan account_code
   const kasTx = filtered.filter((t) =>
@@ -715,7 +717,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               <th className="px-3 py-3 border-r border-zinc-700">Keterangan</th>
               <th className="px-3 py-3 text-right border-r border-zinc-700 bg-[#E81123]/90">Debet</th>
               <th className="px-3 py-3 text-right border-r border-zinc-700 bg-[#008A00]/90">Kredit</th>
-              <th className="px-3 py-3 text-right">Saldo</th>
+              <th className="px-3 py-3 text-right border-r border-zinc-700">Saldo</th>
+              <th className="px-3 py-3 text-center whitespace-nowrap">Aksi</th>
             </tr>
           </thead>
           <tbody>
@@ -726,10 +729,11 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]">{formatIDR(txData.opening_balance)}</td>
+              <td className="px-3 py-2.5"></td>
             </tr>
-            {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && jurnal.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada arus kas bulan ini.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada arus kas bulan ini.</td></tr>
             )}
             {jurnal.map((t) => (
               <tr key={t.id} data-testid="journal-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${t.auto ? "bg-amber-50/40" : ""}`}>
@@ -750,6 +754,26 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                   {t.type === "in" ? <span className="text-[#008A00] font-bold">{formatIDR(t.amount)}</span> : <span className="text-zinc-300">—</span>}
                 </td>
                 <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-zinc-900">{formatIDR(t.balance)}</td>
+                <td className="px-3 py-2.5 whitespace-nowrap">
+                  <div className="flex items-center justify-center gap-1">
+                    <button
+                      data-testid={`journal-edit-${t.id}`}
+                      onClick={() => onEdit && onEdit(t)}
+                      title={t.auto ? "Transaksi otomatis — edit tidak disarankan" : "Edit transaksi"}
+                      className="p-1.5 hover:bg-[#002FA7]/10 text-[#002FA7]"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      data-testid={`journal-del-${t.id}`}
+                      onClick={() => onRemove && onRemove(t)}
+                      title="Hapus transaksi"
+                      className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </td>
               </tr>
             ))}
             {!loading && jurnal.length > 0 && (
@@ -760,6 +784,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                 <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebet)}</td>
                 <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalKredit)}</td>
                 <td className="px-3 py-3 text-right font-mono font-bold text-lg text-zinc-900">{formatIDR(closingBalance)}</td>
+                <td className="px-3 py-3"></td>
               </tr>
             )}
           </tbody>

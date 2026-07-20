@@ -1,0 +1,39 @@
+{
+  "summary": "Frontend-only verification of new Edit & Delete actions in Jurnal Akuntansi tab (Kas Operasional). All acceptance criteria PASS: Aksi column present, TxModal opens with correct title & pre-filled fields, running balance re-computes after edit/delete without reload, confirm dialog text is exact 'Apakah Anda yakin ingin menghapus data ini?', Cancel path preserves the tx, StatCards (stat-out-month) update live, edit for type=in shows 'Pemasukan Kas' title, and auto-tx (Kasbon Pelunasan) delete is properly blocked with a toast referencing the source module.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Jurnal Akuntansi - auto-tx delete toast", "issues": ["Toast message says 'Transaksi otomatis dari Unknown KASBON-<uuid>' — the source_type resolves to literal string 'Unknown' for kasbon-originated auto transactions. Cosmetic; the block behavior itself works. Consider mapping to 'Kasbon' in orphan-check response for better UX."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional cosmetic: backend /cashbook/transactions/{id}/orphan-check should return source_type='Kasbon' (not 'Unknown') when the source is a kasbon settlement, so the block toast reads 'Transaksi otomatis dari Kasbon KASBON-xxx' instead of 'Unknown KASBON-xxx'."
+  ],
+  "critical_code_review_comments": [
+    "CashBook.jsx is 1057 lines — approaching the 700-line threshold recommended for splitting. Consider extracting JournalTab, KasbonTab, TxModal, SettingModal, AccountsModal into separate files under src/pages/cashbook/.",
+    "JournalTab recomputes running balance from filtered list only; if user searches, running balance in the visible rows reflects only filtered set (may confuse users). Consider computing balance on the unfiltered set then filter for display, or add a note.",
+    "TxModal filters accounts by initial.type so a user cannot flip in↔out during edit — this is intentional per problem statement, good."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100%"},
+  "test_credentials": "admin@payroll.id / admin123 (super_admin)",
+  "seed_data_creation": "Created & cleaned up: TEST_JURNAL Bensin (25000→edited 40000→deleted), TEST_JURNAL Cancel (10000, cancel-flow then deleted), TEST_JURNAL Modal (Pemasukan 101, 100000→edited desc→deleted), TEST_JURNAL Kasbon (15000, settled then deleted). Note: existing TEST_UI_Ridwan kasbon from prior iteration is still present in DB (not created by this run).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Journal Edit/Delete UI verified working end-to-end. Confirm dialog uses window.confirm with exact text 'Apakah Anda yakin ingin menghapus data ini?'. Always register page.on('dialog') BEFORE clicking journal-del-* buttons. data-testid pattern: journal-edit-{txId} / journal-del-{txId}. Auto-tx delete blocked via /cashbook/transactions/{id}/orphan-check (source not orphan → toast + no-op). TxModal reused from BookTab; filters accounts by initial.type (no flip in/out allowed on edit).",
+  "verified_scenarios": [
+    "Aksi column present in Jurnal table (rightmost after Saldo)",
+    "journal-edit-{id} & journal-del-{id} present per row",
+    "Create pengeluaran 105 BBM 25000 → visible in DEBET column",
+    "Edit → TxModal title 'Pengeluaran Kas', fields pre-filled with old data",
+    "Edit 25000→40000 & desc revised → toast 'Transaksi diperbarui', row updates live, Total Debet footer +15.000 (Rp 140.500 → Rp 155.500)",
+    "Cancel dialog text matches exactly: 'Apakah Anda yakin ingin menghapus data ini?'",
+    "Dialog Cancel → tx remains in table",
+    "Dialog Accept → row disappears, toast 'Transaksi dihapus', stat-out-month decreases by 40.000 (Rp 165.500 → Rp 125.500), all without reload",
+    "Type=in edit: TxModal title 'Pemasukan Kas' (not Pengeluaran), pre-filled, save updates KREDIT row",
+    "Auto-tx (Kasbon Pelunasan) with Auto badge: clicking Hapus triggers orphan-check, source non-orphan → delete blocked with toast, row remains"
+  ]
+}
