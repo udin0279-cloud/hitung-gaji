@@ -720,3 +720,21 @@ Iteration 34: **backend 18/18 pytest PASS + frontend 19/19 E2E PASS** — semua 
 - `backend/server.py` (+~150 lines): RBAC constants, middleware, user endpoint updates, migrations
 - `frontend/src/App.js`, `Layout.jsx`, `Users.jsx`: rewritten untuk menuKey system
 - `frontend/src/lib/menuAccess.js` (new), `components/AccessDenied.jsx` (new)
+
+---
+
+## Update: 2026-07-20 — Edit & Delete di Tab Jurnal Akuntansi
+
+### Feature
+- Kolom "Aksi" ditambahkan di tabel Jurnal Akuntansi dengan tombol **Edit** & **Hapus** per baris.
+- Edit: reuse `TxModal` existing dari BookTab — ubah Tanggal, Keterangan, Kategori Akun (dalam tipe sama), Jumlah, Referensi. TxModal filter accounts by initial.type (tidak bisa flip Debet↔Kredit dalam edit).
+- Hapus: konfirmasi window.confirm dengan text tepat **"Apakah Anda yakin ingin menghapus data ini?"**. Auto-tx (dari PO/Sales/Kasbon) tetap tunduk pada orphan-check backend.
+- Running balance & StatCards (Saldo Kas Real-time, Pengeluaran/Pemasukan bulan, Saldo Akhir) auto re-compute setelah edit/delete via `loadAll()`.
+- Backend fix cosmetik: `orphan-check` sekarang mengembalikan `source_type="Kasbon"` untuk auto-tx dari pelunasan kasbon (sebelumnya "Unknown").
+
+### Files Changed
+- `frontend/src/pages/CashBook.jsx`: JournalTab terima props `onEdit`/`onRemove` dari parent, kolom Aksi, data-testid `journal-edit-{id}` / `journal-del-{id}`; confirm text diperbarui.
+- `backend/server.py`: helper `_cash_tx_source_type()` baru; `_is_cash_tx_orphaned()` handle KASBON- references; orphan-check endpoint gunakan helper.
+
+### Testing
+Iteration 35 (frontend E2E): **10/10 skenario PASS**. Backend orphan-check verified via curl.

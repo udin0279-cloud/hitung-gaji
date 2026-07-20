@@ -6575,7 +6575,24 @@ async def _is_cash_tx_orphaned(tx: Dict[str, Any]) -> bool:
     if code in PAYMENT_ACCOUNT_MAP.values():
         sale = await db.sales.find_one({"sale_no": ref}, {"_id": 0, "id": 1})
         return sale is None
+    # code 101 + reference KASBON-* = auto dari pelunasan kasbon
+    if code == "101" and isinstance(ref, str) and ref.startswith("KASBON-"):
+        kasbon_id = ref.replace("KASBON-", "", 1)
+        kasbon = await db.kasbon_sementara.find_one({"id": kasbon_id}, {"_id": 0, "id": 1})
+        return kasbon is None
     return False
+
+
+def _cash_tx_source_type(tx: Dict[str, Any]) -> str:
+    code = tx.get("account_code")
+    ref = tx.get("reference") or ""
+    if code == "201":
+        return "PO"
+    if code in PAYMENT_ACCOUNT_MAP.values():
+        return "Penjualan"
+    if code == "101" and ref.startswith("KASBON-"):
+        return "Kasbon"
+    return "Unknown"
 
 
 @api_router.delete("/cashbook/transactions/{tx_id}")
@@ -6606,7 +6623,7 @@ async def cash_transaction_orphan_check(tx_id: str, user: dict = Depends(require
         "is_orphan": orphan,
         "reference": existing.get("reference"),
         "account_code": existing.get("account_code"),
-        "source_type": "PO" if existing.get("account_code") == "201" else ("Sale" if existing.get("account_code") in PAYMENT_ACCOUNT_MAP.values() else "Unknown"),
+        "source_type": _cash_tx_source_type(existing),
     }
 
 
