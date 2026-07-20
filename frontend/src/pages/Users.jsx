@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { Plus, Trash2, Edit3, Shield, ShieldCheck, X, UserCog } from "lucide-react";
+import { Plus, Trash2, Edit3, Shield, ShieldCheck, X, UserCog, CheckSquare, Square as SquareIcon } from "lucide-react";
 import { toast } from "sonner";
+import { MENU_KEYS, MENU_LABELS } from "../lib/menuAccess";
 
 const ROLE_LABELS = {
-  super_admin: { label: "Super Admin", desc: "Akses semua menu", color: "bg-[#002FA7] text-white" },
-  hr_leave: { label: "HR Izin & Cuti", desc: "Hanya akses menu Izin & Cuti", color: "bg-emerald-700 text-white" },
+  super_admin: { label: "Super Admin", desc: "Akses semua menu tanpa batasan.", color: "bg-[#002FA7] text-white" },
+  admin_privileged: { label: "Admin dengan Privilege", desc: "Akses menu sesuai centang.", color: "bg-emerald-700 text-white" },
 };
 
 export default function Users() {
@@ -42,7 +43,7 @@ export default function Users() {
         <div>
           <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Pengaturan</div>
           <h1 className="font-heading text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mt-1">Kelola User Admin</h1>
-          <p className="text-sm text-zinc-500 mt-2 max-w-xl">Tambah atau hapus akun admin & atur level aksesnya.</p>
+          <p className="text-sm text-zinc-500 mt-2 max-w-xl">Tambah, edit, atau hapus akun admin. Atur hak akses menu untuk role <b>Admin dengan Privilege</b> lewat centang.</p>
         </div>
         <button
           data-testid="add-user-btn"
@@ -59,14 +60,14 @@ export default function Users() {
           <ShieldCheck className="w-5 h-5 text-[#002FA7] mt-0.5" />
           <div>
             <div className="text-sm font-semibold text-zinc-900">Super Admin</div>
-            <div className="text-xs text-zinc-500 mt-0.5">Akses penuh: Dashboard, Karyawan, Payroll, THR, Izin & Cuti, Konfigurasi, Kelola User.</div>
+            <div className="text-xs text-zinc-500 mt-0.5">Akses penuh ke semua menu tanpa batasan.</div>
           </div>
         </div>
         <div className="border border-zinc-200 bg-white p-4 flex items-start gap-3">
           <Shield className="w-5 h-5 text-emerald-700 mt-0.5" />
           <div>
-            <div className="text-sm font-semibold text-zinc-900">HR Izin & Cuti</div>
-            <div className="text-xs text-zinc-500 mt-0.5">Hanya akses menu Izin & Cuti — approve/reject pengajuan & export laporan.</div>
+            <div className="text-sm font-semibold text-zinc-900">Admin dengan Privilege</div>
+            <div className="text-xs text-zinc-500 mt-0.5">Menu yang bisa diakses ditentukan lewat centang di form edit user.</div>
           </div>
         </div>
       </div>
@@ -79,23 +80,37 @@ export default function Users() {
               <th className="px-4 py-3">Nama</th>
               <th className="px-4 py-3">Email</th>
               <th className="px-4 py-3 text-center">Role</th>
+              <th className="px-4 py-3">Menu Akses</th>
               <th className="px-4 py-3">Dibuat</th>
               <th className="px-4 py-3 text-right">Aksi</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={5} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {loading && <tr><td colSpan={6} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && items.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Belum ada user.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Belum ada user.</td></tr>
             )}
             {items.map((u) => {
               const r = ROLE_LABELS[u.role] || { label: u.role, color: "bg-zinc-200 text-zinc-900" };
+              const isSA = u.role === "super_admin";
+              const permsLabel = isSA
+                ? "Semua"
+                : (u.permissions || []).length === 0
+                  ? "—"
+                  : (u.permissions || []).map((p) => MENU_LABELS[p] || p).join(", ");
               return (
                 <tr key={u.id} data-testid={`user-row-${u.id}`} className="border-b border-zinc-100 hover:bg-zinc-50/80">
                   <td className="px-4 py-3 font-semibold text-zinc-900">{u.name}</td>
                   <td className="px-4 py-3 font-mono text-zinc-700 text-xs">{u.email}</td>
                   <td className="px-4 py-3 text-center">
                     <span className={`inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${r.color}`}>{r.label}</span>
+                  </td>
+                  <td className="px-4 py-3 text-[11px] text-zinc-600 max-w-[320px] break-words">
+                    {isSA ? (
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-[#002FA7]">Semua Menu</span>
+                    ) : (
+                      <span data-testid={`user-perms-${u.id}`}>{permsLabel}</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 font-mono text-zinc-500 text-xs">{(u.created_at || "").slice(0, 10)}</td>
                   <td className="px-4 py-3 text-right">
@@ -139,8 +154,23 @@ function UserFormModal({ user, onClose, onSuccess }) {
   const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState(user?.role || "hr_leave");
+  const [role, setRole] = useState(user?.role || "admin_privileged");
+  const [permissions, setPermissions] = useState(
+    user?.role === "super_admin"
+      ? []
+      : (user?.permissions || [])
+  );
   const [submitting, setSubmitting] = useState(false);
+
+  const togglePerm = (key) => {
+    setPermissions((prev) =>
+      prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]
+    );
+  };
+
+  const setAllPerms = (val) => {
+    setPermissions(val ? [...MENU_KEYS] : []);
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -148,13 +178,14 @@ function UserFormModal({ user, onClose, onSuccess }) {
     if (password && password.length < 6) { toast.error("Password minimal 6 karakter"); return; }
     setSubmitting(true);
     try {
+      const payload = { name, role };
+      if (role === "admin_privileged") payload.permissions = permissions;
+      if (password) payload.password = password;
       if (isEdit) {
-        const payload = { name, role };
-        if (password) payload.password = password;
         await api.put(`/users/${user.id}`, payload);
         toast.success("User diperbarui");
       } else {
-        await api.post("/users", { name, email, password, role });
+        await api.post("/users", { email, ...payload, password });
         toast.success("User berhasil dibuat");
       }
       onSuccess();
@@ -167,15 +198,15 @@ function UserFormModal({ user, onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-zinc-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-md border border-zinc-200">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
+      <div className="bg-white w-full max-w-xl border border-zinc-200 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 sticky top-0 bg-white z-10">
           <div className="flex items-center gap-2">
             <UserCog className="w-4 h-4 text-[#002FA7]" />
             <h2 className="font-heading text-lg font-bold">{isEdit ? "Edit User" : "Tambah User Baru"}</h2>
           </div>
           <button onClick={onClose} data-testid="close-user-form" className="p-2 hover:bg-zinc-100"><X className="w-4 h-4" /></button>
         </div>
-        <form onSubmit={submit} className="p-6 space-y-4">
+        <form onSubmit={submit} className="p-6 space-y-5">
           <div>
             <label className="block text-[11px] uppercase tracking-widest font-semibold text-zinc-600 mb-1.5">Nama Lengkap</label>
             <input
@@ -233,7 +264,48 @@ function UserFormModal({ user, onClose, onSuccess }) {
               })}
             </div>
           </div>
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-200">
+
+          {role === "admin_privileged" && (
+            <div className="border border-zinc-200 bg-zinc-50/50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-[11px] uppercase tracking-widest font-semibold text-zinc-700">Hak Akses Menu</label>
+                <div className="flex items-center gap-2 text-[11px] font-mono">
+                  <button type="button" onClick={() => setAllPerms(true)} data-testid="perms-select-all" className="text-[#002FA7] hover:underline">Pilih Semua</button>
+                  <span className="text-zinc-300">·</span>
+                  <button type="button" onClick={() => setAllPerms(false)} data-testid="perms-clear-all" className="text-zinc-500 hover:underline">Kosongkan</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {MENU_KEYS.map((k) => {
+                  const active = permissions.includes(k);
+                  return (
+                    <label
+                      key={k}
+                      data-testid={`perm-check-${k}`}
+                      onClick={(e) => { e.preventDefault(); togglePerm(k); }}
+                      className={`flex items-center gap-2 border px-3 py-2 text-sm cursor-pointer select-none transition-colors ${
+                        active
+                          ? "border-[#002FA7] bg-[#002FA7]/5 text-zinc-900"
+                          : "border-zinc-300 bg-white text-zinc-600 hover:border-zinc-400"
+                      }`}
+                    >
+                      {active ? (
+                        <CheckSquare className="w-4 h-4 text-[#002FA7]" strokeWidth={2.25} />
+                      ) : (
+                        <SquareIcon className="w-4 h-4 text-zinc-400" strokeWidth={2} />
+                      )}
+                      <span className={active ? "font-semibold" : ""}>{MENU_LABELS[k]}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="text-[10px] font-mono text-zinc-500 mt-3">
+                {permissions.length} dari {MENU_KEYS.length} menu dicentang
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-200 sticky bottom-0 bg-white">
             <button type="button" onClick={onClose} className="border border-zinc-300 px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-zinc-50">Batal</button>
             <button
               type="submit"

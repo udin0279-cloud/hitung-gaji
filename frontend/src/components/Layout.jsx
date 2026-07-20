@@ -3,27 +3,30 @@ import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { LayoutDashboard, Users as UsersIcon, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays, UserCog, Menu, X as XIcon, Package, TrendingUp, ShoppingCart, ShoppingBag, Wallet, Tags, BarChart3 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
+import { hasMenuAccess } from "../lib/menuAccess";
 
+// menuKey: null => visible to everyone authenticated (currently only Dashboard, super_admin only)
 const ALL_NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard", roles: ["super_admin"] },
-  { to: "/employees", label: "Karyawan", icon: UsersIcon, testId: "nav-employees", badgeKey: "contract_expiring", roles: ["super_admin"] },
-  { to: "/payroll", label: "Payroll", icon: Calculator, testId: "nav-payroll", roles: ["super_admin"] },
-  { to: "/inventory", label: "Inventory", icon: Package, testId: "nav-inventory", roles: ["super_admin"] },
-  { to: "/purchasing", label: "Pembelian", icon: ShoppingCart, testId: "nav-purchasing", roles: ["super_admin"] },
-  { to: "/sales", label: "Penjualan", icon: ShoppingBag, testId: "nav-sales", roles: ["super_admin"] },
-  { to: "/laporan-penjualan", label: "Laporan Penjualan", icon: BarChart3, testId: "nav-sales-report", roles: ["super_admin"] },
-  { to: "/cashbook", label: "Kas Operasional", icon: Wallet, testId: "nav-cashbook", roles: ["super_admin"] },
-  { to: "/reports", label: "Laba/Rugi", icon: TrendingUp, testId: "nav-reports", roles: ["super_admin"] },
-  { to: "/categories", label: "Master Kategori", icon: Tags, testId: "nav-categories", roles: ["super_admin"] },
-  { to: "/thr", label: "THR", icon: Gift, testId: "nav-thr", roles: ["super_admin"] },
-  { to: "/leave", label: "Izin & Cuti", icon: CalendarDays, testId: "nav-leave", badgeKey: "pending", roles: ["super_admin", "hr_leave"] },
-  { to: "/users", label: "Kelola User", icon: UserCog, testId: "nav-users", roles: ["super_admin"] },
-  { to: "/settings", label: "Konfigurasi", icon: SettingsIcon, testId: "nav-settings", roles: ["super_admin"] },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard", superAdminOnly: true },
+  { to: "/employees", label: "Karyawan", icon: UsersIcon, testId: "nav-employees", badgeKey: "contract_expiring", menuKey: "karyawan" },
+  { to: "/payroll", label: "Payroll", icon: Calculator, testId: "nav-payroll", menuKey: "payroll" },
+  { to: "/inventory", label: "Inventory", icon: Package, testId: "nav-inventory", menuKey: "inventory" },
+  { to: "/purchasing", label: "Pembelian", icon: ShoppingCart, testId: "nav-purchasing", menuKey: "pembelian" },
+  { to: "/sales", label: "Penjualan", icon: ShoppingBag, testId: "nav-sales", menuKey: "penjualan" },
+  { to: "/laporan-penjualan", label: "Laporan Penjualan", icon: BarChart3, testId: "nav-sales-report", menuKey: "laporan_penjualan" },
+  { to: "/cashbook", label: "Kas Operasional", icon: Wallet, testId: "nav-cashbook", menuKey: "kas_operasional" },
+  { to: "/reports", label: "Laba/Rugi", icon: TrendingUp, testId: "nav-reports", menuKey: "laba_rugi" },
+  { to: "/categories", label: "Master Kategori", icon: Tags, testId: "nav-categories", menuKey: "master_kategori" },
+  { to: "/thr", label: "THR", icon: Gift, testId: "nav-thr", menuKey: "thr" },
+  { to: "/leave", label: "Izin & Cuti", icon: CalendarDays, testId: "nav-leave", badgeKey: "pending", menuKey: "izin_cuti" },
+  { to: "/users", label: "Kelola User", icon: UserCog, testId: "nav-users", menuKey: "kelola_user" },
+  { to: "/settings", label: "Konfigurasi", icon: SettingsIcon, testId: "nav-settings", menuKey: "konfigurasi" },
 ];
 
 const ROLE_BADGE = {
   super_admin: { label: "Super Admin", color: "text-[#002FA7]" },
-  hr_leave: { label: "HR Izin & Cuti", color: "text-emerald-700" },
+  admin_privileged: { label: "Admin (Privilege)", color: "text-emerald-700" },
+  hr_leave: { label: "Admin (Privilege)", color: "text-emerald-700" },
 };
 
 export default function Layout() {
@@ -34,7 +37,11 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const role = user?.role;
-  const navItems = ALL_NAV.filter((n) => !n.roles || n.roles.includes(role));
+  const navItems = ALL_NAV.filter((n) => {
+    if (n.superAdminOnly) return role === "super_admin";
+    if (!n.menuKey) return true;
+    return hasMenuAccess(user, n.menuKey);
+  });
 
   const loadStats = async () => {
     // Leave stats

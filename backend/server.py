@@ -123,6 +123,13 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
         # Backwards compatibility: legacy "admin" role acts as super_admin
         if user.get("role") == "admin":
             user["role"] = "super_admin"
+        # Legacy hr_leave role → treat as admin_privileged with izin_cuti perm
+        if user.get("role") == "hr_leave":
+            user["role"] = "admin_privileged"
+            user["permissions"] = list(set((user.get("permissions") or []) + ["izin_cuti"]))
+        # Ensure permissions field exists
+        if user.get("role") == "admin_privileged" and not isinstance(user.get("permissions"), list):
+            user["permissions"] = []
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -132,20 +139,96 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
 
 # Role-based access helpers
 ROLE_SUPER_ADMIN = "super_admin"
-ROLE_HR_LEAVE = "hr_leave"
-VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_HR_LEAVE}
+ROLE_ADMIN_PRIVILEGED = "admin_privileged"
+ROLE_HR_LEAVE = "hr_leave"  # legacy, migrated to admin_privileged on startup
+VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_ADMIN_PRIVILEGED}
+
+# All menu keys that can be granted to an "Admin dengan Privilege"
+MENU_KEYS = [
+    "karyawan", "payroll", "inventory", "pembelian", "penjualan",
+    "laporan_penjualan", "kas_operasional", "laba_rugi", "master_kategori",
+    "thr", "izin_cuti", "kelola_user", "konfigurasi",
+]
+
+# Ordered rules: (path_prefix, menu_key). First matching prefix wins.
+# Path is the full request path INCLUDING /api prefix.
+PATH_MENU_RULES = [
+    # ---- Payroll & Slips ----
+    ("/api/payroll/thr", "thr"),
+    ("/api/payroll/bukti-potong", "payroll"),
+    ("/api/payroll", "payroll"),
+    ("/api/payslip", "payroll"),
+    ("/api/attendance", "payroll"),
+    # ---- Employees ----
+    ("/api/employees", "karyawan"),
+    ("/api/contracts", "karyawan"),
+    # ---- Sales sub-routes (most specific first) ----
+    ("/api/sales/report", "laporan_penjualan"),
+    ("/api/sales/stats", "penjualan"),
+    ("/api/sales", "penjualan"),
+    ("/api/products", "penjualan"),
+    ("/api/inventory/customers", "penjualan"),
+    # ---- Inventory / Purchasing ----
+    ("/api/inventory", "inventory"),
+    ("/api/purchasing", "pembelian"),
+    # ---- Cashbook ----
+    ("/api/cashbook", "kas_operasional"),
+    # ---- Reports (Laba Rugi) ----
+    ("/api/reports", "laba_rugi"),
+    # ---- Categories ----
+    ("/api/categories", "master_kategori"),
+    # ---- Leave ----
+    ("/api/leave", "izin_cuti"),
+    # ---- User Mgmt ----
+    ("/api/users", "kelola_user"),
+    # ---- Config / Konfigurasi ----
+    ("/api/config", "konfigurasi"),
+    ("/api/admin/whatsapp", "konfigurasi"),
+    ("/api/admin/export-database", "konfigurasi"),
+    ("/api/admin/import-database", "konfigurasi"),
+]
+
+# Paths that do NOT require menu-permission (still may require login separately).
+# Auth endpoints, portal endpoints, root health, dashboard, and public misc.
+RBAC_BYPASS_PREFIXES = (
+    "/api/auth/",
+    "/api/portal/",
+    "/api/dashboard",  # any authenticated admin sees a filtered dashboard
+    "/api/employees-template.csv",  # only used from imports page (karyawan menu)
+    "/api/employees-import",
+)
+
+
+def _menu_for_path(path: str) -> Optional[str]:
+    for prefix, menu in PATH_MENU_RULES:
+        if path.startswith(prefix):
+            return menu
+    return None
 
 
 async def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
+    """Backward-compat: allow both super_admin AND admin_privileged.
+    Fine-grained menu access is enforced by the RBAC middleware based on path."""
+    role = user.get("role")
+    if role not in VALID_ROLES:
+        raise HTTPException(status_code=403, detail="Akses ditolak")
+    return user
+
+
+async def require_super_admin_strict(user: dict = Depends(get_current_user)) -> dict:
+    """Strict: only super_admin. Reserved for meta/system routes."""
     if user.get("role") != ROLE_SUPER_ADMIN:
         raise HTTPException(status_code=403, detail="Akses ditolak: Super Admin only")
     return user
 
 
 async def require_leave_access(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") not in {ROLE_SUPER_ADMIN, ROLE_HR_LEAVE}:
-        raise HTTPException(status_code=403, detail="Akses ditolak")
-    return user
+    role = user.get("role")
+    if role == ROLE_SUPER_ADMIN:
+        return user
+    if role == ROLE_ADMIN_PRIVILEGED and "izin_cuti" in (user.get("permissions") or []):
+        return user
+    raise HTTPException(status_code=403, detail="Akses ditolak")
 
 
 # ---------------- Models ----------------
@@ -454,7 +537,7 @@ async def login(payload: LoginIn, response: Response):
     access = create_access_token(user["id"], email)
     refresh = create_refresh_token(user["id"])
     set_auth_cookies(response, access, refresh)
-    return {"id": user["id"], "email": user["email"], "name": user["name"], "role": user.get("role", "admin")}
+    return _user_view(user)
 
 
 @api_router.post("/auth/logout")
@@ -466,7 +549,7 @@ async def logout(response: Response):
 
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    return user
+    return _user_view(user)
 
 
 # ---------------- Employee Portal (Self-service) ----------------
@@ -3028,24 +3111,48 @@ class UserCreateIn(BaseModel):
     email: EmailStr
     password: str
     name: str
-    role: str  # "super_admin" or "hr_leave"
+    role: str  # "super_admin" or "admin_privileged"
+    permissions: Optional[List[str]] = None
 
 
 class UserUpdateIn(BaseModel):
     name: Optional[str] = None
     role: Optional[str] = None
     password: Optional[str] = None
+    permissions: Optional[List[str]] = None
+
+
+def _sanitize_permissions(role: str, perms: Optional[List[str]]) -> List[str]:
+    if role == ROLE_SUPER_ADMIN:
+        return list(MENU_KEYS)  # super admin implicitly has all
+    valid = [p for p in (perms or []) if p in MENU_KEYS]
+    # de-dup while preserving order
+    seen = set()
+    out = []
+    for p in valid:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
 
 
 def _user_view(u: dict) -> dict:
     role = u.get("role")
     if role == "admin":
         role = ROLE_SUPER_ADMIN
+    if role == "hr_leave":
+        role = ROLE_ADMIN_PRIVILEGED
+    perms = u.get("permissions") or []
+    if role == ROLE_SUPER_ADMIN:
+        perms = list(MENU_KEYS)
+    else:
+        perms = [p for p in perms if p in MENU_KEYS]
     return {
         "id": u["id"],
         "email": u["email"],
         "name": u.get("name", ""),
         "role": role,
+        "permissions": perms,
         "created_at": u.get("created_at"),
     }
 
@@ -3072,6 +3179,7 @@ async def create_user(payload: UserCreateIn, user: dict = Depends(require_super_
         "name": payload.name.strip(),
         "password_hash": hash_password(payload.password),
         "role": payload.role,
+        "permissions": _sanitize_permissions(payload.role, payload.permissions),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
@@ -3086,19 +3194,29 @@ async def update_user(user_id: str, payload: UserUpdateIn, user: dict = Depends(
     update: Dict[str, Any] = {}
     if payload.name is not None:
         update["name"] = payload.name.strip()
-    if payload.role is not None:
-        if payload.role not in VALID_ROLES:
+    new_role = payload.role
+    if new_role is not None:
+        if new_role not in VALID_ROLES:
             raise HTTPException(status_code=400, detail="Role tidak valid")
         # Prevent demoting the last super_admin
-        if target.get("role") in {ROLE_SUPER_ADMIN, "admin"} and payload.role != ROLE_SUPER_ADMIN:
+        if target.get("role") in {ROLE_SUPER_ADMIN, "admin"} and new_role != ROLE_SUPER_ADMIN:
             super_admins = await db.users.count_documents({"role": {"$in": [ROLE_SUPER_ADMIN, "admin"]}})
             if super_admins <= 1:
                 raise HTTPException(status_code=400, detail="Tidak dapat mengubah role: minimal harus ada 1 Super Admin")
-        update["role"] = payload.role
+        update["role"] = new_role
     if payload.password:
         if len(payload.password) < 6:
             raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
         update["password_hash"] = hash_password(payload.password)
+    # Permissions: always sanitize according to final role
+    if payload.permissions is not None or new_role is not None:
+        role_effective = new_role or target.get("role") or ROLE_ADMIN_PRIVILEGED
+        if role_effective == "admin":
+            role_effective = ROLE_SUPER_ADMIN
+        if role_effective == "hr_leave":
+            role_effective = ROLE_ADMIN_PRIVILEGED
+        perms_input = payload.permissions if payload.permissions is not None else (target.get("permissions") or [])
+        update["permissions"] = _sanitize_permissions(role_effective, perms_input)
     if update:
         await db.users.update_one({"id": user_id}, {"$set": update})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
@@ -3167,6 +3285,28 @@ async def startup():
     migrated = await db.users.update_many({"role": "admin"}, {"$set": {"role": ROLE_SUPER_ADMIN}})
     if migrated.modified_count:
         logger.info(f"Migrated {migrated.modified_count} legacy 'admin' role(s) to '{ROLE_SUPER_ADMIN}'")
+
+    # Migrate legacy "hr_leave" role -> "admin_privileged" with izin_cuti permission
+    hr_leave_users = await db.users.find({"role": "hr_leave"}, {"_id": 0}).to_list(length=200)
+    for u in hr_leave_users:
+        perms = list(set((u.get("permissions") or []) + ["izin_cuti"]))
+        await db.users.update_one(
+            {"id": u["id"]},
+            {"$set": {"role": ROLE_ADMIN_PRIVILEGED, "permissions": perms}},
+        )
+    if hr_leave_users:
+        logger.info(f"Migrated {len(hr_leave_users)} 'hr_leave' role(s) to '{ROLE_ADMIN_PRIVILEGED}'")
+
+    # Ensure super_admin users have full permissions array populated (idempotent)
+    await db.users.update_many(
+        {"role": ROLE_SUPER_ADMIN},
+        {"$set": {"permissions": list(MENU_KEYS)}},
+    )
+    # Ensure admin_privileged users have a permissions field
+    await db.users.update_many(
+        {"role": ROLE_ADMIN_PRIVILEGED, "permissions": {"$exists": False}},
+        {"$set": {"permissions": []}},
+    )
 
 
 @app.on_event("shutdown")
@@ -6805,6 +6945,67 @@ async def kasbon_delete(kasbon_id: str, user: dict = Depends(require_super_admin
 
 # Include router
 app.include_router(api_router)
+
+
+# ---------------- RBAC Middleware ----------------
+# Enforces per-menu access for role=admin_privileged based on request path prefix.
+# Super admin, portal endpoints, and auth endpoints bypass this check.
+@app.middleware("http")
+async def rbac_middleware(request: Request, call_next):
+    path = request.url.path
+    # Only guard /api paths that aren't in bypass list
+    if not path.startswith("/api"):
+        return await call_next(request)
+    if any(path.startswith(pref) for pref in RBAC_BYPASS_PREFIXES):
+        return await call_next(request)
+
+    # Extract token (cookie or bearer). No token -> let endpoint dep return 401.
+    token = request.cookies.get("access_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        return await call_next(request)
+
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            return await call_next(request)
+        user_id = payload.get("sub")
+    except jwt.PyJWTError:
+        return await call_next(request)
+
+    if not user_id:
+        return await call_next(request)
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        return await call_next(request)
+
+    role = u.get("role")
+    if role == "admin":
+        role = ROLE_SUPER_ADMIN
+    if role == "hr_leave":
+        role = ROLE_ADMIN_PRIVILEGED
+    if role == ROLE_SUPER_ADMIN:
+        return await call_next(request)
+    if role != ROLE_ADMIN_PRIVILEGED:
+        return await call_next(request)
+
+    # admin_privileged → check menu perm
+    menu = _menu_for_path(path)
+    if menu is None:
+        # Path not mapped to any menu → allow (fallthrough to endpoint auth)
+        return await call_next(request)
+    perms = u.get("permissions") or []
+    if menu not in perms:
+        from starlette.responses import JSONResponse
+        return JSONResponse(
+            status_code=403,
+            content={"detail": f"Akses ditolak: Anda tidak memiliki izin untuk menu '{menu}'"},
+        )
+    return await call_next(request)
+
 
 # CORS
 app.add_middleware(
