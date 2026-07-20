@@ -3113,6 +3113,7 @@ class UserCreateIn(BaseModel):
     name: str
     role: str  # "super_admin" or "admin_privileged"
     permissions: Optional[List[str]] = None
+    branch: Optional[str] = None  # "plaza" | "kastem" | None
 
 
 class UserUpdateIn(BaseModel):
@@ -3120,6 +3121,7 @@ class UserUpdateIn(BaseModel):
     role: Optional[str] = None
     password: Optional[str] = None
     permissions: Optional[List[str]] = None
+    branch: Optional[str] = None
 
 
 def _sanitize_permissions(role: str, perms: Optional[List[str]]) -> List[str]:
@@ -3134,6 +3136,16 @@ def _sanitize_permissions(role: str, perms: Optional[List[str]]) -> List[str]:
             seen.add(p)
             out.append(p)
     return out
+
+
+VALID_BRANCHES = {"plaza", "kastem"}
+
+
+def _sanitize_branch(val: Optional[str]) -> Optional[str]:
+    if not val:
+        return None
+    v = str(val).strip().lower()
+    return v if v in VALID_BRANCHES else None
 
 
 def _user_view(u: dict) -> dict:
@@ -3153,6 +3165,7 @@ def _user_view(u: dict) -> dict:
         "name": u.get("name", ""),
         "role": role,
         "permissions": perms,
+        "branch": _sanitize_branch(u.get("branch")),
         "created_at": u.get("created_at"),
     }
 
@@ -3180,6 +3193,7 @@ async def create_user(payload: UserCreateIn, user: dict = Depends(require_super_
         "password_hash": hash_password(payload.password),
         "role": payload.role,
         "permissions": _sanitize_permissions(payload.role, payload.permissions),
+        "branch": _sanitize_branch(payload.branch),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
@@ -3217,6 +3231,9 @@ async def update_user(user_id: str, payload: UserUpdateIn, user: dict = Depends(
             role_effective = ROLE_ADMIN_PRIVILEGED
         perms_input = payload.permissions if payload.permissions is not None else (target.get("permissions") or [])
         update["permissions"] = _sanitize_permissions(role_effective, perms_input)
+    if payload.branch is not None:
+        # Allow explicit empty string / null to clear
+        update["branch"] = _sanitize_branch(payload.branch)
     if update:
         await db.users.update_one({"id": user_id}, {"$set": update})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
@@ -4944,6 +4961,8 @@ class ProductIn(BaseModel):
     sizes: List[str] = []  # subset dari ["S","M","L","XL","XXL","XXXL"]
     price_size_a: float = 0  # harga untuk S–XL (dipakai kalau has_sizes=True)
     price_size_b: float = 0  # harga untuk XXL keatas
+    # NEW: panjang per pcs (meter) — dipakai di Laporan Penjualan untuk hitung total meter
+    length_meter: float = 0  # 0 = tidak ada info panjang (mis. produk non-linear seperti kaos)
 
 
 # Klasifikasi tier size
@@ -5079,6 +5098,7 @@ async def products_create(payload: ProductIn, user: dict = Depends(require_super
         "sizes": list(payload.sizes) if payload.has_sizes else [],
         "price_size_a": round(float(payload.price_size_a or 0), 2) if payload.has_sizes else 0,
         "price_size_b": round(float(payload.price_size_b or 0), 2) if payload.has_sizes else 0,
+        "length_meter": round(float(payload.length_meter or 0), 4),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.products.insert_one(doc)
@@ -5127,6 +5147,7 @@ async def products_update(product_id: str, payload: ProductIn, user: dict = Depe
         "sizes": list(payload.sizes) if payload.has_sizes else [],
         "price_size_a": round(float(payload.price_size_a or 0), 2) if payload.has_sizes else 0,
         "price_size_b": round(float(payload.price_size_b or 0), 2) if payload.has_sizes else 0,
+        "length_meter": round(float(payload.length_meter or 0), 4),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.products.update_one({"id": product_id}, {"$set": upd})
@@ -5435,6 +5456,7 @@ async def _build_and_persist_sale(
         "customer_phone": (payload.customer_phone or "").strip(),
         "cashier": user.get("email"),
         "cashier_name": user.get("name") or user.get("email"),
+        "branch": _sanitize_branch(user.get("branch")),
         "items": items_out,
         "subtotal": round(subtotal, 2),
         "discount": round(discount, 2),
@@ -6152,15 +6174,20 @@ async def sales_analytics(
         q["customer_name"] = {"$regex": safe, "$options": "i"}
     sales = await db.sales.find(q, {"_id": 0}).sort("created_at", 1).to_list(length=20000)
 
+    # Preload customer address map (by name, case-insensitive) & product length_meter map (by name)
+    customers = await db.customers.find({}, {"_id": 0, "name": 1, "address": 1}).to_list(length=5000)
+    cust_addr_map = {(c.get("name") or "").strip().lower(): (c.get("address") or "").strip() for c in customers}
+    products_p = await db.products.find({}, {"_id": 0, "name": 1, "length_meter": 1}).to_list(length=5000)
+    prod_length_map = {(p.get("name") or "").strip().lower(): float(p.get("length_meter") or 0) for p in products_p}
+
     # Flatten per-item rows
     rows: List[Dict[str, Any]] = []
-    product_totals: Dict[str, Dict[str, float]] = {}  # key = product/material name → {qty, total}
+    product_totals: Dict[str, Dict[str, float]] = {}
     daily_series: Dict[str, float] = {}
-    method_totals: Dict[str, float] = {}  # payment method breakdown
+    method_totals: Dict[str, float] = {}
     weekly_total = 0.0
     period_total = 0.0
 
-    # Batas periode "minggu ini" (Senin – Minggu) relative to now (server tz)
     today = datetime.now(timezone.utc).date()
     week_start = today - timedelta(days=today.weekday())
     week_start_iso = week_start.isoformat()
@@ -6171,53 +6198,71 @@ async def sales_analytics(
         s_method = s.get("payment_method") or "cash"
         s_bank = s.get("payment_bank") or ""
         s_pnotes = s.get("payment_notes") or ""
-        s_total_after_disc = float(s.get("total") or 0)  # setelah diskon
+        s_notes = s.get("notes") or ""
+        s_total_after_disc = float(s.get("total") or 0)
         s_discount = float(s.get("discount") or 0)
-        for it in s.get("items") or []:
+        s_subtotal = float(s.get("subtotal") or 0)
+        s_branch = _sanitize_branch(s.get("branch"))  # "plaza" | "kastem" | None
+        # Payment column key (Cash/BCA/Mandiri + Plaza/Kastem) — derived from method+bank+branch
+        pay_col = _resolve_report_payment_col(s_method, s_bank, s_branch)
+        # Alamat: prefer customer master lookup by name (case-insensitive)
+        s_alamat = cust_addr_map.get(s_customer.strip().lower(), "")
+        s_items = s.get("items") or []
+        first_item = True
+        for it in s_items:
             name = it.get("product_name") or it.get("material_name") or "-"
             qty = int(it.get("quantity") or 0)
             unit_price = float(it.get("unit_price") or 0)
-            subtotal = float(it.get("subtotal") or 0)
+            subtotal_item = float(it.get("subtotal") or (unit_price * qty))
             size = it.get("size") or "-"
+            length_m = prod_length_map.get(name.strip().lower(), 0.0)
+            meter = round(qty * length_m, 4) if length_m > 0 else 0.0
             rows.append({
                 "date": s_date,
                 "customer_name": s_customer,
+                "alamat": s_alamat,
                 "sale_no": s.get("sale_no"),
                 "product_name": name,
                 "size": size,
-                "quantity": qty,
+                "pcs": qty,
+                "meter": meter,
+                "quantity": qty,  # legacy alias
                 "unit_price": unit_price,
-                "total": subtotal,  # subtotal item (belum diskon)
-                "sale_total": s_total_after_disc,  # total transaksi setelah diskon (untuk footer sinkron dgn summary)
+                "total": subtotal_item,
+                "sale_total": s_total_after_disc,
+                "sale_subtotal": s_subtotal,
                 "sale_discount": s_discount,
+                "keterangan": s_pnotes or s_notes or "",
+                "branch": s_branch,
                 "payment_method": s_method,
                 "payment_bank": s_bank,
                 "payment_notes": s_pnotes,
+                "payment_column": pay_col,  # e.g., "cash_plaza" / "bca_kastem" / None
+                # Payment nominal appears on FIRST row of a sale only, blank on subsequent rows
+                "payment_nominal_on_row": s_total_after_disc if first_item else 0,
+                "payment_date_on_row": s_date if first_item else "",
+                "is_first_item_of_sale": first_item,
             })
+            first_item = False
             pk = name
             if pk not in product_totals:
                 product_totals[pk] = {"qty": 0, "total": 0.0}
             product_totals[pk]["qty"] += qty
-            product_totals[pk]["total"] += subtotal
-        # Aggregations pakai sale.total (setelah diskon)
-        stotal = float(s.get("total") or 0)
-        period_total += stotal
-        daily_series[s_date] = daily_series.get(s_date, 0) + stotal
+            product_totals[pk]["total"] += subtotal_item
+        period_total += s_total_after_disc
+        daily_series[s_date] = daily_series.get(s_date, 0) + s_total_after_disc
         mkey = s_method
         if s_method == "transfer" and s_bank:
             mkey = f"transfer_{s_bank.lower()}"
-        method_totals[mkey] = method_totals.get(mkey, 0) + stotal
+        method_totals[mkey] = method_totals.get(mkey, 0) + s_total_after_disc
         if s_date >= week_start_iso:
-            weekly_total += stotal
+            weekly_total += s_total_after_disc
 
-    # Top produk (by total omzet)
     top_products = sorted(
         [{"name": k, "qty": int(v["qty"]), "total": round(v["total"], 2)} for k, v in product_totals.items()],
         key=lambda x: x["total"], reverse=True,
     )
     top_product = top_products[0]["name"] if top_products else None
-
-    # Sort daily series by date
     daily_data = [{"date": d, "total": round(v, 2)} for d, v in sorted(daily_series.items())]
 
     return {
@@ -6236,6 +6281,26 @@ async def sales_analytics(
             {"method": k, "total": round(v, 2)} for k, v in sorted(method_totals.items(), key=lambda x: x[1], reverse=True)
         ],
     }
+
+
+def _resolve_report_payment_col(payment_method: str, payment_bank: Optional[str], branch: Optional[str]) -> Optional[str]:
+    """Map (payment_method, payment_bank, branch) -> report column key.
+    Returns one of: cash_plaza, cash_kastem, bca_plaza, bca_kastem, mandiri_plaza, mandiri_kastem, or None.
+    """
+    b = (branch or "").lower() if branch else None
+    if b not in ("plaza", "kastem"):
+        return None
+    pm = (payment_method or "").lower()
+    bank = (payment_bank or "").lower()
+    if pm in ("cash", "tunai"):
+        return f"cash_{b}"
+    if pm == "transfer":
+        if bank == "bca":
+            return f"bca_{b}"
+        if bank in ("mandiri", "mdr"):
+            return f"mandiri_{b}"
+        return None
+    return None  # shopee & others not part of 6-column set
 
 
 @api_router.get("/sales/stats/today")

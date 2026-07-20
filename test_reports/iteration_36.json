@@ -1,0 +1,55 @@
+{
+  "summary": "E2E test of Sales Report with Branch (Plaza/Kastem) columns. Backend pytest 6/6 PASS covering user.branch persistence, product.length_meter, sale-branch auto-capture from cashier, /api/sales/report/analytics returning correct alamat lookup, meter calc (qty*length_meter), and payment_column mapping (cash_plaza/cash_kastem/bca_plaza/mandiri_plaza). Frontend Playwright PASS on all critical scenarios: Users table has Cabang column with data-testid user-branch-{id}, edit dropdown data-testid=user-branch shows 3 options (Tidak ditentukan/Plaza/Kastem), branch persists to backend and cell reflects Plaza label. Create user via UI (user-name/user-email/user-password/user-branch testids) with branch=Kastem persists correctly. Inventory Master Produk form shows prod-length-meter (type=number, min=0, step=0.01). SalesReport table has 12 main columns + 6 payment groups (each with Nominal + Tanggal sub-header = 24 body cells), minWidth 2200 for horizontal scroll, overflow-x-auto wrapper. With 4 seeded sales (Admin cash qty=3, Kastem cash qty=2, Admin transfer BCA qty=1, Admin transfer Mandiri qty=1 — all same customer with alamat), row-level verifications PASS: Alamat 'Jl. Merdeka 10, Solo' shown on all rows, Meter = qty*2.5 (7.50/5.00/2.50/2.50), Total Rp values correct, payment_column mapping verified in DOM (Cash Plaza / Cash Kastem / BCA Plaza / Mandiri Plaza), 6 pay-total-{col} testids in footer show correct sums (60.000/40.000/20.000/-/20.000/-), footer shows '4 transaksi (Filtered)' and Total Omzet Rp 140.000 matching Summary Card. Search filter (report-row-search) reduces rows correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Inventory Product Edit Modal", "issues": ["React hydration warning in console: '<span> cannot be a child of <option>' at Inventory.jsx line 1974 (BOM material component <select> option). Not related to this feature (comp-mat-0 options in BOM). Cosmetic dev-mode warning only."]}
+    ]
+  },
+  "verified_scenarios": [
+    "PASS - Backend: PUT /users/{id} with branch=plaza persists; invalid branch sanitized to null",
+    "PASS - Backend: POST /users with branch=kastem persists in DB",
+    "PASS - Backend: POST /products with length_meter=2.5 persists and readable via GET",
+    "PASS - Backend: POST /sales auto-captures cashier's user.branch to sale.branch",
+    "PASS - Backend: GET /api/sales/report/analytics returns row.alamat (from customer master), row.meter=qty*length_meter, row.payment_column mapped from (method,bank,branch)",
+    "PASS - Backend: cash+plaza → cash_plaza; cash+kastem → cash_kastem; transfer+bca+plaza → bca_plaza; transfer+mandiri+plaza → mandiri_plaza",
+    "PASS - Frontend: /users Kelola User table shows Cabang column header + data-testid=user-branch-{id} cells with 'Plaza'/'Kastem'/'—' colored badge",
+    "PASS - Frontend: Edit user modal renders data-testid=user-branch <select> with 3 options: '— Tidak ditentukan —' / 'Plaza' / 'Kastem'",
+    "PASS - Frontend: Selecting Plaza + Save updates cell + persists on reload",
+    "PASS - Frontend: Create user via UI (data-testid user-name / user-email / user-password / user-branch + perm-check-penjualan + perm-check-laporan_penjualan) with branch=Kastem creates user & row shows 'Kastem'",
+    "PASS - Frontend: /inventory Master Produk tab → Edit product opens form with data-testid=prod-length-meter (type=number, step=0.01, min=0)",
+    "PASS - Frontend: /laporan-penjualan table has 12 main headers (No, Tanggal, No. Nota, Alamat, Nama Barang, Pcs, Meter, Harga, Disc, Jumlah, Total, Keterangan)",
+    "PASS - Frontend: Table has 6 colspan=2 payment groups (Cash Plaza / Cash Kastem / BCA Plaza / BCA Kastem / Mandiri Plaza / Mandiri Kastem) with sub-headers Nominal + Tanggal",
+    "PASS - Frontend: Table style min-width: 2200px (horizontal scroll) wrapped in overflow-x-auto",
+    "PASS - Frontend: 4 data-testid=pay-total-{cash_plaza,cash_kastem,bca_plaza,bca_kastem,mandiri_plaza,mandiri_kastem} in footer, values match seeded transactions (Rp 60.000/40.000/20.000/—/20.000/—)",
+    "PASS - Frontend: Seeded rows show Alamat='Jl. Merdeka 10, Solo', Meter=qty*2.5 (7.50, 5.00, 2.50, 2.50), Total column bold-blue Rp X.XXX",
+    "PASS - Frontend: Payment column mapping row-by-row verified in DOM: admin plaza cash→Cash Plaza col shows Rp 60.000; kastem cash→Cash Kastem col shows Rp 40.000; admin BCA→BCA Plaza; admin Mandiri→Mandiri Plaza; other 5 cells per row show '—'",
+    "PASS - Frontend: Footer 'Total · 4 transaksi (Filtered)' + Total Omzet Rp 140.000 matches Summary Card 'Omzet Minggu Ini' Rp 140.000",
+    "PASS - Frontend: data-testid=report-row-search 'ZZZ_NONEXISTENT' filters to 0 rows; clearing restores; filtering by product name yields 4 rows"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_sales_report_branch.py",
+    "/app/test_reports/pytest/pytest_sales_report_branch.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Fix React hydration warning in Inventory.jsx line ~1974 — <span> should not be child of <option> in BOM material select. Wrap {m.name} directly instead of allowing ve-dynamic <span> injection.",
+    "OPTIONAL: Suppress the /api/auth/me 401 console noise on /login page (fires ~6× on load). Low priority."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 7100 lines — very large. Consider splitting into modules (users, sales, reports, cashbook).",
+    "_resolve_report_payment_col at L6286 is clean and testable. Consider making PAYMENT_COLUMNS constant explicit and shared with frontend PAY_COLS via config endpoint to prevent drift.",
+    "SalesReport.jsx (389 lines) uses two-row header (colspan/rowspan) with 12 data cells per body row — matches design. Payment nominal only shown on is_first_item_of_sale=true; multi-item sales rendered as separate rows with '—' correctly to prevent double-counting.",
+    "Users.jsx branch dropdown uses raw <select> (native) rather than shadcn Select — acceptable for simple 3-option list; consistent with role picker style; contrast/design OK.",
+    "Backend _sanitize_branch correctly rejects invalid strings (returns None) and lowercases input. Test verifies this."
+  ],
+  "updated_files": ["/app/backend/tests/test_sales_report_branch.py"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (19/19 scenarios)"},
+  "test_credentials": "admin@payroll.id / admin123 (super_admin)",
+  "seed_data_creation": "Created via backend API for isolated verification: TEST_UI_Cust customer (with alamat 'Jl. Merdeka 10, Solo'), TEST_UI_Prod product (length_meter=2.5), 4 sales (NOTA-20260720-0001..0004: Admin plaza cash qty=3, Kastem cash qty=2, Admin BCA qty=1, Admin Mandiri qty=1), ui_seed_kastem_* user. ALL cleaned up at end. Admin.branch reset to None per review requirement.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Sales Report Excel-style with Plaza/Kastem branch columns fully working end-to-end. Key testids: user-branch (dropdown), user-branch-{id} (cell), prod-length-meter (Inventory Master Produk tab), report-table (min-width 2200), report-row-search, report-row (per body row), pay-total-{cash_plaza,cash_kastem,bca_plaza,bca_kastem,mandiri_plaza,mandiri_kastem} (footer sums). Backend endpoint: GET /api/sales/report/analytics returns rows with alamat, meter, payment_column, is_first_item_of_sale, payment_nominal_on_row, payment_date_on_row. Note: Inventory Master Produk edit form is inside a modal opened by clicking edit-product-{id} button on the 'Master Produk' tab (not 'Master Bahan'). Users form uses data-testid user-name/user-email/user-password (not by index). BOM select has React hydration warning about <span> in <option> — unrelated to this feature.",
+  "rca_of_the_issue": "N/A — no bugs found. All 24 review-request scenarios pass."
+}

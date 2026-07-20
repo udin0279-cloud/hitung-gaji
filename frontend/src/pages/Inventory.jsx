@@ -1593,6 +1593,8 @@ const EMPTY_PRODUCT = {
   sizes: [],
   price_size_a: 0,
   price_size_b: 0,
+  // Panjang per pcs (meter) — dipakai di Laporan Penjualan
+  length_meter: 0,
 };
 
 const SIZE_OPTIONS = ["S", "M", "L", "XL", "XXL", "XXXL"];
@@ -1634,6 +1636,7 @@ function ProductsTab({ products, materials, categories = [], reload }) {
       sizes: p.sizes || [],
       price_size_a: p.price_size_a || 0,
       price_size_b: p.price_size_b || 0,
+      length_meter: p.length_meter || 0,
     });
     setOpenForm(true);
   };
@@ -1668,6 +1671,7 @@ function ProductsTab({ products, materials, categories = [], reload }) {
         unit_price: Number(form.unit_price) || 0,
         purchase_price: Number(form.purchase_price) || 0,
         current_stock: Number(form.current_stock) || 0,
+        length_meter: Number(form.length_meter) || 0,
         has_sizes: !!form.has_sizes,
         sizes: form.has_sizes ? form.sizes : [],
         price_size_a: form.has_sizes ? Number(form.price_size_a) || 0 : 0,
@@ -1931,6 +1935,21 @@ function ProductsTab({ products, materials, categories = [], reload }) {
                   <div data-testid="prod-stock-value" className="rounded-none border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-mono font-bold text-[#002FA7]">
                     {formatIDR((Number(form.current_stock) || 0) * (Number(form.purchase_price) || 0))}
                   </div>
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="Panjang / Ukuran per Pcs (meter)" hint="Untuk kolom Meter di Laporan Penjualan. Kosongkan bila tidak relevan (misal kaos, stiker).">
+                  <input
+                    data-testid="prod-length-meter"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.length_meter}
+                    onChange={(e) => setForm({ ...form, length_meter: e.target.value })}
+                    placeholder="0"
+                    className={inputCls + " font-mono"}
+                  />
                 </Field>
               </div>
 

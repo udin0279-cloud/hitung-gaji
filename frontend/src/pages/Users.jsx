@@ -80,15 +80,16 @@ export default function Users() {
               <th className="px-4 py-3">Nama</th>
               <th className="px-4 py-3">Email</th>
               <th className="px-4 py-3 text-center">Role</th>
+              <th className="px-4 py-3 text-center">Cabang</th>
               <th className="px-4 py-3">Menu Akses</th>
               <th className="px-4 py-3">Dibuat</th>
               <th className="px-4 py-3 text-right">Aksi</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={6} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && items.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Belum ada user.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Belum ada user.</td></tr>
             )}
             {items.map((u) => {
               const r = ROLE_LABELS[u.role] || { label: u.role, color: "bg-zinc-200 text-zinc-900" };
@@ -98,12 +99,19 @@ export default function Users() {
                 : (u.permissions || []).length === 0
                   ? "—"
                   : (u.permissions || []).map((p) => MENU_LABELS[p] || p).join(", ");
+              const branchLabel = u.branch === "plaza" ? "Plaza" : u.branch === "kastem" ? "Kastem" : "—";
+              const branchColor = u.branch === "plaza" ? "bg-[#002FA7]/10 text-[#002FA7]" : u.branch === "kastem" ? "bg-[#E81123]/10 text-[#E81123]" : "text-zinc-400";
               return (
                 <tr key={u.id} data-testid={`user-row-${u.id}`} className="border-b border-zinc-100 hover:bg-zinc-50/80">
                   <td className="px-4 py-3 font-semibold text-zinc-900">{u.name}</td>
                   <td className="px-4 py-3 font-mono text-zinc-700 text-xs">{u.email}</td>
                   <td className="px-4 py-3 text-center">
                     <span className={`inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${r.color}`}>{r.label}</span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span data-testid={`user-branch-${u.id}`} className={`inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${branchColor}`}>
+                      {branchLabel}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-[11px] text-zinc-600 max-w-[320px] break-words">
                     {isSA ? (
@@ -160,6 +168,7 @@ function UserFormModal({ user, onClose, onSuccess }) {
       ? []
       : (user?.permissions || [])
   );
+  const [branch, setBranch] = useState(user?.branch || "");
   const [submitting, setSubmitting] = useState(false);
 
   const togglePerm = (key) => {
@@ -180,6 +189,7 @@ function UserFormModal({ user, onClose, onSuccess }) {
     try {
       const payload = { name, role };
       if (role === "admin_privileged") payload.permissions = permissions;
+      payload.branch = branch || null;
       if (password) payload.password = password;
       if (isEdit) {
         await api.put(`/users/${user.id}`, payload);
@@ -262,6 +272,23 @@ function UserFormModal({ user, onClose, onSuccess }) {
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] uppercase tracking-widest font-semibold text-zinc-600 mb-1.5">Cabang (Outlet)</label>
+            <select
+              data-testid="user-branch"
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              className="w-full border border-zinc-300 px-3 py-2 text-sm bg-white focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+            >
+              <option value="">— Tidak ditentukan —</option>
+              <option value="plaza">Plaza</option>
+              <option value="kastem">Kastem</option>
+            </select>
+            <div className="text-[10px] font-mono text-zinc-500 mt-1">
+              Cabang menentukan kolom Plaza/Kastem di Laporan Penjualan. Setiap transaksi yang dibuat oleh user ini otomatis tercatat pada cabang tersebut.
             </div>
           </div>
 
