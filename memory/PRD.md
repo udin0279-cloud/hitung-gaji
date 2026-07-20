@@ -738,3 +738,39 @@ Iteration 34: **backend 18/18 pytest PASS + frontend 19/19 E2E PASS** — semua 
 
 ### Testing
 Iteration 35 (frontend E2E): **10/10 skenario PASS**. Backend orphan-check verified via curl.
+
+---
+
+## Update: 2026-07-20 — Laporan Penjualan Excel-Style + Branch (Plaza/Kastem)
+
+### Feature
+Rombak modul Laporan Penjualan menjadi **format Excel** dengan:
+
+**Kolom Utama (12):** No, Tanggal, No.Nota, **Alamat** (dari customer master), **Nama Barang**, **Pcs**, **Meter** (qty × product.length_meter), **Harga**, **Disc** (sale-level), **Jumlah** (harga×pcs), **Total** (after disc), **Keterangan**.
+
+**Kolom Pembayaran (6 grup × 2 cell):** Cash Plaza, Cash Kastem, BCA Plaza, BCA Kastem, Mandiri Plaza, Mandiri Kastem — masing-masing dengan sub-header **Nominal** + **Tanggal**. Nominal muncul hanya di baris pertama transaksi (multi-item sale) untuk mencegah double-count.
+
+**Auto-mapping cabang:**
+- Field `branch` ditambahkan ke User (Plaza/Kastem/null) via dropdown di Kelola User
+- Sale otomatis di-tag `branch` dari user cashier saat submit
+- Backend helper `_resolve_report_payment_col(method, bank, branch)` → column key
+- Data lama tanpa branch → 6 payment column kosong, kolom utama tetap terisi
+
+**Master Produk:** Field baru **`length_meter`** (opsional, default 0) untuk hitung kolom Meter.
+
+**UI:**
+- Table `overflow-x-auto` + `minWidth: 2200px` untuk horizontal scroll ala Excel
+- Footer "Total · N transaksi" menjumlahkan seluruh transaksi visible (respect search filter)
+- Footer terpisah per payment column dengan `data-testid=pay-total-{key}`
+
+### Files Changed
+- `backend/server.py`: UserCreateIn/UpdateIn+branch, `_sanitize_branch`, `_resolve_report_payment_col`, `ProductIn.length_meter`, sale doc capture branch, analytics endpoint enriched (alamat lookup, meter, payment_column, is_first_item_of_sale, payment_nominal_on_row, payment_date_on_row)
+- `frontend/src/pages/Users.jsx`: dropdown "Cabang" + column "Cabang"
+- `frontend/src/pages/Inventory.jsx`: input `prod-length-meter`
+- `frontend/src/pages/SalesReport.jsx`: rewrite tabel Excel-style (2-row header, 24 body cells, footer totals per payment column)
+
+### Testing
+Iteration 36: **backend 6/6 pytest PASS + frontend 19/19 E2E PASS** — semua skenario di review request lulus.
+
+### Known Cosmetic (Optional)
+- React dev-mode hydration warning di Inventory BOM `<span> inside <option>` — pre-existing, tidak berdampak.
