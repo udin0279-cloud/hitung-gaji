@@ -18,6 +18,7 @@ import Purchasing from "@/pages/Purchasing";
 import Sales from "@/pages/Sales";
 import Reports from "@/pages/Reports";
 import SalesReport from "@/pages/SalesReport";
+import ShopeeRincianReport from "@/pages/ShopeeRincianReport";
 import CashBook from "@/pages/CashBook";
 import Categories from "@/pages/Categories";
 import Layout from "@/components/Layout";
@@ -82,6 +83,7 @@ function App() {
               <Route path="/categories" element={<ProtectedRoute menuKey="master_kategori"><Categories /></ProtectedRoute>} />
               <Route path="/reports" element={<ProtectedRoute menuKey="laba_rugi"><Reports /></ProtectedRoute>} />
               <Route path="/laporan-penjualan" element={<ProtectedRoute menuKey="laporan_penjualan"><SalesReport /></ProtectedRoute>} />
+              <Route path="/laporan-rincian-shopee" element={<ProtectedRoute menuKey="laporan_penjualan"><ShopeeRincianReport /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute menuKey="konfigurasi"><Settings /></ProtectedRoute>} />
             </Route>
 

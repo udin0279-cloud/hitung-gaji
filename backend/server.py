@@ -6292,6 +6292,119 @@ async def sales_report_excel(
     )
 
 
+# ---------------- Laporan Rincian Penjualan Online Shopee ----------------
+@api_router.get("/sales/report/shopee-rincian")
+async def sales_shopee_rincian(
+    user: dict = Depends(require_super_admin),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    """Split per outlet (Plaza / Kastem) untuk transaksi Shopee."""
+    q: Dict[str, Any] = {
+        "status": {"$nin": ["cancelled", "void", "voided", "canceled"]},
+        "payment_method": {"$in": ["shopee_plaza", "shopee_kastem"]},
+    }
+    if date_from or date_to:
+        q["date"] = {}
+        if date_from:
+            q["date"]["$gte"] = date_from
+        if date_to:
+            q["date"]["$lte"] = date_to
+    sales = await db.sales.find(q, {"_id": 0}).sort("created_at", 1).to_list(length=20000)
+
+    products_p = await db.products.find({}, {"_id": 0, "name": 1, "length_meter": 1}).to_list(length=5000)
+    prod_length_map = {(p.get("name") or "").strip().lower(): float(p.get("length_meter") or 0) for p in products_p}
+
+    def _row_from_sale(s: Dict[str, Any]) -> Dict[str, Any]:
+        items = s.get("items") or []
+        pesanan_parts = []
+        pcs = 0
+        meter = 0.0
+        harga_satuan = 0.0
+        for it in items:
+            name = (it.get("product_name") or it.get("material_name") or "-").strip()
+            qty = int(it.get("quantity") or 0)
+            up = float(it.get("unit_price") or 0)
+            pesanan_parts.append(name)
+            pcs += qty
+            if harga_satuan == 0:
+                harga_satuan = up
+            length_m = prod_length_map.get(name.lower(), 0.0)
+            if length_m > 0:
+                meter += qty * length_m
+        pesanan = " · ".join(pesanan_parts) if pesanan_parts else "-"
+        jumlah = float(s.get("subtotal") or 0)
+        saldo_masuk = s.get("saldo_masuk")
+        if saldo_masuk is None or saldo_masuk == "":
+            saldo_val = None
+            potongan = None
+            persentase = None
+        else:
+            saldo_val = float(saldo_masuk)
+            potongan = round(jumlah - saldo_val, 2)
+            persentase = round((potongan / jumlah * 100), 2) if jumlah > 0 else 0
+        return {
+            "id": s.get("id"),
+            "sale_id": s.get("id"),
+            "sale_no": s.get("sale_no"),
+            "date": s.get("date"),
+            "nama": s.get("customer_name") or "Umum",
+            "pesanan": pesanan,
+            "pcs": pcs,
+            "meter": round(meter, 4),
+            "harga_satuan": round(harga_satuan, 2),
+            "jumlah": round(jumlah, 2),
+            "saldo_masuk": saldo_val,
+            "potongan": potongan,
+            "persentase": persentase,
+        }
+
+    plaza_rows = []
+    kastem_rows = []
+    plaza_totals = {"jumlah": 0.0, "saldo_masuk": 0.0, "potongan": 0.0}
+    kastem_totals = {"jumlah": 0.0, "saldo_masuk": 0.0, "potongan": 0.0}
+    for s in sales:
+        row = _row_from_sale(s)
+        target = plaza_rows if s.get("payment_method") == "shopee_plaza" else kastem_rows
+        totals = plaza_totals if s.get("payment_method") == "shopee_plaza" else kastem_totals
+        target.append(row)
+        totals["jumlah"] += float(row["jumlah"] or 0)
+        totals["saldo_masuk"] += float(row["saldo_masuk"] or 0)
+        totals["potongan"] += float(row["potongan"] or 0)
+    for t in (plaza_totals, kastem_totals):
+        for k in t:
+            t[k] = round(t[k], 2)
+
+    return {
+        "plaza": {"rows": plaza_rows, "totals": plaza_totals, "count": len(plaza_rows)},
+        "kastem": {"rows": kastem_rows, "totals": kastem_totals, "count": len(kastem_rows)},
+    }
+
+
+class SaldoMasukIn(BaseModel):
+    saldo_masuk: Optional[float] = None  # None = clear
+
+
+@api_router.patch("/sales/{sale_id}/saldo-masuk")
+async def sales_update_saldo_masuk(sale_id: str, payload: SaldoMasukIn, user: dict = Depends(require_super_admin)):
+    existing = await db.sales.find_one({"id": sale_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    val = payload.saldo_masuk
+    if val is not None and float(val) < 0:
+        raise HTTPException(status_code=400, detail="Saldo Masuk tidak boleh negatif")
+    await db.sales.update_one(
+        {"id": sale_id},
+        {"$set": {
+            "saldo_masuk": float(val) if val is not None else None,
+            "saldo_masuk_updated_at": datetime.now(timezone.utc).isoformat(),
+            "saldo_masuk_updated_by": user.get("email"),
+        }},
+    )
+    return {"ok": True, "sale_id": sale_id, "saldo_masuk": val}
+
+
+
 @api_router.get("/sales/report/analytics")
 async def sales_analytics(
     user: dict = Depends(require_super_admin),

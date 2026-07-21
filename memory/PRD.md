@@ -805,3 +805,44 @@ Iteration 36: **backend 6/6 pytest PASS + frontend 19/19 E2E PASS** — semua sk
 
 ### Testing
 Curl E2E: HTTP 200, size 6KB, sheet berisi header perusahaan, 24 kolom (12 main + 12 pay sub-headers), data row di baris 6, TOTAL row dengan formula `=SUM(...)` per kolom aggregable. Frontend DOM verified: report-export-excel & page-size-select present.
+
+---
+
+## Update: 2026-07-21 — Modul Rincian Penjualan Online Shopee
+
+### Feature
+Modul baru **"Rincian Shopee"** (`/laporan-rincian-shopee`) di sidebar (di bawah Laporan Penjualan). Dua tabel berdampingan:
+- **Shopee Plaza** (kiri, header hijau tua) — filter `payment_method = shopee_plaza`
+- **Shopee Kastem** (kanan, header hijau muda) — filter `payment_method = shopee_kastem`
+
+**Kolom (per tabel):** Nama, Pesanan, Pcs, Meter, Harga Satuan, **Jumlah (Bruto)** (highlighted yellow), Saldo Masuk (Netto), Potongan (Rp), %, Aksi (edit).
+
+**Logika:**
+- Jumlah = subtotal (pcs × harga_satuan)
+- Saldo Masuk = field `sale.saldo_masuk` (opsional, dapat diisi lewat modal)
+- Potongan = Jumlah − Saldo Masuk
+- % = (Potongan / Jumlah) × 100
+
+**Workflow Opsi B (user's choice):**
+- Kasir tidak perlu ubah workflow — pilih metode "Shopee Plaza/Kastem" seperti biasa
+- Admin buka modul Rincian → klik ikon Edit → modal muncul dengan preview otomatis potongan & persentase
+- PATCH `/api/sales/{id}/saldo-masuk` menyimpan nilai netto per transaksi
+
+**Footer per tabel:** Total Saldo Masuk (label sesuai request), plus total Jumlah & Potongan.
+**Grand Total** di bawah: agregasi Plaza + Kastem (kuning highlight) — Bruto, Total Saldo Masuk, Total Potongan.
+
+### Backend
+- `GET /api/sales/report/shopee-rincian?date_from&date_to` → `{ plaza: {rows, totals, count}, kastem: {rows, totals, count} }`
+- `PATCH /api/sales/{sale_id}/saldo-masuk` — body `{saldo_masuk: number|null}`
+- New Sale field: `saldo_masuk` (float, nullable) + audit trail (`saldo_masuk_updated_at`, `saldo_masuk_updated_by`)
+
+### Frontend
+- New page `frontend/src/pages/ShopeeRincianReport.jsx` (~305 baris)
+- Route `/laporan-rincian-shopee` (menuKey: `laporan_penjualan`, same perm sebagai Laporan Penjualan)
+- Sidebar item "Rincian Shopee" (icon `Store`, testid `nav-shopee-rincian`)
+
+### Testing
+Backend E2E curl PASS: create Shopee sale → PATCH saldo_masuk → verify calculations. Example match user's sample:
+- ALLSUNDAY SLAYER 6×34,500 = 207,000 · Saldo 179,875 · Potongan 27,125 · **13.1%** ✓
+- NAJIB09 BANNER 1×24,300 = 24,300 · Saldo 18,392 · Potongan 5,908 · **24.31%** ✓
+Frontend DOM verified: table-plaza, table-kastem, nav-shopee-rincian all rendered.

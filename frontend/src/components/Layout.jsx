@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Users as UsersIcon, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays, UserCog, Menu, X as XIcon, Package, TrendingUp, ShoppingCart, ShoppingBag, Wallet, Tags, BarChart3 } from "lucide-react";
+import { LayoutDashboard, Users as UsersIcon, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays, UserCog, Menu, X as XIcon, Package, TrendingUp, ShoppingCart, ShoppingBag, Wallet, Tags, BarChart3, Store } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 import { hasMenuAccess } from "../lib/menuAccess";
@@ -14,6 +14,7 @@ const ALL_NAV = [
   { to: "/purchasing", label: "Pembelian", icon: ShoppingCart, testId: "nav-purchasing", menuKey: "pembelian" },
   { to: "/sales", label: "Penjualan", icon: ShoppingBag, testId: "nav-sales", menuKey: "penjualan" },
   { to: "/laporan-penjualan", label: "Laporan Penjualan", icon: BarChart3, testId: "nav-sales-report", menuKey: "laporan_penjualan" },
+  { to: "/laporan-rincian-shopee", label: "Rincian Shopee", icon: Store, testId: "nav-shopee-rincian", menuKey: "laporan_penjualan" },
   { to: "/cashbook", label: "Kas Operasional", icon: Wallet, testId: "nav-cashbook", menuKey: "kas_operasional" },
   { to: "/reports", label: "Laba/Rugi", icon: TrendingUp, testId: "nav-reports", menuKey: "laba_rugi" },
   { to: "/categories", label: "Master Kategori", icon: Tags, testId: "nav-categories", menuKey: "master_kategori" },
