@@ -131,14 +131,20 @@ export default function SalesReport() {
   // dedupe berdasarkan sale_no (tiap transaksi hanya dihitung 1x pakai sale_total setelah diskon)
   const uniqueSaleTotals = new Map();
   const uniqueSaleDiscounts = new Map();
+  const uniqueSaleSisa = new Map();
+  const uniqueSaleStatus = new Map();
   rows.forEach((r) => {
     if (!uniqueSaleTotals.has(r.sale_no)) {
       uniqueSaleTotals.set(r.sale_no, Number(r.sale_total || 0));
       uniqueSaleDiscounts.set(r.sale_no, Number(r.sale_discount || 0));
+      uniqueSaleSisa.set(r.sale_no, Number(r.sale_sisa_tagihan || 0));
+      uniqueSaleStatus.set(r.sale_no, r.sale_status || (Number(r.sale_sisa_tagihan || 0) > 0.01 ? "dp" : "paid"));
     }
   });
   const totalRowsAmount = Array.from(uniqueSaleTotals.values()).reduce((s, v) => s + v, 0);
   const totalRowsDisc = Array.from(uniqueSaleDiscounts.values()).reduce((s, v) => s + v, 0);
+  const totalRowsSisa = Array.from(uniqueSaleSisa.values()).reduce((s, v) => s + v, 0);
+  const dpCount = Array.from(uniqueSaleStatus.values()).filter((v) => v === "dp").length;
   const totalRowsItemsSubtotal = rows.reduce((s, r) => s + Number(r.total || 0), 0);
 
   // Payment column totals — sum by payment_column key (already normalized by backend)
@@ -153,7 +159,8 @@ export default function SalesReport() {
     { key: "shopee_kastem", label: "Shopee Kastem", color: "bg-[#FDBA74] text-zinc-900" },
   ];
   const visiblePayCols = PAY_COLS.filter((c) => !hiddenPayCols.includes(c.key));
-  const totalColSpan = 12 + visiblePayCols.length * 2;
+  // 12 main + 2 (sisa + status) + N pay cols × 2 = totalColSpan
+  const totalColSpan = 14 + visiblePayCols.length * 2;
   const payTotals = Object.fromEntries(PAY_COLS.map((c) => [c.key, 0]));
   rows.forEach((r) => {
     if (r.is_first_item_of_sale && r.payment_column && payTotals[r.payment_column] !== undefined) {
@@ -393,6 +400,8 @@ export default function SalesReport() {
                 <th rowSpan={2} className="px-2 py-2 text-right border-r border-zinc-700 whitespace-nowrap">Disc</th>
                 <th rowSpan={2} className="px-2 py-2 text-right border-r border-zinc-700 whitespace-nowrap">Jumlah</th>
                 <th rowSpan={2} className="px-2 py-2 text-right border-r border-zinc-700 whitespace-nowrap bg-[#002FA7]">Total</th>
+                <th rowSpan={2} className="px-2 py-2 text-right border-r border-zinc-700 whitespace-nowrap bg-yellow-500 text-zinc-900">Sisa Tagihan</th>
+                <th rowSpan={2} className="px-2 py-2 text-center border-r border-zinc-700 whitespace-nowrap">Status</th>
                 <th rowSpan={2} className="px-2 py-2 border-r border-zinc-700 min-w-[120px]">Keterangan</th>
                 {/* Payment column groups — dynamic based on visiblePayCols */}
                 {visiblePayCols.map((c) => (
@@ -446,6 +455,22 @@ export default function SalesReport() {
                     <td className="px-2 py-2 text-right font-mono text-sm font-bold text-[#002FA7] bg-[#002FA7]/5 border-r border-zinc-100">
                       {isFirst ? formatIDR(rowTotal) : <span className="text-zinc-300">—</span>}
                     </td>
+                    <td className="px-2 py-2 text-right font-mono text-xs bg-yellow-50 border-r border-zinc-100">
+                      {isFirst && Number(r.sale_sisa_tagihan || 0) > 0.01 ? (
+                        <span data-testid="report-sisa" className="text-[#E81123] font-bold">{formatIDR(r.sale_sisa_tagihan)}</span>
+                      ) : (
+                        <span className="text-zinc-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 text-center border-r border-zinc-100">
+                      {isFirst ? (
+                        (r.sale_status === "dp") ? (
+                          <span data-testid="report-status-dp" className="inline-block bg-yellow-400 text-yellow-900 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest">DP</span>
+                        ) : (
+                          <span data-testid="report-status-lunas" className="inline-block bg-[#008A00]/15 text-[#008A00] border border-[#008A00]/30 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest">LUNAS</span>
+                        )
+                      ) : <span className="text-zinc-300">—</span>}
+                    </td>
                     <td className="px-2 py-2 text-xs text-zinc-600 border-r border-zinc-100">
                       {r.keterangan ? <span title={r.keterangan}>{r.keterangan.slice(0, 40)}{r.keterangan.length > 40 ? "…" : ""}</span> : <span className="text-zinc-300">—</span>}
                     </td>
@@ -480,6 +505,10 @@ export default function SalesReport() {
                   <td className="px-2 py-3 text-right font-mono font-bold text-[#E81123] border-r border-zinc-200">{formatIDR(totalRowsDisc)}</td>
                   <td className="px-2 py-3 text-right font-mono font-bold text-zinc-700 border-r border-zinc-200">{formatIDR(totalRowsItemsSubtotal)}</td>
                   <td className="px-2 py-3 text-right font-mono font-bold text-lg text-[#002FA7] border-r border-zinc-200">{formatIDR(totalRowsAmount)}</td>
+                  <td data-testid="footer-total-sisa" className="px-2 py-3 text-right font-mono font-bold text-[#E81123] bg-yellow-50 border-r border-zinc-200">{formatIDR(totalRowsSisa)}</td>
+                  <td className="px-2 py-3 text-center text-[10px] font-bold text-zinc-500 border-r border-zinc-200">
+                    {totalRowsSisa > 0.01 ? `${dpCount} DP` : "—"}
+                  </td>
                   <td className="px-2 py-3 border-r border-zinc-200"></td>
                   {visiblePayCols.map((c, i) => (
                     <Fragment key={c.key + "-foot"}>

@@ -896,3 +896,59 @@ Kolom yang di-hide otomatis hilang dari: header row, sub-header row (Nominal/Tan
 
 ### Testing
 Iteration 37 (frontend): **11/11 skenario PASS** — toggle render, hide/show, persistence localStorage lintas reload, regression search/paging/export tidak terpengaruh.
+
+---
+
+## Update: 2026-07-21 — Pelunasan Sisa Tagihan (DP → LUNAS) di Kasir
+
+### Feature
+Fungsi **Bayar Sisa** untuk transaksi DP di modul Penjualan/Kasir. Melunasi sisa tagihan secara bertahap atau langsung, dengan auto-record ke Jurnal Kas Utama.
+
+**UI Sales List:**
+- Tombol hijau **"Bayar Sisa"** (`data-testid=pay-remaining-button-{sale_id}`) hanya muncul untuk transaksi berstatus DP.
+- Klik tombol → modal `PayRemainingModal`.
+
+**Modal PayRemainingModal:**
+- Summary: Total Nota, Sudah Dibayar, **Sisa Tagihan** (merah bold)
+- Input Nominal Pelunasan (default penuh sisa) + tombol "Isi Penuh"
+- Live indicator: "Akan LUNAS" (hijau) atau "Sisa setelah bayar: Rp X" (kuning)
+- Dropdown Metode: Cash/Tunai atau Transfer (BCA/Mandiri)
+- Field Tanggal Pelunasan (default hari ini)
+- Field Catatan (opsional)
+- Info: akun kas yang akan menerima dana ditampilkan real-time
+
+**Behavior:**
+- Nominal ≤ sisa tagihan (validasi backend & frontend)
+- Nominal < sisa → status tetap `dp`, `sisa_tagihan` berkurang
+- Nominal = sisa → status jadi `paid` (LUNAS), badge di list berubah, kolom Sisa/Kembali menampilkan "Kembali: Rp 0"
+- **Auto Jurnal Kas** (`_insert_cash_transaction`): tercatat sebagai pemasukan (`type=in`) di akun sesuai metode (301/301-BCA/301-MDR/301-SPP/301-SPK), `reference = sale.sale_no` (konsisten dengan initial sale — sehingga saat sale di-delete, semua entry auto ikut ter-rollback via `_rollback_sale_effects`).
+- Semua pembayaran tercatat di `sale.payments[]` sebagai audit trail (amount, method, bank, date, notes, created_at, created_by).
+
+### API Endpoints
+- `POST /api/sales/{sale_id}/pay-remaining` — body `{amount, payment_method (cash|transfer|shopee_plaza|shopee_kastem), payment_bank?, date?, notes?}`. Return `{ok, amount_paid, sisa_tagihan, status, cash_paid_total}`.
+
+### Validasi Backend
+- Sale exists → 404 jika tidak
+- Status harus `dp` (bukan sudah lunas) → 400 "Transaksi ini sudah LUNAS"
+- Amount > 0 → 400 "Nominal pembayaran harus > 0"
+- Amount ≤ sisa_tagihan (+tol 0.01) → 400 "Nominal melebihi sisa tagihan"
+- Tanggal format YYYY-MM-DD
+
+### Files Changed
+- `backend/server.py`: `PayRemainingIn` model + `POST /api/sales/{sale_id}/pay-remaining` endpoint (~90 lines).
+- `frontend/src/pages/Sales.jsx`: state `payDPSale`, tombol "Bayar Sisa" di tabel Aksi, komponen `PayRemainingModal` (~180 lines) dengan data-testid lengkap (`pay-remaining-*`).
+
+### Testing
+Backend curl E2E lulus:
+- Create DP sale (total 322k, cash 100k) → sisa 222k, status=dp ✓
+- Partial pay 100k → sisa 122k, status=dp, cash_paid=200k ✓
+- Final pay 122k via transfer BCA → sisa 0, status=paid, cash_paid=322k ✓
+- 3 cash_tx tercatat: initial DP (301, 100k), pelunasan 1 (301, 100k), pelunasan 2 (301-BCA, 122k) ✓
+- Overpay & double-pay after lunas ditolak dengan pesan yang tepat ✓
+
+Frontend Playwright E2E lulus (5 screenshot):
+- DP row + tombol "Bayar Sisa" muncul ✓
+- Modal render dengan summary lengkap ✓
+- Partial pay via transfer BCA (50k of 111k) berhasil, sisa update ke Rp 61.000 ✓
+- Fill-full → status berubah ke LUNAS + toast "Pelunasan berhasil — Transaksi LUNAS" ✓
+- Badge di tabel berubah hijau LUNAS ✓

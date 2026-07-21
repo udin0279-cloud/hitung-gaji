@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { Plus, Trash2, X, Search, ShoppingBag, Printer, Receipt, DollarSign, TrendingUp, FileText, Download, FileSpreadsheet, Pencil } from "lucide-react";
+import { Plus, Trash2, X, Search, ShoppingBag, Printer, Receipt, DollarSign, TrendingUp, FileText, Download, FileSpreadsheet, Pencil, Wallet } from "lucide-react";
 
 const inputCls = "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none";
 
@@ -21,6 +21,7 @@ export default function Sales() {
   const [openNew, setOpenNew] = useState(false);
   const [openReport, setOpenReport] = useState(false);
   const [editingSale, setEditingSale] = useState(null);
+  const [payDPSale, setPayDPSale] = useState(null);
   // Pagination
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -180,17 +181,21 @@ export default function Sales() {
                 <th className="px-4 py-3">Kasir</th>
                 <th className="px-4 py-3">Bayar</th>
                 <th className="px-4 py-3 text-right">Total</th>
-                <th className="px-4 py-3 text-right">Kembali</th>
+                <th className="px-4 py-3 text-right">Sisa / Kembali</th>
+                <th className="px-4 py-3 text-center">Status</th>
                 <th className="px-4 py-3 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={9} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+              {loading && <tr><td colSpan={10} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={9} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi. Klik &ldquo;Transaksi Baru&rdquo;.</td></tr>
+                <tr><td colSpan={10} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi. Klik &ldquo;Transaksi Baru&rdquo;.</td></tr>
               )}
-              {filtered.map((s, idx) => (
-                <tr key={s.id} data-testid="sale-row" className="border-b border-zinc-100 hover:bg-zinc-50/80 align-top">
+              {filtered.map((s, idx) => {
+                const sisa = Number(s.sisa_tagihan || 0);
+                const isDPRow = sisa > 0.01 || s.status === "dp";
+                return (
+                <tr key={s.id} data-testid="sale-row" className={`border-b border-zinc-100 hover:bg-zinc-50/80 align-top ${isDPRow ? "bg-yellow-50/40" : ""}`}>
                   <td className="px-4 py-3 text-center font-mono text-xs font-bold text-zinc-500">{(page - 1) * pageSize + idx + 1}</td>
                   <td className="px-4 py-3 font-mono text-xs">
                     <div className="font-semibold text-zinc-900">{s.sale_no}</div>
@@ -213,12 +218,33 @@ export default function Sales() {
                     <PaymentBadge sale={s} />
                   </td>
                   <td className="px-4 py-3 font-mono text-right text-zinc-900 font-bold">{formatIDR(s.total)}</td>
-                  <td className="px-4 py-3 font-mono text-right text-zinc-500 text-xs">
-                    <div>Bayar: {formatIDR(s.cash_paid)}</div>
-                    <div className={s.change > 0 ? "text-[#008A00] font-semibold" : ""}>Kembali: {formatIDR(s.change)}</div>
+                  <td className="px-4 py-3 font-mono text-right text-xs">
+                    <div className="text-zinc-500">Bayar: {formatIDR(s.cash_paid)}</div>
+                    {isDPRow ? (
+                      <div className="text-[#E81123] font-bold" data-testid={`sisa-${s.id}`}>Sisa: {formatIDR(sisa)}</div>
+                    ) : (
+                      <div className={s.change > 0 ? "text-[#008A00] font-semibold" : "text-zinc-500"}>Kembali: {formatIDR(s.change)}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {isDPRow ? (
+                      <span data-testid={`status-badge-${s.id}`} className="inline-block bg-yellow-400 text-yellow-900 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">DP</span>
+                    ) : (
+                      <span data-testid={`status-badge-${s.id}`} className="inline-block bg-[#008A00]/15 text-[#008A00] border border-[#008A00]/30 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">LUNAS</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                      {isDPRow && (
+                        <button
+                          data-testid={`pay-remaining-button-${s.id}`}
+                          onClick={() => setPayDPSale(s)}
+                          className="inline-flex items-center gap-1.5 rounded-none border border-[#008A00] bg-[#008A00] text-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-[#006D00] transition-colors"
+                          title={`Bayar sisa Rp ${formatIDR(sisa)}`}
+                        >
+                          <Wallet className="w-3.5 h-3.5" /> Bayar Sisa
+                        </button>
+                      )}
                       <button
                         data-testid="print-receipt-button"
                         onClick={() => openReceipt(s)}
@@ -247,7 +273,8 @@ export default function Sales() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -306,6 +333,7 @@ export default function Sales() {
 
       {openNew && <NewSaleModal materials={materials} products={products} customers={customers} edit={editingSale} onClose={() => { setOpenNew(false); setEditingSale(null); }} onSaved={async (result) => { setOpenNew(false); setEditingSale(null); await loadAll(); if (result && !result._isUpdate) openReceipt(result, true); }} />}
       {openReport && <SalesReportModal onClose={() => setOpenReport(false)} />}
+      {payDPSale && <PayRemainingModal sale={payDPSale} onClose={() => setPayDPSale(null)} onSaved={async () => { setPayDPSale(null); await loadAll(); }} />}
     </div>
   );
 }
@@ -403,6 +431,205 @@ function StatCard({ label, value, icon: Icon, isCount, testId, positive }) {
       </div>
       <div data-testid={testId} className={`font-mono text-xl lg:text-2xl tracking-tight font-semibold mt-2 ${positive ? "text-[#008A00]" : "text-zinc-900"}`}>
         {isCount ? value : formatIDR(value)}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- PAY REMAINING (DP → LUNAS) MODAL ---------------- */
+function PayRemainingModal({ sale, onClose, onSaved }) {
+  const sisa = Number(sale.sisa_tagihan || 0);
+  const [amount, setAmount] = useState(sisa);
+  const [method, setMethod] = useState("cash");
+  const [bank, setBank] = useState("bca");
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const isTransfer = method === "transfer";
+  const amountNum = Number(amount) || 0;
+  const sisaAfter = Math.max(0, sisa - amountNum);
+  const willBeLunas = sisaAfter <= 0.01;
+  const invalid = amountNum <= 0 || amountNum > sisa + 0.01;
+
+  const submit = async () => {
+    if (invalid) {
+      toast.error("Nominal tidak valid");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post(`/sales/${sale.id}/pay-remaining`, {
+        amount: amountNum,
+        payment_method: method,
+        payment_bank: isTransfer ? bank : null,
+        date,
+        notes: notes.trim() || null,
+      });
+      toast.success(willBeLunas ? "Pelunasan berhasil — Transaksi LUNAS" : "Pembayaran sisa berhasil dicatat");
+      await onSaved?.();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal menyimpan pembayaran");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white border border-zinc-300 w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-200 bg-yellow-50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 flex items-center justify-center bg-[#008A00]">
+              <Wallet className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Pelunasan Sisa Tagihan</div>
+              <h3 className="font-bold text-zinc-900 text-lg">Bayar Sisa · {sale.sale_no}</h3>
+            </div>
+          </div>
+          <button data-testid="pay-remaining-close" onClick={onClose} className="p-2 hover:bg-zinc-100"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="border border-zinc-200 bg-zinc-50 p-3 space-y-1.5">
+            <div className="flex justify-between text-sm">
+              <span className="text-zinc-600">Pelanggan</span>
+              <span className="font-semibold text-zinc-900">{sale.customer_name}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-zinc-600">Total Nota</span>
+              <span className="font-mono font-semibold text-zinc-900">{formatIDR(sale.total)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-zinc-600">Sudah Dibayar</span>
+              <span className="font-mono text-zinc-900">{formatIDR(sale.cash_paid)}</span>
+            </div>
+            <div className="flex justify-between text-sm border-t border-zinc-200 pt-1.5">
+              <span className="text-[#E81123] font-bold">Sisa Tagihan</span>
+              <span data-testid="pay-remaining-current-sisa" className="font-mono font-bold text-[#E81123]">{formatIDR(sisa)}</span>
+            </div>
+          </div>
+
+          <label className="block">
+            <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-1.5">Nominal Pelunasan</div>
+            <input
+              data-testid="pay-remaining-amount"
+              type="number"
+              min="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className={inputCls + " font-mono text-lg"}
+              placeholder="0"
+              autoFocus
+            />
+            <div className="mt-1 flex items-center justify-between text-xs">
+              <button
+                type="button"
+                data-testid="pay-remaining-fill-full"
+                onClick={() => setAmount(sisa)}
+                className="text-[#002FA7] font-bold uppercase tracking-widest hover:underline"
+              >
+                Isi penuh ({formatIDR(sisa)})
+              </button>
+              {amountNum > 0 && (
+                <span className={willBeLunas ? "text-[#008A00] font-bold" : "text-yellow-700"}>
+                  {willBeLunas ? "Akan LUNAS" : `Sisa setelah bayar: ${formatIDR(sisaAfter)}`}
+                </span>
+              )}
+            </div>
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-1.5">Metode Pembayaran</div>
+              <select
+                data-testid="pay-remaining-method"
+                value={method}
+                onChange={(e) => setMethod(e.target.value)}
+                className={inputCls}
+              >
+                <option value="cash">Cash / Tunai</option>
+                <option value="transfer">Transfer</option>
+              </select>
+            </label>
+            {isTransfer ? (
+              <label className="block">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-1.5">Bank</div>
+                <select
+                  data-testid="pay-remaining-bank"
+                  value={bank}
+                  onChange={(e) => setBank(e.target.value)}
+                  className={inputCls}
+                >
+                  <option value="bca">BCA</option>
+                  <option value="mandiri">Mandiri</option>
+                </select>
+              </label>
+            ) : (
+              <label className="block">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-1.5">Tanggal Pelunasan</div>
+                <input
+                  data-testid="pay-remaining-date"
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className={inputCls + " font-mono"}
+                />
+              </label>
+            )}
+          </div>
+
+          {isTransfer && (
+            <label className="block">
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-1.5">Tanggal Pelunasan</div>
+              <input
+                data-testid="pay-remaining-date"
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className={inputCls + " font-mono"}
+              />
+            </label>
+          )}
+
+          <label className="block">
+            <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-1.5">Catatan (opsional)</div>
+            <input
+              data-testid="pay-remaining-notes"
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className={inputCls}
+              placeholder="Contoh: pelunasan via transfer, ref TRX-xxxx"
+            />
+          </label>
+
+          <div className="text-[11px] text-zinc-500 border-t border-zinc-100 pt-3">
+            Nominal ini akan otomatis tercatat di <b>Jurnal Kas Utama</b> sebagai pemasukan pada akun{" "}
+            <b>{method === "cash" ? "301 Kas Penjualan Tunai" : bank === "mandiri" ? "301-MDR Transfer Mandiri" : "301-BCA Transfer BCA"}</b>.
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-4 border-t border-zinc-200 bg-zinc-50">
+          <button
+            data-testid="pay-remaining-cancel"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-none bg-white border border-zinc-300 text-zinc-900 px-5 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-zinc-50 disabled:opacity-40"
+          >
+            Batal
+          </button>
+          <button
+            data-testid="pay-remaining-submit"
+            onClick={submit}
+            disabled={saving || invalid}
+            className="rounded-none bg-[#008A00] hover:bg-[#006D00] disabled:opacity-40 text-white px-6 py-2.5 text-sm font-bold uppercase tracking-wider inline-flex items-center gap-2"
+          >
+            <Wallet className="w-4 h-4" />
+            {saving ? "Menyimpan…" : (willBeLunas ? "Lunasi Sekarang" : "Simpan Pembayaran")}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -605,6 +832,8 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
   const net_margin = total - total_cost;
   const net_margin_pct = total > 0 ? (net_margin / total) * 100 : 0;
   const change = Math.max(Number(cashPaid || 0) - total, 0);
+  const sisaTagihan = Math.max(total - Number(cashPaid || 0), 0);
+  const isDP = sisaTagihan > 0.01;
   const canSubmit = items.length > 0 && rows.every((r) => {
     if (!r.it.picker_id) return false;
     if (r.it.unit_price <= 0) return false;
@@ -613,7 +842,7 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
     if (r.requires_LW && (r.it.length_m <= 0 || r.it.width_m <= 0)) return false;
     if (r.requires_L_only && r.it.length_m <= 0) return false;
     return r.subtotal > 0 && r.stock_ok;
-  }) && Number(cashPaid || 0) >= total && total > 0;
+  }) && Number(cashPaid || 0) > 0 && total > 0;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -954,16 +1183,34 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
               <div className="border-t border-white/30 pt-2 mt-2">
                 <Row label="Bayar" value={formatIDR(cashPaid)} />
               </div>
-              <div className={`border-t border-white/30 pt-2 mt-2 ${change > 0 ? "text-[#4ade80]" : ""}`}>
-                <Row label="KEMBALI" value={formatIDR(change)} bold big />
-              </div>
+              {isDP ? (
+                <>
+                  <div className="border-t border-white/30 pt-2 mt-2 text-[#fca5a5]" data-testid="sisa-tagihan-summary">
+                    <Row label="SISA TAGIHAN" value={formatIDR(sisaTagihan)} bold big />
+                  </div>
+                  <div className="mt-2 bg-yellow-400 text-yellow-900 px-3 py-1.5 text-center text-[11px] font-bold uppercase tracking-widest" data-testid="dp-badge">
+                    DP · Belum Lunas
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className={`border-t border-white/30 pt-2 mt-2 ${change > 0 ? "text-[#4ade80]" : ""}`}>
+                    <Row label="KEMBALI" value={formatIDR(change)} bold big />
+                  </div>
+                  {Number(cashPaid || 0) > 0 && total > 0 && (
+                    <div className="mt-2 bg-[#008A00] text-white px-3 py-1.5 text-center text-[11px] font-bold uppercase tracking-widest" data-testid="lunas-badge">
+                      LUNAS
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-4 border-t border-zinc-200">
             <button type="button" onClick={onClose} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-5 py-2.5 text-sm font-medium hover:bg-zinc-50">Batal</button>
             <button data-testid="save-sale-button" type="submit" disabled={saving || !canSubmit} className="rounded-none bg-[#002FA7] text-white px-8 py-3 text-sm font-bold uppercase tracking-wider hover:bg-[#002FA7]/90 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2">
-              <Printer className="w-4 h-4" /> {saving ? "Menyimpan…" : (isEdit ? "Simpan Perubahan" : "Bayar & Cetak Struk")}
+              <Printer className="w-4 h-4" /> {saving ? "Menyimpan…" : (isEdit ? "Simpan Perubahan" : (isDP ? "Simpan DP & Cetak" : "Bayar & Cetak Struk"))}
             </button>
           </div>
         </form>

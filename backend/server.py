@@ -5440,9 +5440,12 @@ async def _build_and_persist_sale(
     discount = float(payload.discount or 0)
     total = round(subtotal - discount, 2)
     cash_paid = float(payload.cash_paid or 0)
-    if cash_paid < total:
-        raise HTTPException(status_code=400, detail=f"Uang tunai kurang. Total Rp {total:,.0f}, dibayar Rp {cash_paid:,.0f}")
-    change = round(cash_paid - total, 2)
+    if cash_paid < 0:
+        raise HTTPException(status_code=400, detail="Nominal diterima tidak boleh negatif")
+    # DP support: jika cash_paid < total, sisanya jadi piutang (Sisa Tagihan)
+    sisa_tagihan = round(max(0.0, total - cash_paid), 2)
+    change = round(max(0.0, cash_paid - total), 2)
+    payment_status = "dp" if sisa_tagihan > 0.01 else "paid"
     now = datetime.now(timezone.utc)
     final_sale_no = sale_no or await _next_sale_no()
     final_id = sale_id or str(uuid.uuid4())
@@ -5463,11 +5466,12 @@ async def _build_and_persist_sale(
         "total": total,
         "cash_paid": round(cash_paid, 2),
         "change": change,
+        "sisa_tagihan": sisa_tagihan,
         "payment_method": payload.payment_method or "cash",
         "payment_bank": (payload.payment_bank or "").strip() or None,
         "payment_notes": (payload.payment_notes or "").strip() or None,
         "notes": payload.notes,
-        "status": "paid",
+        "status": payment_status,  # "paid" (LUNAS) atau "dp"
         "created_at": final_created,
     }
     if is_update:
@@ -5477,20 +5481,25 @@ async def _build_and_persist_sale(
     else:
         await db.sales.insert_one(doc)
     # Auto cash tx — akun tergantung metode pembayaran
+    # Auto cash tx — akun tergantung metode pembayaran. Untuk DP, hanya cash_paid yg masuk.
+    cash_recorded = round(min(cash_paid, total), 2)  # exclude kembalian dari kas
     try:
         acc_code, acc_label = _resolve_payment_account(payload.payment_method, payload.payment_bank)
         desc = f"Penjualan {final_sale_no} — {doc['customer_name']} · {acc_label}"
+        if payment_status == "dp":
+            desc += f" · DP (sisa Rp {sisa_tagihan:,.0f})"
         if doc.get("payment_notes"):
             desc += f" ({doc['payment_notes']})"
-        await _insert_cash_transaction(
-            account_code=acc_code,
-            description=desc,
-            amount=total,
-            reference=final_sale_no,
-            date_iso=doc["date"],
-            auto=True,
-            created_by=user.get("email"),
-        )
+        if cash_recorded > 0:
+            await _insert_cash_transaction(
+                account_code=acc_code,
+                description=desc,
+                amount=cash_recorded,
+                reference=final_sale_no,
+                date_iso=doc["date"],
+                auto=True,
+                created_by=user.get("email"),
+            )
     except Exception as ex:
         logger.warning(f"Cashbook auto-insert (sale) failed: {ex}")
     # Apply stock deduction (net dari state saat ini)
@@ -5668,6 +5677,13 @@ async def sales_receipt_html(sale_id: str, user: dict = Depends(require_super_ad
     created = s.get("created_at", "")[:19].replace("T", " ")
     customer_phone_row = f'<div class="line-sm">Telp: {s.get("customer_phone")}</div>' if s.get("customer_phone") else ""
     notes_row = f'<div class="notes">Catatan: {s.get("notes")}</div>' if s.get("notes") else ""
+    sisa = float(s.get("sisa_tagihan") or 0)
+    status = s.get("status") or ("dp" if sisa > 0.01 else "paid")
+    sisa_row = f'<div class="row" style="color:#E81123;font-weight:bold;"><span>SISA TAGIHAN</span><span>{_idr(sisa)}</span></div>' if sisa > 0.01 else ""
+    if status == "dp":
+        status_row = '<div class="row" style="background:#FEF3C7;padding:4px 6px;margin-top:2px;font-weight:bold;color:#92400E;text-align:center;justify-content:center;">DP · Belum Lunas</div>'
+    else:
+        status_row = '<div class="row" style="background:#DCFCE7;padding:4px 6px;margin-top:2px;font-weight:bold;color:#166534;text-align:center;justify-content:center;">LUNAS</div>'
     html = f"""<!DOCTYPE html>
 <html lang="id"><head><meta charset="UTF-8"><title>Nota {s.get('sale_no')}</title>
 <style>
@@ -5742,6 +5758,8 @@ async def sales_receipt_html(sale_id: str, user: dict = Depends(require_super_ad
   <div class="pay">
     <div class="row"><span>Metode</span><span class="strong">{(s.get('payment_method') or 'tunai').upper()}</span></div>
     <div class="row"><span>Bayar</span><span>{_idr(s.get('cash_paid'))}</span></div>
+    {sisa_row}
+    {status_row}
     <div class="row strong"><span>Kembali</span><span>{_idr(s.get('change'))}</span></div>
   </div>
   {notes_row}
@@ -5890,7 +5908,25 @@ async def sales_invoice_pdf(sale_id: str, user: dict = Depends(require_super_adm
         Paragraph(f"<b><font size=12 color='#002FA7'>{_idr(s.get('total'))}</font></b>", right),
     ])
     total_rows.append([Paragraph("Bayar (Tunai)", right), Paragraph(_idr(s.get("cash_paid")), right)])
+    _sisa = float(s.get("sisa_tagihan") or 0)
+    _status = s.get("status") or ("dp" if _sisa > 0.01 else "paid")
+    if _sisa > 0.01:
+        total_rows.append([
+            Paragraph("<b><font color='#E81123'>SISA TAGIHAN</font></b>", right),
+            Paragraph(f"<b><font color='#E81123'>{_idr(_sisa)}</font></b>", right),
+        ])
     total_rows.append([Paragraph("Kembali", right), Paragraph(_idr(s.get("change")), right)])
+    # Status badge
+    if _status == "dp":
+        total_rows.append([
+            Paragraph("", right),
+            Paragraph("<b><font color='#92400E' backcolor='#FEF3C7'>&nbsp;&nbsp;DP · BELUM LUNAS&nbsp;&nbsp;</font></b>", right),
+        ])
+    else:
+        total_rows.append([
+            Paragraph("", right),
+            Paragraph("<b><font color='#166534' backcolor='#DCFCE7'>&nbsp;&nbsp;LUNAS&nbsp;&nbsp;</font></b>", right),
+        ])
     total_tbl = Table(total_rows, colWidths=[100 * mm, 55 * mm], hAlign="RIGHT")
     total_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -6408,6 +6444,99 @@ async def sales_update_saldo_masuk(sale_id: str, payload: SaldoMasukIn, user: di
     return {"ok": True, "sale_id": sale_id, "saldo_masuk": val}
 
 
+class PayRemainingIn(BaseModel):
+    amount: float
+    payment_method: str = "cash"  # cash | transfer | shopee_plaza | shopee_kastem
+    payment_bank: Optional[str] = None  # bca | mandiri (jika transfer)
+    date: Optional[str] = None  # YYYY-MM-DD (opsional, default hari ini)
+    notes: Optional[str] = None
+
+
+@api_router.post("/sales/{sale_id}/pay-remaining")
+async def sales_pay_remaining(sale_id: str, payload: PayRemainingIn, user: dict = Depends(require_super_admin)):
+    """Pelunasan sisa tagihan (DP → LUNAS). Otomatis catat ke Jurnal Kas."""
+    existing = await db.sales.find_one({"id": sale_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    current_sisa = round(float(existing.get("sisa_tagihan") or 0), 2)
+    current_status = existing.get("status") or ("dp" if current_sisa > 0.01 else "paid")
+    if current_status != "dp" or current_sisa <= 0.01:
+        raise HTTPException(status_code=400, detail="Transaksi ini sudah LUNAS")
+    amount = round(float(payload.amount or 0), 2)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Nominal pembayaran harus > 0")
+    # Toleransi kecil - allow overpay up to 1 rupiah untuk rounding
+    if amount > current_sisa + 0.01:
+        raise HTTPException(status_code=400, detail=f"Nominal melebihi sisa tagihan (Rp {current_sisa:,.0f})")
+    pay_date = (payload.date or datetime.now(timezone.utc).date().isoformat())[:10]
+    try:
+        datetime.strptime(pay_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Format tanggal harus YYYY-MM-DD")
+
+    new_sisa = round(max(0.0, current_sisa - amount), 2)
+    new_status = "paid" if new_sisa <= 0.01 else "dp"
+    new_cash_paid = round(float(existing.get("cash_paid") or 0) + amount, 2)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Log entry
+    payment_entry = {
+        "id": str(uuid.uuid4()),
+        "amount": amount,
+        "payment_method": payload.payment_method or "cash",
+        "payment_bank": (payload.payment_bank or "").strip() or None,
+        "date": pay_date,
+        "notes": (payload.notes or "").strip() or None,
+        "created_at": now_iso,
+        "created_by": user.get("email"),
+    }
+
+    await db.sales.update_one(
+        {"id": sale_id},
+        {
+            "$set": {
+                "sisa_tagihan": new_sisa,
+                "status": new_status,
+                "cash_paid": new_cash_paid,
+                "last_payment_at": now_iso,
+                "last_payment_by": user.get("email"),
+            },
+            "$push": {"payments": payment_entry},
+        },
+    )
+
+    # Auto insert Jurnal Kas
+    try:
+        acc_code, acc_label = _resolve_payment_account(payload.payment_method, payload.payment_bank)
+        desc = f"Pelunasan {existing.get('sale_no')} — {existing.get('customer_name')} · {acc_label}"
+        if new_status == "paid":
+            desc += " · LUNAS"
+        else:
+            desc += f" · sisa Rp {new_sisa:,.0f}"
+        if payment_entry["notes"]:
+            desc += f" ({payment_entry['notes']})"
+        await _insert_cash_transaction(
+            account_code=acc_code,
+            description=desc,
+            amount=amount,
+            reference=existing.get("sale_no"),
+            date_iso=pay_date,
+            auto=True,
+            created_by=user.get("email"),
+        )
+    except Exception as ex:
+        logger.warning(f"Cashbook auto-insert (pay-remaining) failed: {ex}")
+
+    return {
+        "ok": True,
+        "sale_id": sale_id,
+        "amount_paid": amount,
+        "sisa_tagihan": new_sisa,
+        "status": new_status,
+        "cash_paid_total": new_cash_paid,
+    }
+
+
 
 @api_router.get("/sales/report/analytics")
 async def sales_analytics(
@@ -6458,6 +6587,12 @@ async def sales_analytics(
         s_discount = float(s.get("discount") or 0)
         s_subtotal = float(s.get("subtotal") or 0)
         s_branch = _sanitize_branch(s.get("branch"))  # "plaza" | "kastem" | None
+        # DP: cash_paid = jumlah aktual diterima; sisa_tagihan = piutang
+        s_cash_paid = float(s.get("cash_paid") or 0)
+        s_sisa = float(s.get("sisa_tagihan") if s.get("sisa_tagihan") is not None else max(0, s_total_after_disc - s_cash_paid))
+        # kolom pembayaran hanya menampilkan nominal aktual (tidak termasuk piutang)
+        s_paid_amount = min(s_cash_paid, s_total_after_disc)
+        s_status = s.get("status") or ("dp" if s_sisa > 0.01 else "paid")
         # Payment column key (Cash/BCA/Mandiri + Plaza/Kastem) — derived from method+bank+branch
         pay_col = _resolve_report_payment_col(s_method, s_bank, s_branch)
         # Alamat: prefer customer master lookup by name (case-insensitive)
@@ -6487,14 +6622,17 @@ async def sales_analytics(
                 "sale_total": s_total_after_disc,
                 "sale_subtotal": s_subtotal,
                 "sale_discount": s_discount,
+                "sale_cash_paid": s_cash_paid,
+                "sale_sisa_tagihan": s_sisa,
+                "sale_status": s_status,  # "paid" (LUNAS) atau "dp"
                 "keterangan": s_pnotes or s_notes or "",
                 "branch": s_branch,
                 "payment_method": s_method,
                 "payment_bank": s_bank,
                 "payment_notes": s_pnotes,
                 "payment_column": pay_col,  # e.g., "cash_plaza" / "bca_kastem" / None
-                # Payment nominal appears on FIRST row of a sale only, blank on subsequent rows
-                "payment_nominal_on_row": s_total_after_disc if first_item else 0,
+                # Payment nominal appears on FIRST row of a sale only. Sekarang = cash_paid (aktual diterima), bukan total.
+                "payment_nominal_on_row": s_paid_amount if first_item else 0,
                 "payment_date_on_row": s_date if first_item else "",
                 "is_first_item_of_sale": first_item,
             })
