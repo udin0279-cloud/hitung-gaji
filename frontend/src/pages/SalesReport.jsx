@@ -136,6 +136,8 @@ export default function SalesReport() {
     { key: "bca_kastem", label: "BCA Kastem" },
     { key: "mandiri_plaza", label: "Mandiri Plaza" },
     { key: "mandiri_kastem", label: "Mandiri Kastem" },
+    { key: "shopee_plaza", label: "Shopee Plaza" },
+    { key: "shopee_kastem", label: "Shopee Kastem" },
   ];
   const payTotals = Object.fromEntries(PAY_COLS.map((c) => [c.key, 0]));
   rows.forEach((r) => {
@@ -317,7 +319,7 @@ export default function SalesReport() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table data-testid="report-table" className="text-left text-sm" style={{ minWidth: 2200 }}>
+          <table data-testid="report-table" className="text-left text-sm" style={{ minWidth: 2700 }}>
             <thead>
               <tr className="bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-wider">
                 <th rowSpan={2} className="px-2 py-2 text-center border-r border-zinc-700 whitespace-nowrap w-10">No</th>
@@ -338,7 +340,9 @@ export default function SalesReport() {
                 <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#002FA7]/80">BCA Plaza</th>
                 <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#002FA7]/60">BCA Kastem</th>
                 <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#E81123]/80">Mandiri Plaza</th>
-                <th colSpan={2} className="px-2 py-1 text-center border-b border-zinc-700 bg-[#E81123]/60">Mandiri Kastem</th>
+                <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#E81123]/60">Mandiri Kastem</th>
+                <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#F97316]">Shopee Plaza</th>
+                <th colSpan={2} className="px-2 py-1 text-center border-b border-zinc-700 bg-[#FDBA74] text-zinc-900">Shopee Kastem</th>
               </tr>
               <tr className="bg-zinc-900 text-white text-[9px] font-bold uppercase tracking-wider">
                 {PAY_COLS.map((c, i) => (
@@ -350,9 +354,9 @@ export default function SalesReport() {
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={24} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+              {loading && <tr><td colSpan={28} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={24} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi pada periode ini.</td></tr>
+                <tr><td colSpan={28} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi pada periode ini.</td></tr>
               )}
               {pagedRows.map((r, i) => {
                 const idx = pageStart + i;

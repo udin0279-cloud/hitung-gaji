@@ -846,3 +846,25 @@ Backend E2E curl PASS: create Shopee sale → PATCH saldo_masuk → verify calcu
 - ALLSUNDAY SLAYER 6×34,500 = 207,000 · Saldo 179,875 · Potongan 27,125 · **13.1%** ✓
 - NAJIB09 BANNER 1×24,300 = 24,300 · Saldo 18,392 · Potongan 5,908 · **24.31%** ✓
 Frontend DOM verified: table-plaza, table-kastem, nav-shopee-rincian all rendered.
+
+---
+
+## Update: 2026-07-21 — Kolom Shopee Plaza & Kastem di Laporan Penjualan + Fallback Plaza
+
+### Feature
+Menambah 2 grup kolom pembayaran ke Laporan Penjualan Excel-style:
+- **Shopee Plaza** (orange 500 header) — auto dari `payment_method=shopee_plaza`
+- **Shopee Kastem** (orange 300 header) — auto dari `payment_method=shopee_kastem`
+
+Kini total 8 grup pembayaran × 2 sub-column (Nominal + Tanggal) = **16 pay cells** + 12 main = 28 kolom total.
+
+**Fallback data lama (Cash/BCA/Mandiri tanpa `sale.branch`):** default ke **Plaza** — sebelumnya empty untuk transaksi pre-fitur cabang. Sekarang selalu ada nominal.
+
+**Footer TOTAL row** auto-sum untuk semua 8 kolom pay-total (existing).
+
+### Files Changed
+- `backend/server.py`: `_resolve_report_payment_col()` handle shopee_plaza/kastem + default branch=plaza. `PAY_COLS` di Excel export ditambah 2 entry Shopee + `pay_fills` warna.
+- `frontend/src/pages/SalesReport.jsx`: `PAY_COLS` + 2 header groups + colSpan empty state 24→28 + `minWidth: 2700`.
+
+### Testing
+Backend curl PASS: seed 3 sales (shopee_plaza, shopee_kastem, cash) → semua mapped ke payment_column yang benar (fallback cash→cash_plaza). Frontend DOM verified: `pay-total-shopee_plaza`, `pay-total-shopee_kastem` present.

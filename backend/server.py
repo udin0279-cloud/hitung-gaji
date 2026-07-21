@@ -6119,6 +6119,8 @@ async def sales_report_excel(
         ("bca_kastem", "BCA Kastem"),
         ("mandiri_plaza", "Mandiri Plaza"),
         ("mandiri_kastem", "Mandiri Kastem"),
+        ("shopee_plaza", "Shopee Plaza"),
+        ("shopee_kastem", "Shopee Kastem"),
     ]
 
     # Flatten rows (mirror analytics endpoint)
@@ -6210,6 +6212,8 @@ async def sales_report_excel(
             "bca_kastem": "4A6FE0",
             "mandiri_plaza": "E81123",
             "mandiri_kastem": "FF6B6B",
+            "shopee_plaza": "F97316",  # orange 500
+            "shopee_kastem": "FDBA74", # orange 300
         }
         # Row 4 main headers span both header rows 4-5 (merged)
         for i, h in enumerate(MAIN_HEADERS, start=1):
@@ -6536,12 +6540,23 @@ async def sales_analytics(
 
 def _resolve_report_payment_col(payment_method: str, payment_bank: Optional[str], branch: Optional[str]) -> Optional[str]:
     """Map (payment_method, payment_bank, branch) -> report column key.
-    Returns one of: cash_plaza, cash_kastem, bca_plaza, bca_kastem, mandiri_plaza, mandiri_kastem, or None.
+    Returns one of:
+      cash_plaza, cash_kastem, bca_plaza, bca_kastem, mandiri_plaza, mandiri_kastem,
+      shopee_plaza, shopee_kastem, or None.
+    - Shopee: branch di-ambil dari payment_method (shopee_plaza / shopee_kastem).
+    - Kolom lain (Cash/BCA/Mandiri): butuh sale.branch. Jika sale.branch kosong
+      (transaksi lama pre-fitur cabang), default ke "plaza" agar nominal tetap muncul.
     """
-    b = (branch or "").lower() if branch else None
-    if b not in ("plaza", "kastem"):
-        return None
     pm = (payment_method or "").lower()
+    # Shopee columns — plaza/kastem sudah baked in payment_method
+    if pm == "shopee_plaza":
+        return "shopee_plaza"
+    if pm == "shopee_kastem":
+        return "shopee_kastem"
+    # Kolom lain: default branch = plaza (fallback untuk data lama)
+    b = (branch or "plaza").lower()
+    if b not in ("plaza", "kastem"):
+        b = "plaza"
     bank = (payment_bank or "").lower()
     if pm in ("cash", "tunai"):
         return f"cash_{b}"
@@ -6551,7 +6566,7 @@ def _resolve_report_payment_col(payment_method: str, payment_bank: Optional[str]
         if bank in ("mandiri", "mdr"):
             return f"mandiri_{b}"
         return None
-    return None  # shopee & others not part of 6-column set
+    return None
 
 
 @api_router.get("/sales/stats/today")
