@@ -5,9 +5,10 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from "recharts";
-import { Search, TrendingUp, Package, Calendar, Award, Users, ChevronLeft, ChevronRight, FileSpreadsheet } from "lucide-react";
+import { Search, TrendingUp, Package, Calendar, Award, Users, ChevronLeft, ChevronRight, FileSpreadsheet, Eye, EyeOff } from "lucide-react";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 500];
+const HIDDEN_PAY_STORAGE_KEY = "salesReport.hiddenPayCols";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -32,6 +33,18 @@ export default function SalesReport() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [exporting, setExporting] = useState(false);
+  const [hiddenPayCols, setHiddenPayCols] = useState(() => {
+    try {
+      const raw = localStorage.getItem(HIDDEN_PAY_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(HIDDEN_PAY_STORAGE_KEY, JSON.stringify(hiddenPayCols)); } catch { /* noop */ }
+  }, [hiddenPayCols]);
+  const togglePayCol = (key) => {
+    setHiddenPayCols((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  };
 
   // Reset ke halaman 1 saat filter atau search berubah
   useEffect(() => { setPage(1); }, [searchRow, dateFrom, dateTo, customer, pageSize]);
@@ -130,15 +143,17 @@ export default function SalesReport() {
 
   // Payment column totals — sum by payment_column key (already normalized by backend)
   const PAY_COLS = [
-    { key: "cash_plaza", label: "Cash Plaza" },
-    { key: "cash_kastem", label: "Cash Kastem" },
-    { key: "bca_plaza", label: "BCA Plaza" },
-    { key: "bca_kastem", label: "BCA Kastem" },
-    { key: "mandiri_plaza", label: "Mandiri Plaza" },
-    { key: "mandiri_kastem", label: "Mandiri Kastem" },
-    { key: "shopee_plaza", label: "Shopee Plaza" },
-    { key: "shopee_kastem", label: "Shopee Kastem" },
+    { key: "cash_plaza", label: "Cash Plaza", color: "bg-[#008A00]/80" },
+    { key: "cash_kastem", label: "Cash Kastem", color: "bg-[#008A00]/60" },
+    { key: "bca_plaza", label: "BCA Plaza", color: "bg-[#002FA7]/80" },
+    { key: "bca_kastem", label: "BCA Kastem", color: "bg-[#002FA7]/60" },
+    { key: "mandiri_plaza", label: "Mandiri Plaza", color: "bg-[#E81123]/80" },
+    { key: "mandiri_kastem", label: "Mandiri Kastem", color: "bg-[#E81123]/60" },
+    { key: "shopee_plaza", label: "Shopee Plaza", color: "bg-[#F97316]" },
+    { key: "shopee_kastem", label: "Shopee Kastem", color: "bg-[#FDBA74] text-zinc-900" },
   ];
+  const visiblePayCols = PAY_COLS.filter((c) => !hiddenPayCols.includes(c.key));
+  const totalColSpan = 12 + visiblePayCols.length * 2;
   const payTotals = Object.fromEntries(PAY_COLS.map((c) => [c.key, 0]));
   rows.forEach((r) => {
     if (r.is_first_item_of_sale && r.payment_column && payTotals[r.payment_column] !== undefined) {
@@ -318,8 +333,53 @@ export default function SalesReport() {
             <div className="text-xs font-mono text-zinc-500">{rows.length} item · Total <b className="text-[#002FA7]">{formatIDR(totalRowsAmount)}</b></div>
           </div>
         </div>
+        {/* Toolbar: Sembunyikan Kolom Pembayaran */}
+        <div className="px-4 py-2.5 border-b border-zinc-200 bg-zinc-50/70 flex flex-wrap items-center gap-2">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mr-1">Kolom Pembayaran:</div>
+          {PAY_COLS.map((c) => {
+            const hidden = hiddenPayCols.includes(c.key);
+            return (
+              <button
+                key={c.key}
+                type="button"
+                data-testid={`toggle-pay-${c.key}`}
+                onClick={() => togglePayCol(c.key)}
+                title={hidden ? "Klik untuk tampilkan" : "Klik untuk sembunyikan"}
+                className={`inline-flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold uppercase tracking-wider border transition-colors ${
+                  hidden
+                    ? "border-zinc-200 bg-white text-zinc-400 hover:bg-zinc-100"
+                    : `border-transparent ${c.color} text-white`
+                }`}
+              >
+                {hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                {c.label}
+              </button>
+            );
+          })}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="pay-cols-show-all"
+              onClick={() => setHiddenPayCols([])}
+              disabled={hiddenPayCols.length === 0}
+              className="text-[10px] font-mono text-[#002FA7] hover:underline disabled:text-zinc-300 disabled:cursor-not-allowed"
+            >
+              Tampilkan Semua
+            </button>
+            <span className="text-zinc-300 text-xs">·</span>
+            <button
+              type="button"
+              data-testid="pay-cols-hide-all"
+              onClick={() => setHiddenPayCols(PAY_COLS.map((c) => c.key))}
+              disabled={hiddenPayCols.length === PAY_COLS.length}
+              className="text-[10px] font-mono text-zinc-600 hover:underline disabled:text-zinc-300 disabled:cursor-not-allowed"
+            >
+              Sembunyikan Semua
+            </button>
+          </div>
+        </div>
         <div className="overflow-x-auto">
-          <table data-testid="report-table" className="text-left text-sm" style={{ minWidth: 2700 }}>
+          <table data-testid="report-table" className="text-left text-sm" style={{ minWidth: Math.max(1200, 12 * 90 + visiblePayCols.length * 2 * 80) }}>
             <thead>
               <tr className="bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-wider">
                 <th rowSpan={2} className="px-2 py-2 text-center border-r border-zinc-700 whitespace-nowrap w-10">No</th>
@@ -334,29 +394,24 @@ export default function SalesReport() {
                 <th rowSpan={2} className="px-2 py-2 text-right border-r border-zinc-700 whitespace-nowrap">Jumlah</th>
                 <th rowSpan={2} className="px-2 py-2 text-right border-r border-zinc-700 whitespace-nowrap bg-[#002FA7]">Total</th>
                 <th rowSpan={2} className="px-2 py-2 border-r border-zinc-700 min-w-[120px]">Keterangan</th>
-                {/* Payment column groups */}
-                <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#008A00]/80">Cash Plaza</th>
-                <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#008A00]/60">Cash Kastem</th>
-                <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#002FA7]/80">BCA Plaza</th>
-                <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#002FA7]/60">BCA Kastem</th>
-                <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#E81123]/80">Mandiri Plaza</th>
-                <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#E81123]/60">Mandiri Kastem</th>
-                <th colSpan={2} className="px-2 py-1 text-center border-r border-b border-zinc-700 bg-[#F97316]">Shopee Plaza</th>
-                <th colSpan={2} className="px-2 py-1 text-center border-b border-zinc-700 bg-[#FDBA74] text-zinc-900">Shopee Kastem</th>
+                {/* Payment column groups — dynamic based on visiblePayCols */}
+                {visiblePayCols.map((c) => (
+                  <th key={c.key + "-grp"} colSpan={2} className={`px-2 py-1 text-center border-r border-b border-zinc-700 ${c.color}`}>{c.label}</th>
+                ))}
               </tr>
               <tr className="bg-zinc-900 text-white text-[9px] font-bold uppercase tracking-wider">
-                {PAY_COLS.map((c, i) => (
+                {visiblePayCols.map((c, i) => (
                   <Fragment key={c.key + "-h"}>
                     <th className="px-2 py-1 text-right border-r border-zinc-700 whitespace-nowrap bg-zinc-800/60">Nominal</th>
-                    <th className={`px-2 py-1 text-center whitespace-nowrap bg-zinc-800/60 ${i < PAY_COLS.length - 1 ? "border-r border-zinc-700" : ""}`}>Tanggal</th>
+                    <th className={`px-2 py-1 text-center whitespace-nowrap bg-zinc-800/60 ${i < visiblePayCols.length - 1 ? "border-r border-zinc-700" : ""}`}>Tanggal</th>
                   </Fragment>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={28} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+              {loading && <tr><td colSpan={totalColSpan} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={28} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi pada periode ini.</td></tr>
+                <tr><td colSpan={totalColSpan} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi pada periode ini.</td></tr>
               )}
               {pagedRows.map((r, i) => {
                 const idx = pageStart + i;
@@ -394,14 +449,14 @@ export default function SalesReport() {
                     <td className="px-2 py-2 text-xs text-zinc-600 border-r border-zinc-100">
                       {r.keterangan ? <span title={r.keterangan}>{r.keterangan.slice(0, 40)}{r.keterangan.length > 40 ? "…" : ""}</span> : <span className="text-zinc-300">—</span>}
                     </td>
-                    {PAY_COLS.map((c, i) => {
+                    {visiblePayCols.map((c, i) => {
                       const matches = isFirst && rowPayCol === c.key;
                       return (
                         <Fragment key={c.key + "-" + idx}>
                           <td className="px-2 py-2 text-right font-mono text-xs border-r border-zinc-100">
                             {matches ? <span className="font-bold text-zinc-900">{formatIDR(rowPayNominal)}</span> : <span className="text-zinc-200">—</span>}
                           </td>
-                          <td className={`px-2 py-2 text-center font-mono text-[10px] ${i < PAY_COLS.length - 1 ? "border-r border-zinc-100" : ""}`}>
+                          <td className={`px-2 py-2 text-center font-mono text-[10px] ${i < visiblePayCols.length - 1 ? "border-r border-zinc-100" : ""}`}>
                             {matches ? rowPayDate : <span className="text-zinc-200">—</span>}
                           </td>
                         </Fragment>
@@ -426,12 +481,12 @@ export default function SalesReport() {
                   <td className="px-2 py-3 text-right font-mono font-bold text-zinc-700 border-r border-zinc-200">{formatIDR(totalRowsItemsSubtotal)}</td>
                   <td className="px-2 py-3 text-right font-mono font-bold text-lg text-[#002FA7] border-r border-zinc-200">{formatIDR(totalRowsAmount)}</td>
                   <td className="px-2 py-3 border-r border-zinc-200"></td>
-                  {PAY_COLS.map((c, i) => (
+                  {visiblePayCols.map((c, i) => (
                     <Fragment key={c.key + "-foot"}>
                       <td data-testid={`pay-total-${c.key}`} className="px-2 py-3 text-right font-mono font-bold text-xs text-zinc-900 border-r border-zinc-200">
                         {payTotals[c.key] > 0 ? formatIDR(payTotals[c.key]) : "—"}
                       </td>
-                      <td className={`px-2 py-3 ${i < PAY_COLS.length - 1 ? "border-r border-zinc-200" : ""}`}></td>
+                      <td className={`px-2 py-3 ${i < visiblePayCols.length - 1 ? "border-r border-zinc-200" : ""}`}></td>
                     </Fragment>
                   ))}
                 </tr>

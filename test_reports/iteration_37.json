@@ -1,0 +1,43 @@
+{
+  "summary": "Frontend-only E2E test of Sales Report 'Sembunyikan Kolom Pembayaran' feature. All 7 requested scenarios PASS via Playwright against live preview URL. Verified: (1) 8 chip toggles + 2 action buttons (Tampilkan/Sembunyikan Semua) + label 'Kolom Pembayaran:' render in toolbar above table with correct data-testids. (2) Toggle cash_plaza hides pay-total-cash_plaza cell + 'Cash Plaza' <th> header (colSpan=2) from DOM, button title flips to 'Klik untuk tampilkan' (icon Eye→EyeOff), localStorage 'salesReport.hiddenPayCols' becomes '[\"cash_plaza\"]'. (3) Re-toggle restores column, LS='[]', title 'Klik untuk sembunyikan'. (4) pay-cols-hide-all removes all 8 pay-total-* cells from DOM, table style.minWidth shrinks 2360px→1200px, LS contains all 8 keys. (5) pay-cols-show-all restores all 8, LS='[]', button becomes disabled. (6) After hiding shopee_plaza + shopee_kastem then page.reload(), both stay hidden; LS still contains those 2 keys; other 6 remain visible — persistence works. (7) Regression: page-size-select switches to 50, report-row-search filters correctly ('ZZZ_NONEXISTENT'→0 rows, empty→1 row), export button state OK, footer dynamically renders pay-total-* only for visible cols (2 hidden → 6 present).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Laporan Penjualan charts", "issues": ["Recharts warnings 'width(-1) and height(-1) of chart should be greater than 0' fire briefly during initial render before ResponsiveContainer measures — cosmetic dev-mode warning, not related to this feature."]}
+    ]
+  },
+  "verified_scenarios": [
+    "PASS - Toolbar renders label 'Kolom Pembayaran:' + 8 toggle buttons (toggle-pay-cash_plaza..shopee_kastem) + pay-cols-show-all + pay-cols-hide-all",
+    "PASS - Initial state: all 8 pay-total-{key} footer cells present; LS 'salesReport.hiddenPayCols' is '[]'",
+    "PASS - Click toggle-pay-cash_plaza: pay-total-cash_plaza removed from DOM, header <th> 'Cash Plaza' count drops to 0, button title flips to 'Klik untuk tampilkan' (icon Eye→EyeOff), chip becomes outline/white style, LS='[\"cash_plaza\"]'",
+    "PASS - Re-click same toggle: column & header restored, title back to 'Klik untuk sembunyikan', LS='[]'",
+    "PASS - Click pay-cols-hide-all: all 8 pay-total-* cells removed, table style.minWidth shrinks 2360px→1200px, LS contains all 8 keys",
+    "PASS - Click pay-cols-show-all: all 8 cells restored, LS='[]', show-all button gets disabled attribute (correctly, since nothing to show)",
+    "PASS - Hide shopee_plaza + shopee_kastem → page.reload() → both remain hidden after reload, LS persists correctly, other 6 cols remain visible",
+    "PASS - Regression page-size-select: switches from default 20 → 50 successfully",
+    "PASS - Regression report-row-search: 'ZZZ_NONEXISTENT' filters to 0 rows, cleared → restores rows",
+    "PASS - Regression export-excel button remains present/enabled",
+    "PASS - Regression footer: after hiding cash_plaza + bca_kastem, only 6 pay-total-* cells in DOM (dynamically filtered), and remaining visible cols still show correct totals (e.g., cash_plaza sum Rp 1.000.000 when visible)"
+  ],
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Implementation in /app/frontend/src/pages/SalesReport.jsx is clean: single visiblePayCols = PAY_COLS.filter(...) drives header (line 398-400), sub-header (403-408), body cells (452-464), and footer (484-491) — no drift.",
+    "totalColSpan (line 156) is recomputed from visiblePayCols.length — correctly used in loading/empty state colspan.",
+    "type='button' correctly applied to all toggle buttons (avoids form-submit inside potential enclosing forms).",
+    "localStorage persistence uses try/catch around getItem/setItem — safe against Safari private-mode failures.",
+    "Table style.minWidth math uses Math.max(1200, ...) so it never goes below 1200 even with all hidden (verified 2360→1200).",
+    "MINOR SUGGESTION (not blocking): the disabled attribute for pay-cols-hide-all when all 8 already hidden is present in code (line 374) but was not exercised — main agent may want to verify manually or add test. Also 'Sembunyikan Semua' button color contrast (zinc-600 on zinc-50) is subtle but acceptable per Excel-style aesthetic.",
+    "No a11y label on the color-only chip states — hidden state uses outline+EyeOff icon which is fine, but a screen-reader-only text (aria-pressed) would improve accessibility."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% (11/11 scenarios)"},
+  "test_credentials": "admin@payroll.id / admin123 (super_admin)",
+  "seed_data_creation": "None. Used existing seeded data (1 sale visible in period). No mutations performed. localStorage cleaned up at end.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Toggle-Hide-Column feature on /laporan-penjualan is fully working. Key testids: toggle-pay-{cash_plaza,cash_kastem,bca_plaza,bca_kastem,mandiri_plaza,mandiri_kastem,shopee_plaza,shopee_kastem}, pay-cols-show-all, pay-cols-hide-all, pay-total-{key} (footer cells, dynamically rendered). Persistence via localStorage key 'salesReport.hiddenPayCols' (JSON array). Table style.minWidth recomputes from Math.max(1200, 12*90 + visiblePayCols.length*2*80). Icon toggles between Eye (visible) and EyeOff (hidden); chip color background applied only when visible. All regression endpoints (search, page-size, export) unaffected.",
+  "rca_of_the_issue": "N/A — feature works end-to-end as specified. No bugs found."
+}
