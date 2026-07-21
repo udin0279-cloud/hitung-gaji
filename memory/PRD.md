@@ -868,3 +868,31 @@ Kini total 8 grup pembayaran × 2 sub-column (Nominal + Tanggal) = **16 pay cell
 
 ### Testing
 Backend curl PASS: seed 3 sales (shopee_plaza, shopee_kastem, cash) → semua mapped ke payment_column yang benar (fallback cash→cash_plaza). Frontend DOM verified: `pay-total-shopee_plaza`, `pay-total-shopee_kastem` present.
+
+---
+
+## Update: 2026-07-21 — Toggle Sembunyikan Kolom Pembayaran per Grup
+
+### Feature
+Toolbar di atas tabel Laporan Penjualan dengan 8 chip toggle (1 per grup pembayaran) + 2 tombol aksi:
+- **8 chip toggle** (`toggle-pay-{cash_plaza|cash_kastem|bca_plaza|bca_kastem|mandiri_plaza|mandiri_kastem|shopee_plaza|shopee_kastem}`): klik untuk hide/show. Visible = colored chip + icon Eye. Hidden = outline putih + icon EyeOff.
+- **Tampilkan Semua** (`pay-cols-show-all`) — unhide semua sekaligus (disabled jika sudah semua visible)
+- **Sembunyikan Semua** (`pay-cols-hide-all`) — hide semua sekaligus (disabled jika sudah semua hidden)
+
+Kolom yang di-hide otomatis hilang dari: header row, sub-header row (Nominal/Tanggal), body row cells, footer TOTAL row. `totalColSpan` untuk loading/empty state juga otomatis menyesuaikan.
+
+**Persistence**: state disimpan di `localStorage['salesReport.hiddenPayCols']` (JSON array) — pilihan user tetap ada setelah reload/kembali dari halaman lain.
+
+**Table minWidth**: dihitung ulang otomatis `Math.max(1200, 12*90 + visiblePayCols.length*2*80)` — kalau semua hidden, minWidth tetap min 1200 (agar main columns rapi).
+
+### Files Changed
+- `frontend/src/pages/SalesReport.jsx`:
+  - `HIDDEN_PAY_STORAGE_KEY` const
+  - state `hiddenPayCols` + useEffect persist + `togglePayCol` handler
+  - `PAY_COLS` diberi prop `color`
+  - `visiblePayCols = PAY_COLS.filter(!hidden)` drive semua render (header, sub-header, body cells, footer)
+  - Toolbar UI (toggle chips + show-all/hide-all buttons)
+  - Semua button pakai `type="button"` (prevent form-submit fallback)
+
+### Testing
+Iteration 37 (frontend): **11/11 skenario PASS** — toggle render, hide/show, persistence localStorage lintas reload, regression search/paging/export tidak terpengaruh.
