@@ -789,3 +789,19 @@ Iteration 36: **backend 6/6 pytest PASS + frontend 19/19 E2E PASS** — semua sk
 
 ### Files Changed
 - `frontend/src/pages/SalesReport.jsx`: `PAGE_SIZE=20` constant, state `page`, `pagedRows` computed slice, pagination bar dengan `data-testid: report-pagination, pagination-first, pagination-prev, pagination-page-N, pagination-next, pagination-last`.
+
+---
+
+## Update: 2026-07-21 — Dropdown Page Size + Export Excel di Laporan Penjualan
+
+### Feature
+- **Dropdown "Per Halaman"** (`data-testid=page-size-select`) di bilah pagination: pilihan 20 / 50 / 100 / 500 baris. Otomatis reset ke halaman 1 saat diubah.
+- **Tombol "Export Excel"** hijau (`data-testid=report-export-excel`) di header tabel: download file `.xlsx` yang formatnya PERSIS dengan UI (2-row header, 12 kolom utama + 6 grup pembayaran × Nominal+Tanggal, footer TOTAL dengan SUM formulas per kolom nominal, freeze pane, currency formatting).
+- Filter periode / customer masih dihormati saat export.
+
+### Files Changed
+- `frontend/src/pages/SalesReport.jsx`: state `pageSize`, `exporting`; UI dropdown + tombol export.
+- `backend/server.py`: `GET /api/sales/report/excel` di-rewrite total untuk memakai openpyxl grouped headers, merged cells, colored payment column groups, SUM formulas di footer, freeze_panes.
+
+### Testing
+Curl E2E: HTTP 200, size 6KB, sheet berisi header perusahaan, 24 kolom (12 main + 12 pay sub-headers), data row di baris 6, TOTAL row dengan formula `=SUM(...)` per kolom aggregable. Frontend DOM verified: report-export-excel & page-size-select present.

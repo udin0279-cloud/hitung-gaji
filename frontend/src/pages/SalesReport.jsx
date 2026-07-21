@@ -5,9 +5,9 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from "recharts";
-import { Search, TrendingUp, Package, Calendar, Award, Users, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, TrendingUp, Package, Calendar, Award, Users, ChevronLeft, ChevronRight, FileSpreadsheet } from "lucide-react";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 500];
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -30,9 +30,11 @@ export default function SalesReport() {
   const [loading, setLoading] = useState(true);
   const [searchRow, setSearchRow] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [exporting, setExporting] = useState(false);
 
   // Reset ke halaman 1 saat filter atau search berubah
-  useEffect(() => { setPage(1); }, [searchRow, dateFrom, dateTo, customer]);
+  useEffect(() => { setPage(1); }, [searchRow, dateFrom, dateTo, customer, pageSize]);
 
   const load = async () => {
     setLoading(true);
@@ -63,12 +65,40 @@ export default function SalesReport() {
     );
   }, [data.rows, searchRow]);
 
-  // Pagination (client-side) — max 20 baris per halaman
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  // Pagination (client-side) — max N baris per halaman
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const safePage = Math.min(Math.max(1, page), totalPages);
-  const pageStart = (safePage - 1) * PAGE_SIZE;
-  const pageEnd = Math.min(rows.length, pageStart + PAGE_SIZE);
+  const pageStart = (safePage - 1) * pageSize;
+  const pageEnd = Math.min(rows.length, pageStart + pageSize);
   const pagedRows = rows.slice(pageStart, pageEnd);
+
+  const exportExcel = async () => {
+    setExporting(true);
+    try {
+      const res = await api.get("/sales/report/excel", {
+        params: {
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+          customer: customer.trim() || undefined,
+        },
+        responseType: "blob",
+      });
+      const blob = new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Laporan_Penjualan_${dateFrom || "all"}_${dateTo || "all"}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Excel berhasil diunduh");
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal export Excel");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const barData = (data.top_products || []).slice(0, 8).map((p) => ({
     name: p.name.length > 18 ? p.name.slice(0, 17) + "…" : p.name,
@@ -264,7 +294,7 @@ export default function SalesReport() {
             <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Detail per Item</div>
             <div className="font-bold text-zinc-900">Daftar Transaksi</div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
               <input
@@ -274,6 +304,15 @@ export default function SalesReport() {
                 className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
               />
             </div>
+            <button
+              data-testid="report-export-excel"
+              onClick={exportExcel}
+              disabled={exporting || rows.length === 0}
+              className="inline-flex items-center gap-1.5 border border-[#008A00] bg-[#008A00] text-white px-3 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#006D00] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              {exporting ? "Memproses…" : "Export Excel"}
+            </button>
             <div className="text-xs font-mono text-zinc-500">{rows.length} item · Total <b className="text-[#002FA7]">{formatIDR(totalRowsAmount)}</b></div>
           </div>
         </div>
@@ -400,10 +439,25 @@ export default function SalesReport() {
         {/* Pagination Controls */}
         {!loading && rows.length > 0 && (
           <div data-testid="report-pagination" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-zinc-200 bg-zinc-50/50">
-            <div className="text-[11px] font-mono text-zinc-600">
-              Menampilkan <b className="text-zinc-900">{pageStart + 1}</b>–<b className="text-zinc-900">{pageEnd}</b> dari <b className="text-zinc-900">{rows.length}</b> baris
-              <span className="text-zinc-400"> · </span>
-              Halaman <b className="text-[#002FA7]">{safePage}</b> / {totalPages}
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="text-[11px] font-mono text-zinc-600">
+                Menampilkan <b className="text-zinc-900">{pageStart + 1}</b>–<b className="text-zinc-900">{pageEnd}</b> dari <b className="text-zinc-900">{rows.length}</b> baris
+                <span className="text-zinc-400"> · </span>
+                Halaman <b className="text-[#002FA7]">{safePage}</b> / {totalPages}
+              </div>
+              <div className="flex items-center gap-2 border-l border-zinc-200 pl-3">
+                <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Per Halaman</label>
+                <select
+                  data-testid="page-size-select"
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="border border-zinc-300 bg-white px-2 py-1 text-xs font-mono focus:border-[#002FA7] focus:outline-none"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="flex items-center gap-1.5">
               <button

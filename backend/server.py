@@ -6072,10 +6072,16 @@ async def sales_report_excel(
     user: dict = Depends(require_super_admin),
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    customer: Optional[str] = None,
     month: Optional[str] = None,
 ):
-    """Laporan Penjualan Excel untuk periode tertentu."""
+    """Laporan Penjualan Excel — format persis seperti tabel Excel-style di UI.
+    12 kolom utama + 6 grup pembayaran (Cash/BCA/Mandiri × Plaza/Kastem) masing-masing Nominal + Tanggal.
+    """
     import pandas as pd
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
     if month:
         try:
             year, m = month.split("-")
@@ -6087,63 +6093,195 @@ async def sales_report_excel(
         except Exception:
             raise HTTPException(status_code=400, detail="Format month salah, gunakan YYYY-MM")
 
-    q = {}
+    q: Dict[str, Any] = {"status": {"$nin": ["cancelled", "void", "voided", "canceled"]}}
     if date_from or date_to:
         q["date"] = {}
         if date_from:
             q["date"]["$gte"] = date_from
         if date_to:
-            q["date"]["$lt"] = date_to
-    items = await db.sales.find(q, {"_id": 0}).sort("created_at", 1).to_list(length=20000)
+            q["date"]["$lte"] = date_to
+    if customer:
+        safe = re.escape(customer.strip())
+        q["customer_name"] = {"$regex": safe, "$options": "i"}
+    sales = await db.sales.find(q, {"_id": 0}).sort("created_at", 1).to_list(length=20000)
     ci = _company_info()
 
-    rows = []
-    for s in items:
-        rows.append({
-            "Tanggal": s.get("date", ""),
-            "No. Nota": s.get("sale_no", ""),
-            "Pelanggan": s.get("customer_name", "Umum") or "Umum",
-            "No. Telepon": s.get("customer_phone", "") or "",
-            "Kasir": s.get("cashier_name", ""),
-            "Jumlah Item": len(s.get("items") or []),
-            "Subtotal": float(s.get("subtotal", 0) or 0),
-            "Diskon": float(s.get("discount", 0) or 0),
-            "Total": float(s.get("total", 0) or 0),
-            "Bayar Tunai": float(s.get("cash_paid", 0) or 0),
-            "Kembali": float(s.get("change", 0) or 0),
-            "Metode": (s.get("payment_method") or "tunai").upper(),
-            "Catatan": s.get("notes", "") or "",
+    # Preload maps (sama seperti analytics endpoint)
+    customers = await db.customers.find({}, {"_id": 0, "name": 1, "address": 1}).to_list(length=5000)
+    cust_addr_map = {(c.get("name") or "").strip().lower(): (c.get("address") or "").strip() for c in customers}
+    products_p = await db.products.find({}, {"_id": 0, "name": 1, "length_meter": 1}).to_list(length=5000)
+    prod_length_map = {(p.get("name") or "").strip().lower(): float(p.get("length_meter") or 0) for p in products_p}
+
+    PAY_COLS = [
+        ("cash_plaza", "Cash Plaza"),
+        ("cash_kastem", "Cash Kastem"),
+        ("bca_plaza", "BCA Plaza"),
+        ("bca_kastem", "BCA Kastem"),
+        ("mandiri_plaza", "Mandiri Plaza"),
+        ("mandiri_kastem", "Mandiri Kastem"),
+    ]
+
+    # Flatten rows (mirror analytics endpoint)
+    excel_rows = []
+    row_no = 0
+    for s in sales:
+        s_date = s.get("date") or ""
+        s_customer = s.get("customer_name") or "Umum"
+        s_method = s.get("payment_method") or "cash"
+        s_bank = s.get("payment_bank") or ""
+        s_pnotes = s.get("payment_notes") or ""
+        s_notes = s.get("notes") or ""
+        s_total_after_disc = float(s.get("total") or 0)
+        s_discount = float(s.get("discount") or 0)
+        s_branch = _sanitize_branch(s.get("branch"))
+        pay_col = _resolve_report_payment_col(s_method, s_bank, s_branch)
+        s_alamat = cust_addr_map.get(s_customer.strip().lower(), "")
+        first_item = True
+        for it in (s.get("items") or []):
+            row_no += 1
+            name = it.get("product_name") or it.get("material_name") or "-"
+            qty = int(it.get("quantity") or 0)
+            unit_price = float(it.get("unit_price") or 0)
+            length_m = prod_length_map.get(name.strip().lower(), 0.0)
+            meter = round(qty * length_m, 4) if length_m > 0 else 0
+            row = {
+                "No": row_no,
+                "Tanggal": s_date,
+                "No. Nota": s.get("sale_no", ""),
+                "Alamat": s_alamat,
+                "Nama Barang": name,
+                "Pcs": qty,
+                "Meter": meter,
+                "Harga": unit_price,
+                "Disc": s_discount if first_item else 0,
+                "Jumlah": round(unit_price * qty, 2),
+                "Total": s_total_after_disc if first_item else 0,
+                "Keterangan": s_pnotes or s_notes or "",
+            }
+            # Payment columns: 12 total (6 pairs × Nominal + Tanggal)
+            for k, _ in PAY_COLS:
+                row[f"{k}__n"] = 0
+                row[f"{k}__d"] = ""
+            if first_item and pay_col:
+                row[f"{pay_col}__n"] = s_total_after_disc
+                row[f"{pay_col}__d"] = s_date
+            excel_rows.append(row)
+            first_item = False
+
+    # Build DataFrame with grouped columns
+    if not excel_rows:
+        excel_rows.append({
+            "No": 1, "Tanggal": "", "No. Nota": "(Tidak ada transaksi)", "Alamat": "",
+            "Nama Barang": "", "Pcs": 0, "Meter": 0, "Harga": 0, "Disc": 0,
+            "Jumlah": 0, "Total": 0, "Keterangan": "",
+            **{f"{k}__n": 0 for k, _ in PAY_COLS},
+            **{f"{k}__d": "" for k, _ in PAY_COLS},
         })
-    if not rows:
-        rows.append({
-            "Tanggal": "", "No. Nota": "", "Pelanggan": "(Tidak ada transaksi pada periode ini)",
-            "No. Telepon": "", "Kasir": "", "Jumlah Item": 0, "Subtotal": 0, "Diskon": 0,
-            "Total": 0, "Bayar Tunai": 0, "Kembali": 0, "Metode": "", "Catatan": "",
-        })
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(excel_rows)
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         sheet_name = f"Penjualan {month or 'periode'}"[:31]
-        df.to_excel(writer, index=False, sheet_name=sheet_name, startrow=3)
+        # Write starting from Excel row 6 (0-indexed=5) leaving rows 1-5 for company + column-group + sub-headers
+        df.to_excel(writer, index=False, sheet_name=sheet_name, startrow=5, header=False)
         ws = writer.sheets[sheet_name]
-        # Header perusahaan
+
+        # Row 1: Company name
         ws["A1"] = ci["name"].upper()
+        ws["A1"].font = Font(bold=True, size=14, color="002FA7")
+        # Row 2: Address
         ws["A2"] = f"{ci['address']} · HP: {ci['phone']}"
+        ws["A2"].font = Font(size=9, italic=True, color="666666")
+        # Row 3: Period info
         period_label = f"Bulan {month}" if month else f"{date_from or '(awal)'} s/d {date_to or '(sekarang)'}"
-        ws["A3"] = f"Laporan Penjualan · Periode: {period_label} · {len(items)} transaksi"
-        # Auto width
-        for col_idx, col in enumerate(df.columns, 1):
-            max_len = max((len(str(v)) for v in df[col].astype(str).values), default=10)
-            max_len = max(max_len, len(str(col)))
-            ws.column_dimensions[ws.cell(row=4, column=col_idx).column_letter].width = min(max_len + 2, 45)
+        ws["A3"] = f"Laporan Penjualan · Periode: {period_label} · {len(sales)} transaksi · {len(df)} item"
+        ws["A3"].font = Font(bold=True, size=10)
+
+        # Row 4: Grouped headers (12 main + 6 payment groups)
+        MAIN_HEADERS = ["No", "Tanggal", "No. Nota", "Alamat", "Nama Barang", "Pcs", "Meter", "Harga", "Disc", "Jumlah", "Total", "Keterangan"]
+        thin = Side(border_style="thin", color="333333")
+        border = Border(top=thin, bottom=thin, left=thin, right=thin)
+        header_fill = PatternFill("solid", fgColor="1F2937")
+        header_font = Font(bold=True, color="FFFFFF", size=10)
+        pay_fills = {
+            "cash_plaza": "008A00",
+            "cash_kastem": "34C759",
+            "bca_plaza": "002FA7",
+            "bca_kastem": "4A6FE0",
+            "mandiri_plaza": "E81123",
+            "mandiri_kastem": "FF6B6B",
+        }
+        # Row 4 main headers span both header rows 4-5 (merged)
+        for i, h in enumerate(MAIN_HEADERS, start=1):
+            ws.cell(row=4, column=i, value=h)
+            ws.merge_cells(start_row=4, start_column=i, end_row=5, end_column=i)
+            c = ws.cell(row=4, column=i)
+            c.font = header_font; c.fill = header_fill; c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True); c.border = border
+        # Row 4 payment group headers (merged over 2 columns), Row 5 sub-headers Nominal/Tanggal
+        col_cursor = len(MAIN_HEADERS) + 1
+        for k, label in PAY_COLS:
+            ws.merge_cells(start_row=4, start_column=col_cursor, end_row=4, end_column=col_cursor + 1)
+            gh = ws.cell(row=4, column=col_cursor, value=label)
+            gh.font = header_font
+            gh.fill = PatternFill("solid", fgColor=pay_fills[k])
+            gh.alignment = Alignment(horizontal="center", vertical="center")
+            gh.border = border
+            for j, sub in enumerate(("Nominal", "Tanggal")):
+                sc = ws.cell(row=5, column=col_cursor + j, value=sub)
+                sc.font = Font(bold=True, color="FFFFFF", size=9)
+                sc.fill = header_fill
+                sc.alignment = Alignment(horizontal="center", vertical="center")
+                sc.border = border
+            col_cursor += 2
+
+        # Format data rows: number columns as currency for nominal cols
+        n_rows_data = len(df)
+        start_data_row = 6
+        end_data_row = start_data_row + n_rows_data - 1
+        currency_fmt = "#,##0"
+        # Currency columns: Harga (8), Disc (9), Jumlah (10), Total (11) + all pay __n columns
+        currency_cols = [8, 9, 10, 11]
+        col_cursor = len(MAIN_HEADERS) + 1
+        for _ in PAY_COLS:
+            currency_cols.append(col_cursor)      # nominal
+            col_cursor += 2
+        for r in range(start_data_row, end_data_row + 1):
+            for cc in currency_cols:
+                cell = ws.cell(row=r, column=cc)
+                cell.number_format = currency_fmt
+
+        # Auto-width per column
+        total_cols = len(MAIN_HEADERS) + len(PAY_COLS) * 2
+        default_widths = {1: 6, 2: 12, 3: 16, 4: 24, 5: 28, 6: 6, 7: 8, 8: 12, 9: 10, 10: 12, 11: 14, 12: 22}
+        for i in range(1, total_cols + 1):
+            ws.column_dimensions[get_column_letter(i)].width = default_widths.get(i, 12)
+
         # Total footer row
-        if items:
-            total_row = len(rows) + 5
-            ws.cell(row=total_row, column=1, value="TOTAL")
-            ws.cell(row=total_row, column=7, value=sum(float(s.get("subtotal", 0) or 0) for s in items))
-            ws.cell(row=total_row, column=8, value=sum(float(s.get("discount", 0) or 0) for s in items))
-            ws.cell(row=total_row, column=9, value=sum(float(s.get("total", 0) or 0) for s in items))
+        total_row = end_data_row + 2
+        ws.cell(row=total_row, column=1, value="TOTAL").font = Font(bold=True, size=11, color="002FA7")
+        # Sum Pcs (col 6), Meter (col 7), Disc (col 9), Jumlah (col 10), Total (col 11)
+        if n_rows_data > 0:
+            ws.cell(row=total_row, column=6, value=f"=SUM(F{start_data_row}:F{end_data_row})")
+            ws.cell(row=total_row, column=7, value=f"=SUM(G{start_data_row}:G{end_data_row})")
+            ws.cell(row=total_row, column=9, value=f"=SUM(I{start_data_row}:I{end_data_row})")
+            ws.cell(row=total_row, column=10, value=f"=SUM(J{start_data_row}:J{end_data_row})")
+            ws.cell(row=total_row, column=11, value=f"=SUM(K{start_data_row}:K{end_data_row})")
+            # Sum each pay-nominal column
+            col_cursor = len(MAIN_HEADERS) + 1
+            for _ in PAY_COLS:
+                col_letter = get_column_letter(col_cursor)
+                ws.cell(row=total_row, column=col_cursor, value=f"=SUM({col_letter}{start_data_row}:{col_letter}{end_data_row})")
+                col_cursor += 2
+            # Bold + currency format
+            for cc in currency_cols + [6, 7]:
+                cell = ws.cell(row=total_row, column=cc)
+                cell.font = Font(bold=True, size=11, color="1F2937")
+                if cc in currency_cols:
+                    cell.number_format = currency_fmt
+
+        # Freeze panes below header row 5
+        ws.freeze_panes = ws["A6"]
+
     buf.seek(0)
     fname_period = month or (f"{date_from}_sd_{date_to}" if (date_from or date_to) else "semua")
     fname = f"Laporan_Penjualan_{fname_period}.xlsx"
