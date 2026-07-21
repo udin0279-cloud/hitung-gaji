@@ -952,3 +952,56 @@ Frontend Playwright E2E lulus (5 screenshot):
 - Partial pay via transfer BCA (50k of 111k) berhasil, sisa update ke Rp 61.000 ✓
 - Fill-full → status berubah ke LUNAS + toast "Pelunasan berhasil — Transaksi LUNAS" ✓
 - Badge di tabel berubah hijau LUNAS ✓
+
+---
+
+## Update: 2026-07-21 (session 2) — Multi-Payment History (Split DP + Pelunasan)
+
+### Feature
+Riwayat pembayaran per transaksi kini disimpan sebagai **daftar terpisah** (`sale.payments[]`) — DP awal + pelunasan-pelunasan tercatat sebagai baris independen dengan tanggal & metode masing-masing. Di Laporan Penjualan & Jurnal Kas, setiap pembayaran muncul sebagai entri terpisah sesuai kapan uang diterima.
+
+### Backend
+- **`_build_and_persist_sale`** — auto-seed `payments[0]` sebagai entry initial (is_initial=True, amount=cash_paid, method=payment_method, bank=payment_bank, date=sale.date) saat sale dibuat.
+- **`sales_pay_remaining`** — push entry baru ke `payments[]` dengan is_initial=False, date=pay_date (bisa berbeda dari sale.date).
+- **Helper baru:**
+  - `_payment_label(method, bank)` → "Cash / Tunai" / "Transfer BCA" / dsb
+  - `_get_sale_payments(sale)` → return unified list. Backward-compat: sintesis entry initial dari sale-level info bila `payments[]` kosong (sale lama pre-fitur).
+- **Endpoint baru:** `GET /api/sales/{id}/payments` → `{sale_id, sale_no, total, total_paid, sisa_tagihan, status, payments[]}` (payments sorted by date; initial first if same date).
+- **Analytics endpoint (`/api/sales/report/analytics`)** — tiap pelunasan (is_initial=False) di-emit sebagai row terpisah dengan:
+  - `is_pelunasan_row=True`, `date=payment.date`, `product_name="(Pelunasan · <label>)"`, pcs/meter/harga = 0
+  - `payment_column` = dihitung dari method+bank+sale.branch
+  - `payment_nominal_on_row` = payment.amount, `payment_date_on_row` = payment.date
+  - `keterangan` = payment.notes atau default "Pelunasan sisa tagihan"
+  - `method_totals` di-update supaya sesuai realisasi uang masuk per metode
+  - Row DP awal (first_item) sekarang menggunakan `payments[0].amount` (initial), BUKAN cumulative `cash_paid` — mencegah double-count.
+- **Excel export (`/api/sales/report/excel`)** — mirror analytics: pelunasan rows ditambahkan setelah item rows, dengan payment column filled sesuai metode pelunasan.
+
+### Frontend
+- **`Sales.jsx`:**
+  - Tombol baru **"Riwayat"** (icon History, `data-testid=payment-history-button-{id}`) di setiap baris transaksi
+  - Komponen `PaymentHistoryModal` (~155 lines) — summary card (Total/Sudah Dibayar/Sisa) + timeline table dengan badge jenis (DP AWAL biru, PELUNASAN hijau) + metode colored badges (Cash hijau, BCA biru, Mandiri merah, Shopee orange) + tombol "Bayar Sisa Sekarang" (jika masih DP) yang membuka modal PayRemaining.
+- **`SalesReport.jsx`:**
+  - Pelunasan rows di-render dengan bg hijau muda (`bg-[#008A00]/5`), icon panah kanan-bawah `↳` sebagai nomor, product name italic hijau, badge status **PELUNASAN** solid hijau.
+  - Payment column: matches kondisi diperluas ke `(isFirst || isPelunasan)` sehingga nominal pelunasan tercetak di kolom pembayaran yang benar (BCA Plaza, Cash Plaza, dst) pada tanggal pelunasan.
+  - `payTotals` menghitung SEMUA row yang punya payment_column (bukan hanya first_item) — footer total pembayaran per kolom kini akurat.
+
+### Testing (Backend E2E)
+Test case: 1 sale total 322k → DP 50k cash (2026-07-21) → Pelunasan 100k transfer BCA (2026-07-22) → Pelunasan 172k cash (2026-07-25) LUNAS.
+- `GET /sales/{id}/payments` return 3 entries dgn `is_initial` flag ✓
+- `GET /sales/report/analytics` return 3 rows: 1 item DP row + 2 pelunasan rows ✓
+- `GET /cashbook/transactions` menunjukkan 3 entri terpisah dgn tanggal + akun kas berbeda (301/301-BCA/301) ✓
+- `method_breakdown` akurat: cash 494k, transfer_bca 100k (agregasi lintas transaksi) ✓
+
+### Testing (Frontend E2E via Playwright)
+- Modal Riwayat: 3 baris muncul (DP AWAL 50k cash / PELUNASAN 100k BCA / PELUNASAN 172k cash), Total Dibayar 322k, status LUNAS ✓
+- Laporan Penjualan: 1 item row + 2 pelunasan rows (`data-testid=report-row-pelunasan`) muncul sesuai tanggal masing-masing dan kolom pembayaran benar ✓
+- Footer "1 TRANSAKSI (FILTERED)" — dedupe sale_no benar (tidak double-count) ✓
+- Total pembayaran Cash Plaza: Rp 222.000 (50k DP + 172k pelunasan) — akurat ✓
+
+### Files Changed
+- `backend/server.py`: `_build_and_persist_sale` (seed initial payment), `PayRemainingIn`, `sales_pay_remaining` (is_initial flag), `_payment_label`, `_get_sale_payments`, `GET /sales/{id}/payments`, `sales_analytics` (pelunasan rows + fix cash_paid double-count), `sales_report_excel` (pelunasan rows).
+- `frontend/src/pages/Sales.jsx`: state `historySale`, tombol Riwayat, `PaymentHistoryModal` component.
+- `frontend/src/pages/SalesReport.jsx`: `pagedRows` row rendering handle `is_pelunasan_row`, `payTotals` include pelunasan payments.
+
+### Backward Compatibility
+Sale lama tanpa `payments[]`: `_get_sale_payments` sintesis entry initial dari sale-level (cash_paid + payment_method + payment_bank + sale.date). Analytics + payment history endpoint tetap berjalan tanpa migrasi DB.

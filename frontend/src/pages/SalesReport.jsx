@@ -163,7 +163,8 @@ export default function SalesReport() {
   const totalColSpan = 14 + visiblePayCols.length * 2;
   const payTotals = Object.fromEntries(PAY_COLS.map((c) => [c.key, 0]));
   rows.forEach((r) => {
-    if (r.is_first_item_of_sale && r.payment_column && payTotals[r.payment_column] !== undefined) {
+    // Count both DP awal (is_first_item_of_sale) and pelunasan rows
+    if ((r.is_first_item_of_sale || r.is_pelunasan_row) && r.payment_column && payTotals[r.payment_column] !== undefined) {
       payTotals[r.payment_column] += Number(r.payment_nominal_on_row || 0);
     }
   });
@@ -425,6 +426,7 @@ export default function SalesReport() {
               {pagedRows.map((r, i) => {
                 const idx = pageStart + i;
                 const isFirst = !!r.is_first_item_of_sale;
+                const isPelunasan = !!r.is_pelunasan_row;
                 const rowPayCol = r.payment_column;
                 const rowPayNominal = Number(r.payment_nominal_on_row || 0);
                 const rowPayDate = r.payment_date_on_row || "";
@@ -432,26 +434,44 @@ export default function SalesReport() {
                 const rowTotal = isFirst ? Number(r.sale_total || 0) : 0;
                 const jumlah = Number(r.unit_price || 0) * Number(r.pcs || r.quantity || 0);
                 return (
-                  <tr key={idx} data-testid="report-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${isFirst ? "" : "bg-zinc-50/30"}`}>
-                    <td className="px-2 py-2 text-center font-mono text-[11px] font-bold text-zinc-500 border-r border-zinc-100">{idx + 1}</td>
+                  <tr
+                    key={idx}
+                    data-testid={isPelunasan ? "report-row-pelunasan" : "report-row"}
+                    className={`border-b border-zinc-100 hover:bg-zinc-50 ${isPelunasan ? "bg-[#008A00]/5" : (isFirst ? "" : "bg-zinc-50/30")}`}
+                  >
+                    <td className="px-2 py-2 text-center font-mono text-[11px] font-bold text-zinc-500 border-r border-zinc-100">
+                      {isPelunasan ? <span className="text-[#008A00]">↳</span> : idx + 1}
+                    </td>
                     <td className="px-2 py-2 font-mono text-[11px] whitespace-nowrap border-r border-zinc-100">{r.date}</td>
                     <td className="px-2 py-2 font-mono text-[11px] border-r border-zinc-100">{r.sale_no}</td>
                     <td className="px-2 py-2 text-xs border-r border-zinc-100">{r.alamat || <span className="text-zinc-300">—</span>}</td>
                     <td className="px-2 py-2 text-xs border-r border-zinc-100">
-                      {r.product_name}
-                      {r.size && r.size !== "-" && (
-                        <span className="ml-1.5 text-[9px] font-bold uppercase text-zinc-500">[{r.size}]</span>
+                      {isPelunasan ? (
+                        <span className="italic text-[#008A00] font-semibold">{r.product_name}</span>
+                      ) : (
+                        <>
+                          {r.product_name}
+                          {r.size && r.size !== "-" && (
+                            <span className="ml-1.5 text-[9px] font-bold uppercase text-zinc-500">[{r.size}]</span>
+                          )}
+                        </>
                       )}
                     </td>
-                    <td className="px-2 py-2 text-center font-mono text-xs border-r border-zinc-100">{r.pcs || r.quantity}</td>
+                    <td className="px-2 py-2 text-center font-mono text-xs border-r border-zinc-100">
+                      {isPelunasan ? <span className="text-zinc-300">—</span> : (r.pcs || r.quantity)}
+                    </td>
                     <td className="px-2 py-2 text-center font-mono text-xs border-r border-zinc-100">
                       {Number(r.meter || 0) > 0 ? Number(r.meter).toFixed(2) : <span className="text-zinc-300">—</span>}
                     </td>
-                    <td className="px-2 py-2 text-right font-mono text-xs border-r border-zinc-100">{formatIDR(r.unit_price)}</td>
+                    <td className="px-2 py-2 text-right font-mono text-xs border-r border-zinc-100">
+                      {isPelunasan ? <span className="text-zinc-300">—</span> : formatIDR(r.unit_price)}
+                    </td>
                     <td className="px-2 py-2 text-right font-mono text-xs border-r border-zinc-100">
                       {rowDisc > 0 ? <span className="text-[#E81123] font-semibold">{formatIDR(rowDisc)}</span> : <span className="text-zinc-300">—</span>}
                     </td>
-                    <td className="px-2 py-2 text-right font-mono text-xs border-r border-zinc-100">{formatIDR(jumlah)}</td>
+                    <td className="px-2 py-2 text-right font-mono text-xs border-r border-zinc-100">
+                      {isPelunasan ? <span className="text-zinc-300">—</span> : formatIDR(jumlah)}
+                    </td>
                     <td className="px-2 py-2 text-right font-mono text-sm font-bold text-[#002FA7] bg-[#002FA7]/5 border-r border-zinc-100">
                       {isFirst ? formatIDR(rowTotal) : <span className="text-zinc-300">—</span>}
                     </td>
@@ -469,17 +489,19 @@ export default function SalesReport() {
                         ) : (
                           <span data-testid="report-status-lunas" className="inline-block bg-[#008A00]/15 text-[#008A00] border border-[#008A00]/30 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest">LUNAS</span>
                         )
+                      ) : isPelunasan ? (
+                        <span className="inline-block bg-[#008A00] text-white px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest">PELUNASAN</span>
                       ) : <span className="text-zinc-300">—</span>}
                     </td>
                     <td className="px-2 py-2 text-xs text-zinc-600 border-r border-zinc-100">
                       {r.keterangan ? <span title={r.keterangan}>{r.keterangan.slice(0, 40)}{r.keterangan.length > 40 ? "…" : ""}</span> : <span className="text-zinc-300">—</span>}
                     </td>
                     {visiblePayCols.map((c, i) => {
-                      const matches = isFirst && rowPayCol === c.key;
+                      const matches = (isFirst || isPelunasan) && rowPayCol === c.key;
                       return (
                         <Fragment key={c.key + "-" + idx}>
                           <td className="px-2 py-2 text-right font-mono text-xs border-r border-zinc-100">
-                            {matches ? <span className="font-bold text-zinc-900">{formatIDR(rowPayNominal)}</span> : <span className="text-zinc-200">—</span>}
+                            {matches ? <span className={`font-bold ${isPelunasan ? "text-[#008A00]" : "text-zinc-900"}`}>{formatIDR(rowPayNominal)}</span> : <span className="text-zinc-200">—</span>}
                           </td>
                           <td className={`px-2 py-2 text-center font-mono text-[10px] ${i < visiblePayCols.length - 1 ? "border-r border-zinc-100" : ""}`}>
                             {matches ? rowPayDate : <span className="text-zinc-200">—</span>}

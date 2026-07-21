@@ -5451,6 +5451,19 @@ async def _build_and_persist_sale(
     final_id = sale_id or str(uuid.uuid4())
     final_created = created_at_iso or now.isoformat()
     final_date = date_iso or now.date().isoformat()
+    # Seed initial payment record (is_initial=True). Selalu ada meski cash_paid=0
+    # (edge case: full DP tanpa DP di muka). Ini adalah entry pertama di history pembayaran.
+    initial_payment = {
+        "id": str(uuid.uuid4()),
+        "amount": round(min(cash_paid, total), 2),  # exclude kembalian
+        "payment_method": payload.payment_method or "cash",
+        "payment_bank": (payload.payment_bank or "").strip() or None,
+        "date": final_date,
+        "notes": (payload.payment_notes or "").strip() or None,
+        "is_initial": True,
+        "created_at": final_created,
+        "created_by": user.get("email"),
+    }
     doc = {
         "id": final_id,
         "sale_no": final_sale_no,
@@ -5472,6 +5485,7 @@ async def _build_and_persist_sale(
         "payment_notes": (payload.payment_notes or "").strip() or None,
         "notes": payload.notes,
         "status": payment_status,  # "paid" (LUNAS) atau "dp"
+        "payments": [initial_payment],  # unified payment history (DP + pelunasan)
         "created_at": final_created,
     }
     if is_update:
@@ -6174,6 +6188,10 @@ async def sales_report_excel(
         s_branch = _sanitize_branch(s.get("branch"))
         pay_col = _resolve_report_payment_col(s_method, s_bank, s_branch)
         s_alamat = cust_addr_map.get(s_customer.strip().lower(), "")
+        # Payment history: initial + pelunasan
+        _payments = _get_sale_payments(s)
+        _initial_p = next((p for p in _payments if p.get("is_initial")), None)
+        s_paid_amount = float(_initial_p.get("amount") or 0) if _initial_p else min(float(s.get("cash_paid") or 0), s_total_after_disc)
         first_item = True
         for it in (s.get("items") or []):
             row_no += 1
@@ -6196,15 +6214,45 @@ async def sales_report_excel(
                 "Total": s_total_after_disc if first_item else 0,
                 "Keterangan": s_pnotes or s_notes or "",
             }
-            # Payment columns: 12 total (6 pairs × Nominal + Tanggal)
+            # Payment columns: 8 pairs × (Nominal + Tanggal)
             for k, _ in PAY_COLS:
                 row[f"{k}__n"] = 0
                 row[f"{k}__d"] = ""
             if first_item and pay_col:
-                row[f"{pay_col}__n"] = s_total_after_disc
+                row[f"{pay_col}__n"] = s_paid_amount
                 row[f"{pay_col}__d"] = s_date
             excel_rows.append(row)
             first_item = False
+        # Pelunasan rows — satu baris per entry non-initial
+        for p_ in [p for p in _payments if not p.get("is_initial")]:
+            row_no += 1
+            p_method = p_.get("payment_method") or "cash"
+            p_bank = p_.get("payment_bank")
+            p_amount = float(p_.get("amount") or 0)
+            p_date = p_.get("date") or s_date
+            p_col = _resolve_report_payment_col(p_method, p_bank, s_branch)
+            p_label = _payment_label(p_method, p_bank)
+            row = {
+                "No": row_no,
+                "Tanggal": p_date,
+                "No. Nota": s.get("sale_no", ""),
+                "Alamat": s_alamat,
+                "Nama Barang": f"(Pelunasan · {p_label})",
+                "Pcs": 0,
+                "Meter": 0,
+                "Harga": 0,
+                "Disc": 0,
+                "Jumlah": 0,
+                "Total": 0,
+                "Keterangan": (p_.get("notes") or "Pelunasan sisa tagihan"),
+            }
+            for k, _ in PAY_COLS:
+                row[f"{k}__n"] = 0
+                row[f"{k}__d"] = ""
+            if p_col:
+                row[f"{p_col}__n"] = p_amount
+                row[f"{p_col}__d"] = p_date
+            excel_rows.append(row)
 
     # Build DataFrame with grouped columns
     if not excel_rows:
@@ -6487,6 +6535,7 @@ async def sales_pay_remaining(sale_id: str, payload: PayRemainingIn, user: dict 
         "payment_bank": (payload.payment_bank or "").strip() or None,
         "date": pay_date,
         "notes": (payload.notes or "").strip() or None,
+        "is_initial": False,
         "created_at": now_iso,
         "created_by": user.get("email"),
     }
@@ -6534,6 +6583,85 @@ async def sales_pay_remaining(sale_id: str, payload: PayRemainingIn, user: dict 
         "sisa_tagihan": new_sisa,
         "status": new_status,
         "cash_paid_total": new_cash_paid,
+    }
+
+
+def _payment_label(method: str, bank: Optional[str]) -> str:
+    """Return human label for payment method."""
+    pm = (method or "").lower()
+    if pm == "cash" or pm == "tunai":
+        return "Cash / Tunai"
+    if pm == "transfer":
+        b = (bank or "").lower()
+        if b == "mandiri":
+            return "Transfer Mandiri"
+        if b == "bca":
+            return "Transfer BCA"
+        return "Transfer"
+    if pm == "shopee_plaza":
+        return "Shopee Plaza"
+    if pm == "shopee_kastem":
+        return "Shopee Kastem"
+    return method or "-"
+
+
+def _get_sale_payments(sale: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return unified payment history for a sale.
+    - Untuk sale baru: gunakan sale.payments[] langsung
+    - Untuk sale lama (tanpa payments[]): synthesize entry pertama dari sale-level info
+    """
+    payments = sale.get("payments") or []
+    if payments:
+        # Ensure semua entry punya is_initial & label
+        out = []
+        for p in payments:
+            e = dict(p)
+            e.setdefault("is_initial", False)
+            e["label"] = _payment_label(e.get("payment_method"), e.get("payment_bank"))
+            out.append(e)
+        return out
+    # Backward-compat: synthesize dari sale-level
+    total = float(sale.get("total") or 0)
+    cash_paid = float(sale.get("cash_paid") or 0)
+    initial_amount = round(min(cash_paid, total), 2)
+    entries = []
+    if initial_amount > 0 or (sale.get("status") == "paid" and total == 0):
+        entries.append({
+            "id": f"legacy-initial-{sale.get('id')}",
+            "amount": initial_amount,
+            "payment_method": sale.get("payment_method") or "cash",
+            "payment_bank": sale.get("payment_bank"),
+            "date": sale.get("date"),
+            "notes": sale.get("payment_notes"),
+            "is_initial": True,
+            "created_at": sale.get("created_at"),
+            "created_by": sale.get("cashier"),
+            "label": _payment_label(sale.get("payment_method"), sale.get("payment_bank")),
+        })
+    return entries
+
+
+@api_router.get("/sales/{sale_id}/payments")
+async def sales_payments_get(sale_id: str, user: dict = Depends(require_super_admin)):
+    """Riwayat pembayaran (DP + Pelunasan) untuk satu transaksi."""
+    sale = await db.sales.find_one({"id": sale_id}, {"_id": 0})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    payments = _get_sale_payments(sale)
+    # Sort by date ascending, initial first if same date
+    payments.sort(key=lambda p: (str(p.get("date") or ""), 0 if p.get("is_initial") else 1, str(p.get("created_at") or "")))
+    total_paid = round(sum(float(p.get("amount") or 0) for p in payments), 2)
+    total_amount = float(sale.get("total") or 0)
+    sisa = round(max(0.0, total_amount - total_paid), 2)
+    return {
+        "sale_id": sale_id,
+        "sale_no": sale.get("sale_no"),
+        "customer_name": sale.get("customer_name"),
+        "total": total_amount,
+        "total_paid": total_paid,
+        "sisa_tagihan": sisa,
+        "status": sale.get("status") or ("dp" if sisa > 0.01 else "paid"),
+        "payments": payments,
     }
 
 
@@ -6590,8 +6718,14 @@ async def sales_analytics(
         # DP: cash_paid = jumlah aktual diterima; sisa_tagihan = piutang
         s_cash_paid = float(s.get("cash_paid") or 0)
         s_sisa = float(s.get("sisa_tagihan") if s.get("sisa_tagihan") is not None else max(0, s_total_after_disc - s_cash_paid))
-        # kolom pembayaran hanya menampilkan nominal aktual (tidak termasuk piutang)
-        s_paid_amount = min(s_cash_paid, s_total_after_disc)
+        # kolom pembayaran (row pertama = INITIAL DP amount saja, bukan cumulative).
+        # payments[0] adalah initial (DP awal). Fallback ke cash_paid utk data legacy.
+        _all_payments = _get_sale_payments(s)
+        _initial_p = next((p for p in _all_payments if p.get("is_initial")), None)
+        if _initial_p is not None:
+            s_paid_amount = float(_initial_p.get("amount") or 0)
+        else:
+            s_paid_amount = min(s_cash_paid, s_total_after_disc)
         s_status = s.get("status") or ("dp" if s_sisa > 0.01 else "paid")
         # Payment column key (Cash/BCA/Mandiri + Plaza/Kastem) — derived from method+bank+branch
         pay_col = _resolve_report_payment_col(s_method, s_bank, s_branch)
@@ -6642,6 +6776,54 @@ async def sales_analytics(
                 product_totals[pk] = {"qty": 0, "total": 0.0}
             product_totals[pk]["qty"] += qty
             product_totals[pk]["total"] += subtotal_item
+        # --- Pelunasan rows (per-payment entries selain initial DP) ---
+        # Setiap pelunasan tampil sebagai baris terpisah dengan:
+        #  - date = tanggal pelunasan (bukan sale.date)
+        #  - payment_column & nominal sesuai metode pelunasan
+        # Total periode & product_totals TIDAK ditambah (agar tidak double-count omzet)
+        pelunasan_entries = [p for p in _all_payments if not p.get("is_initial")]
+        for p_ in pelunasan_entries:
+            p_method = p_.get("payment_method") or "cash"
+            p_bank = p_.get("payment_bank")
+            p_amount = float(p_.get("amount") or 0)
+            p_date = p_.get("date") or s_date
+            p_col = _resolve_report_payment_col(p_method, p_bank, s_branch)
+            p_label = _payment_label(p_method, p_bank)
+            rows.append({
+                "date": p_date,
+                "customer_name": s_customer,
+                "alamat": s_alamat,
+                "sale_no": s.get("sale_no"),
+                "product_name": f"(Pelunasan · {p_label})",
+                "size": "-",
+                "pcs": 0,
+                "meter": 0.0,
+                "quantity": 0,
+                "unit_price": 0.0,
+                "total": 0.0,
+                "sale_total": s_total_after_disc,
+                "sale_subtotal": s_subtotal,
+                "sale_discount": s_discount,
+                "sale_cash_paid": s_cash_paid,
+                "sale_sisa_tagihan": s_sisa,
+                "sale_status": s_status,
+                "keterangan": (p_.get("notes") or "").strip() or "Pelunasan sisa tagihan",
+                "branch": s_branch,
+                "payment_method": p_method,
+                "payment_bank": p_bank,
+                "payment_notes": p_.get("notes") or "",
+                "payment_column": p_col,
+                "payment_nominal_on_row": p_amount,
+                "payment_date_on_row": p_date,
+                "is_first_item_of_sale": False,
+                "is_pelunasan_row": True,
+                "pelunasan_id": p_.get("id"),
+            })
+            # Also update method_totals to reflect actual money received via that method
+            m_key = p_method
+            if p_method == "transfer" and p_bank:
+                m_key = f"transfer_{str(p_bank).lower()}"
+            method_totals[m_key] = method_totals.get(m_key, 0) + p_amount
         period_total += s_total_after_disc
         daily_series[s_date] = daily_series.get(s_date, 0) + s_total_after_disc
         mkey = s_method

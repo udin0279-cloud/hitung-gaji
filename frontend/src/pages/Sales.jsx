@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { Plus, Trash2, X, Search, ShoppingBag, Printer, Receipt, DollarSign, TrendingUp, FileText, Download, FileSpreadsheet, Pencil, Wallet } from "lucide-react";
+import { Plus, Trash2, X, Search, ShoppingBag, Printer, Receipt, DollarSign, TrendingUp, FileText, Download, FileSpreadsheet, Pencil, Wallet, History } from "lucide-react";
 
 const inputCls = "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none";
 
@@ -22,6 +22,7 @@ export default function Sales() {
   const [openReport, setOpenReport] = useState(false);
   const [editingSale, setEditingSale] = useState(null);
   const [payDPSale, setPayDPSale] = useState(null);
+  const [historySale, setHistorySale] = useState(null);
   // Pagination
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -246,6 +247,14 @@ export default function Sales() {
                         </button>
                       )}
                       <button
+                        data-testid={`payment-history-button-${s.id}`}
+                        onClick={() => setHistorySale(s)}
+                        className="inline-flex items-center gap-1.5 rounded-none border border-zinc-300 bg-white text-zinc-900 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-zinc-50 transition-colors"
+                        title="Riwayat pembayaran"
+                      >
+                        <History className="w-3.5 h-3.5" /> Riwayat
+                      </button>
+                      <button
                         data-testid="print-receipt-button"
                         onClick={() => openReceipt(s)}
                         className="inline-flex items-center gap-1.5 rounded-none border border-[#002FA7] bg-[#002FA7] text-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-[#002080] transition-colors"
@@ -334,6 +343,7 @@ export default function Sales() {
       {openNew && <NewSaleModal materials={materials} products={products} customers={customers} edit={editingSale} onClose={() => { setOpenNew(false); setEditingSale(null); }} onSaved={async (result) => { setOpenNew(false); setEditingSale(null); await loadAll(); if (result && !result._isUpdate) openReceipt(result, true); }} />}
       {openReport && <SalesReportModal onClose={() => setOpenReport(false)} />}
       {payDPSale && <PayRemainingModal sale={payDPSale} onClose={() => setPayDPSale(null)} onSaved={async () => { setPayDPSale(null); await loadAll(); }} />}
+      {historySale && <PaymentHistoryModal sale={historySale} onClose={() => setHistorySale(null)} onOpenPayDP={(s) => { setHistorySale(null); setPayDPSale(s); }} />}
     </div>
   );
 }
@@ -634,6 +644,174 @@ function PayRemainingModal({ sale, onClose, onSaved }) {
     </div>
   );
 }
+
+/* ---------------- PAYMENT HISTORY MODAL ---------------- */
+function PaymentHistoryModal({ sale, onClose, onOpenPayDP }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.get(`/sales/${sale.id}/payments`);
+        setData(res.data);
+      } catch (err) {
+        toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat riwayat");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [sale.id]);
+
+  const methodLabel = (m, b) => {
+    const mm = (m || "").toLowerCase();
+    if (mm === "cash" || mm === "tunai") return "Cash / Tunai";
+    if (mm === "transfer") {
+      const bb = (b || "").toLowerCase();
+      if (bb === "mandiri") return "Transfer Mandiri";
+      if (bb === "bca") return "Transfer BCA";
+      return "Transfer";
+    }
+    if (mm === "shopee_plaza") return "Shopee Plaza";
+    if (mm === "shopee_kastem") return "Shopee Kastem";
+    return m || "-";
+  };
+
+  const methodBadgeCls = (m, b) => {
+    const mm = (m || "").toLowerCase();
+    if (mm === "cash" || mm === "tunai") return "bg-[#008A00] text-white";
+    if (mm === "transfer") {
+      const bb = (b || "").toLowerCase();
+      if (bb === "mandiri") return "bg-[#E81123] text-white";
+      return "bg-[#002FA7] text-white";
+    }
+    if (mm.startsWith("shopee")) return "bg-[#F97316] text-white";
+    return "bg-zinc-700 text-white";
+  };
+
+  const isDP = data && data.status === "dp";
+
+  return (
+    <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white border border-zinc-300 w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-200">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 flex items-center justify-center bg-[#002FA7]">
+              <History className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Riwayat Pembayaran</div>
+              <h3 className="font-bold text-zinc-900 text-lg">{sale.sale_no} · {sale.customer_name}</h3>
+            </div>
+          </div>
+          <button data-testid="payment-history-close" onClick={onClose} className="p-2 hover:bg-zinc-100"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="p-5 space-y-4 overflow-y-auto">
+          {loading && <div className="text-center py-8 text-zinc-500 font-mono text-xs">Memuat…</div>}
+          {!loading && data && (
+            <>
+              {/* Summary */}
+              <div className="grid grid-cols-3 gap-px bg-zinc-200 border border-zinc-200">
+                <div className="bg-white p-3">
+                  <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Total Nota</div>
+                  <div className="font-mono text-lg font-bold text-zinc-900 mt-1">{formatIDR(data.total)}</div>
+                </div>
+                <div className="bg-white p-3">
+                  <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Sudah Dibayar</div>
+                  <div data-testid="history-total-paid" className="font-mono text-lg font-bold text-[#008A00] mt-1">{formatIDR(data.total_paid)}</div>
+                </div>
+                <div className="bg-white p-3">
+                  <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Sisa Tagihan</div>
+                  <div data-testid="history-sisa" className={`font-mono text-lg font-bold mt-1 ${isDP ? "text-[#E81123]" : "text-zinc-400"}`}>{formatIDR(data.sisa_tagihan)}</div>
+                </div>
+              </div>
+
+              {/* Status */}
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700">
+                  {data.payments.length} riwayat pembayaran
+                </div>
+                {isDP ? (
+                  <span data-testid="history-status" className="inline-block bg-yellow-400 text-yellow-900 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">DP · Belum Lunas</span>
+                ) : (
+                  <span data-testid="history-status" className="inline-block bg-[#008A00]/15 text-[#008A00] border border-[#008A00]/30 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">LUNAS</span>
+                )}
+              </div>
+
+              {/* Timeline */}
+              <div className="border border-zinc-200">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="bg-zinc-50 border-b border-zinc-200 text-[10px] font-bold text-zinc-600 uppercase tracking-widest">
+                      <th className="px-3 py-2 w-12 text-center">No</th>
+                      <th className="px-3 py-2">Jenis</th>
+                      <th className="px-3 py-2">Tanggal</th>
+                      <th className="px-3 py-2">Metode</th>
+                      <th className="px-3 py-2 text-right">Nominal</th>
+                      <th className="px-3 py-2">Catatan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.payments.length === 0 && (
+                      <tr><td colSpan={6} className="px-4 py-6 text-center text-zinc-400 font-mono text-xs">Belum ada riwayat pembayaran.</td></tr>
+                    )}
+                    {data.payments.map((p, i) => (
+                      <tr key={p.id || i} data-testid={p.is_initial ? "history-row-initial" : "history-row-pelunasan"} className={`border-b border-zinc-100 ${p.is_initial ? "" : "bg-[#008A00]/5"}`}>
+                        <td className="px-3 py-2 text-center font-mono text-xs text-zinc-500">{i + 1}</td>
+                        <td className="px-3 py-2">
+                          {p.is_initial ? (
+                            <span className="inline-block bg-[#002FA7] text-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">DP Awal</span>
+                          ) : (
+                            <span className="inline-block bg-[#008A00] text-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">Pelunasan</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs text-zinc-800">{p.date}</td>
+                        <td className="px-3 py-2">
+                          <span className={`inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${methodBadgeCls(p.payment_method, p.payment_bank)}`}>
+                            {p.label || methodLabel(p.payment_method, p.payment_bank)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-right font-bold text-zinc-900">{formatIDR(p.amount)}</td>
+                        <td className="px-3 py-2 text-xs text-zinc-600">{p.notes || <span className="text-zinc-300">—</span>}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-zinc-900 bg-[#002FA7]/5">
+                      <td colSpan={4} className="px-3 py-3 text-xs font-bold uppercase tracking-widest text-[#002FA7]">Total Dibayar</td>
+                      <td className="px-3 py-3 text-right font-mono font-bold text-[#002FA7]">{formatIDR(data.total_paid)}</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-4 border-t border-zinc-200 bg-zinc-50">
+          {isDP && (
+            <button
+              data-testid="history-open-pay-dp"
+              onClick={() => onOpenPayDP?.(sale)}
+              className="rounded-none bg-[#008A00] hover:bg-[#006D00] text-white px-5 py-2.5 text-sm font-bold uppercase tracking-wider inline-flex items-center gap-2"
+            >
+              <Wallet className="w-4 h-4" /> Bayar Sisa Sekarang
+            </button>
+          )}
+          <button
+            data-testid="history-close-btn"
+            onClick={onClose}
+            className="rounded-none bg-white border border-zinc-300 text-zinc-900 px-5 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-zinc-50"
+          >
+            Tutup
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 /* ---------------- NEW SALE MODAL (POS) ---------------- */
 // picker_id format: "prod:<id>" atau "mat:<id>"
