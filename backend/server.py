@@ -1540,6 +1540,141 @@ def _find_col(cols, candidates):
     return None
 
 
+def _parse_wide_finger_format(df_raw):
+    """Parse "wide" fingerprint export (satu baris = satu PIN-tanggal, banyak kolom Scan).
+    Format yang didukung:
+      - Row 0: super header ("Pegawai" ... "Data scanlog")
+      - Row 1..n: [PIN, Nama, _, _, _, Tanggal (DD-MM-YYYY), Scan 1, Scan 2, Scan 3, Scan 4, ...]
+      - ATAU header row explicit dgn "PIN" / "Nama" / "Tanggal" / "Scan 1..N".
+
+    Return: list of dicts {pin: str, nama: str, dt: datetime}
+      (satu record per scan yang valid; PIN & tanggal boleh sama utk multiple scan)
+    Return None jika bukan format wide.
+    """
+    import pandas as pd
+    if df_raw is None or len(df_raw) == 0:
+        return None
+
+    ncols = df_raw.shape[1]
+
+    # --- Detect header row & positional mapping ---
+    pin_col_idx: Optional[int] = None
+    nama_col_idx: Optional[int] = None
+    date_col_idx: Optional[int] = None
+    scan_col_indices: List[int] = []
+    data_start_row: int = 0
+
+    # Try to find a row with explicit headers PIN / Nama / Tanggal / Scan 1
+    header_row_idx: Optional[int] = None
+    for i in range(min(6, len(df_raw))):
+        cells = [str(v).strip().lower() if pd.notna(v) else "" for v in df_raw.iloc[i].values]
+        if "pin" in cells and ("nama" in cells or "name" in cells) and ("tanggal" in cells or "date" in cells or "tgl" in cells):
+            header_row_idx = i
+            break
+
+    if header_row_idx is not None:
+        # Use this row as headers
+        for idx, v in enumerate(df_raw.iloc[header_row_idx].values):
+            lc = str(v).strip().lower() if pd.notna(v) else ""
+            if lc == "pin":
+                pin_col_idx = idx
+            elif lc in ("nama", "name"):
+                nama_col_idx = idx
+            elif lc in ("tanggal", "date", "tgl"):
+                date_col_idx = idx
+            elif lc.startswith("scan"):
+                scan_col_indices.append(idx)
+        data_start_row = header_row_idx + 1
+    else:
+        # Check row 0 super header signature
+        row0_cells = [str(v).strip().lower() if pd.notna(v) else "" for v in df_raw.iloc[0].values]
+        row0_joined = " ".join(c for c in row0_cells if c)
+        if "pegawai" in row0_joined and "scanlog" in row0_joined:
+            # Positional: PIN=col0, Nama=col1, Tanggal=col5, Scan=col6+
+            pin_col_idx = 0
+            nama_col_idx = 1
+            date_col_idx = 5 if ncols >= 6 else None
+            scan_col_indices = list(range(6, min(ncols, 10)))
+            data_start_row = 1
+        else:
+            # Not wide format
+            return None
+
+    if pin_col_idx is None or date_col_idx is None or not scan_col_indices:
+        return None
+
+    records: List[Dict[str, Any]] = []
+    for i in range(data_start_row, len(df_raw)):
+        row = df_raw.iloc[i].values
+        pin_raw = row[pin_col_idx] if pin_col_idx < len(row) else None
+        if pin_raw is None or (isinstance(pin_raw, float) and pd.isna(pin_raw)):
+            continue
+        pin = str(pin_raw).strip()
+        if not pin or pin.lower() in ("nan", "none", "pegawai"):
+            continue
+        # Normalize numeric-string ("1.0" → "1")
+        try:
+            f = float(pin)
+            if f.is_integer():
+                pin = str(int(f))
+        except (ValueError, TypeError):
+            pass
+
+        nama = ""
+        if nama_col_idx is not None and nama_col_idx < len(row):
+            v = row[nama_col_idx]
+            if pd.notna(v):
+                nama = str(v).strip()
+
+        date_raw = row[date_col_idx] if date_col_idx < len(row) else None
+        if date_raw is None or (isinstance(date_raw, float) and pd.isna(date_raw)):
+            continue
+        # Parse date — try dayfirst=True (DD-MM-YYYY) first since mesin finger biasa pakai itu
+        date_str = str(date_raw).strip()
+        try:
+            d_ts = pd.to_datetime(date_str, dayfirst=True, errors="coerce")
+            if pd.isna(d_ts):
+                d_ts = pd.to_datetime(date_str, errors="coerce")
+            if pd.isna(d_ts):
+                continue
+            date_only = d_ts.date()
+        except Exception:
+            continue
+
+        # Collect scans (only cells that look like time)
+        for sc_idx in scan_col_indices:
+            if sc_idx >= len(row):
+                continue
+            sv = row[sc_idx]
+            if sv is None or (isinstance(sv, float) and pd.isna(sv)):
+                continue
+            sv_str = str(sv).strip()
+            if not sv_str or sv_str.lower() in ("nan", "nat", "none"):
+                continue
+            # Parse as time HH:MM[:SS]
+            t_ts = None
+            for fmt in ("%H:%M:%S", "%H:%M"):
+                try:
+                    t_ts = datetime.strptime(sv_str, fmt).time()
+                    break
+                except ValueError:
+                    continue
+            if t_ts is None:
+                # Fallback: try pandas parser
+                try:
+                    parsed = pd.to_datetime(sv_str, errors="coerce")
+                    if pd.notna(parsed):
+                        t_ts = parsed.time()
+                except Exception:
+                    pass
+            if t_ts is None:
+                continue
+            dt = datetime.combine(date_only, t_ts)
+            records.append({"pin": pin, "nama": nama, "dt": dt, "date": date_only})
+
+    return records if records else None
+
+
 @api_router.post("/attendance/import")
 async def attendance_import(
     period: str,
@@ -1581,16 +1716,50 @@ async def attendance_import(
     if df.empty:
         raise HTTPException(status_code=400, detail="File kosong")
 
-    cols = list(df.columns)
-    nik_col = _find_col(cols, NIK_COLS)
-    dt_col = _find_col(cols, DATETIME_COLS)
-    date_col = _find_col(cols, DATE_COLS)
-    time_col = _find_col(cols, TIME_COLS)
+    # --- WIDE FORMAT (mesin finger dgn kolom Scan 1..N per baris) ---
+    # Coba deteksi dulu; jika detected, konversi ke list of scans (long format).
+    wide_records = None
+    try:
+        # Re-read tanpa header karena wide format tidak punya proper header
+        if fname.endswith(".xlsx"):
+            df_raw = pd.read_excel(io.BytesIO(raw), engine="openpyxl", header=None)
+        elif fname.endswith(".xls"):
+            df_raw = pd.read_excel(io.BytesIO(raw), engine="xlrd", header=None)
+        elif fname.endswith(".csv"):
+            try:
+                df_raw = pd.read_csv(io.BytesIO(raw), header=None)
+            except Exception:
+                df_raw = pd.read_csv(io.BytesIO(raw), encoding="latin-1", header=None)
+        else:
+            df_raw = None
+        if df_raw is not None:
+            wide_records = _parse_wide_finger_format(df_raw)
+    except Exception as ex:
+        logger.warning(f"Wide finger parse skipped: {ex}")
 
-    if not nik_col:
-        raise HTTPException(status_code=400, detail=f"Kolom NIK/PIN tidak ditemukan. Kolom file: {cols}")
-    if not dt_col and not (date_col and time_col) and not date_col:
-        raise HTTPException(status_code=400, detail="Kolom tanggal/jam tidak ditemukan")
+    if wide_records:
+        # Convert wide records → dataframe long-format expected by aggregation logic below
+        df = pd.DataFrame([
+            {"_pin": r["pin"], "_nama": r["nama"], "_dt": r["dt"], "_date": r["date"]}
+            for r in wide_records
+        ])
+        nik_col = "_pin"
+        dt_col = "_dt"
+        date_col = None
+        time_col = None
+        _is_wide = True
+    else:
+        _is_wide = False
+        cols = list(df.columns)
+        nik_col = _find_col(cols, NIK_COLS)
+        dt_col = _find_col(cols, DATETIME_COLS)
+        date_col = _find_col(cols, DATE_COLS)
+        time_col = _find_col(cols, TIME_COLS)
+
+        if not nik_col:
+            raise HTTPException(status_code=400, detail=f"Kolom NIK/PIN tidak ditemukan. Kolom file: {cols}")
+        if not dt_col and not (date_col and time_col) and not date_col:
+            raise HTTPException(status_code=400, detail="Kolom tanggal/jam tidak ditemukan")
 
     # Build a unified datetime column
     def _try_parse(series, with_dayfirst):
@@ -1603,19 +1772,23 @@ async def attendance_import(
         b = _try_parse(series, True)
         return b if b.isna().mean() < a.isna().mean() else a
 
-    if dt_col:
-        df["_dt"] = _best_parse(df[dt_col])
+    if _is_wide:
+        # Wide format already provides parsed _dt and _date
+        df["_nik"] = df[nik_col].astype(str).str.strip()
     else:
-        if time_col:
-            combined = df[date_col].astype(str) + " " + df[time_col].astype(str)
-            df["_dt"] = _best_parse(combined)
+        if dt_col:
+            df["_dt"] = _best_parse(df[dt_col])
         else:
-            df["_dt"] = _best_parse(df[date_col])
+            if time_col:
+                combined = df[date_col].astype(str) + " " + df[time_col].astype(str)
+                df["_dt"] = _best_parse(combined)
+            else:
+                df["_dt"] = _best_parse(df[date_col])
 
-    df = df.dropna(subset=["_dt"])
-    df["_nik"] = df[nik_col].astype(str).str.strip()
+        df = df.dropna(subset=["_dt"])
+        df["_nik"] = df[nik_col].astype(str).str.strip()
+        df["_date"] = df["_dt"].dt.date
     df = df[df["_nik"] != ""]
-    df["_date"] = df["_dt"].dt.date
 
     # Aggregate per (nik, date) -> earliest=IN, latest=OUT
     agg = df.groupby(["_nik", "_date"]).agg(in_time=("_dt", "min"), out_time=("_dt", "max")).reset_index()
@@ -1631,10 +1804,25 @@ async def attendance_import(
     # Aggregate per employee
     employees = await db.employees.find({}, {"_id": 0}).to_list(length=5000)
     emp_by_nik = {e["nik"]: e for e in employees}
+    # Untuk WIDE format, kita juga punya nama dari file — bangun fallback match by name (case-insensitive, contains)
+    emp_by_name_lc = {}
+    for e in employees:
+        nm = (e.get("name") or "").strip().lower()
+        if nm:
+            emp_by_name_lc[nm] = e
+    # Nama per PIN dari file (untuk preview & fallback match)
+    pin_to_name: Dict[str, str] = {}
+    if _is_wide and "_nama" in df.columns:
+        for pin_v, nama_v in df[["_nik", "_nama"]].dropna().itertuples(index=False):
+            k = str(pin_v).strip()
+            if k and k not in pin_to_name:
+                nm = str(nama_v).strip()
+                if nm:
+                    pin_to_name[k] = nm
 
     end_dt_template = dtime(STANDARD_END_HOUR, 0)
     summary: Dict[str, Dict[str, float]] = {}
-    unmatched_nik = set()
+    unmatched_details: List[Dict[str, Any]] = []
     total_scans = int(len(df))
 
     for nik, group in agg.groupby("_nik"):
@@ -1649,19 +1837,32 @@ async def attendance_import(
                 overtime_minutes += diff
         overtime_hours = round(overtime_minutes / 60.0, 2)
 
-        emp = emp_by_nik.get(str(nik))
+        nik_str = str(nik)
+        emp = emp_by_nik.get(nik_str)
+        # Fallback match by nama (untuk kasus PIN file ≠ NIK employee)
+        if not emp and nik_str in pin_to_name:
+            emp = emp_by_name_lc.get(pin_to_name[nik_str].lower())
         if not emp:
-            unmatched_nik.add(str(nik))
+            unmatched_details.append({
+                "pin": nik_str,
+                "name": pin_to_name.get(nik_str, ""),
+                "days_worked": days_worked,
+                "overtime_hours": overtime_hours,
+            })
             continue
 
         summary[emp["id"]] = {
-            "nik": nik,
+            "nik": emp.get("nik") or nik_str,
+            "pin": nik_str,
             "name": emp["name"],
             "days_worked": days_worked,
             "overtime_hours": overtime_hours,
             "bonus": 0,
             "deduction": 0,
         }
+
+    unmatched_nik = sorted([u["pin"] for u in unmatched_details])
+    unmatched_details.sort(key=lambda u: (u["pin"]))
 
     # Persist
     record = {
@@ -1671,7 +1872,8 @@ async def attendance_import(
         "summary": summary,
         "total_scans": total_scans,
         "matched_employees": len(summary),
-        "unmatched_niks": sorted(unmatched_nik),
+        "unmatched_niks": unmatched_nik,
+        "unmatched_details": unmatched_details,
     }
     await db.attendance_imports.replace_one({"period": period}, record, upsert=True)
 
@@ -1679,7 +1881,8 @@ async def attendance_import(
         "period": period,
         "total_scans": total_scans,
         "matched_employees": len(summary),
-        "unmatched_niks": sorted(unmatched_nik),
+        "unmatched_niks": unmatched_nik,
+        "unmatched_details": unmatched_details,
         "summary": summary,
     }
 

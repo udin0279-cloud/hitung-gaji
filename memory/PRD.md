@@ -1005,3 +1005,65 @@ Test case: 1 sale total 322k → DP 50k cash (2026-07-21) → Pelunasan 100k tra
 
 ### Backward Compatibility
 Sale lama tanpa `payments[]`: `_get_sale_payments` sintesis entry initial dari sale-level (cash_paid + payment_method + payment_bank + sale.date). Analytics + payment history endpoint tetap berjalan tanpa migrasi DB.
+
+---
+
+## Update: 2026-07-21 (session 3) — Import Absensi Format Mesin Finger (WIDE)
+
+### Feature
+Parser Import Fingerprint kini mendukung format WIDE khas mesin finger (ZKTeco/Solution):
+- **1 baris = 1 karyawan-tanggal** dengan multiple kolom Scan 1-4 (bukan long format 1 row/scan)
+- Super header row "Pegawai" / "Data scanlog" otomatis di-skip
+- Auto-detect posisi kolom (PIN=col0, Nama=col1, Tanggal=col5, Scan=col6+) atau explicit header row bila ada
+
+### Perubahan Logika
+**Backend (`_parse_wide_finger_format`):**
+1. Baca file dengan `header=None`
+2. Cari signature "Pegawai"+"Data scanlog" di row 0 → positional mapping, atau header row eksplisit dgn "PIN"/"Nama"/"Tanggal"/"Scan"
+3. Parse tanggal dgn `dayfirst=True` (format DD-MM-YYYY dari mesin finger)
+4. Iterate setiap cell scan (HH:MM:SS), gabung dgn tanggal → list of (pin, nama, datetime)
+5. Convert ke DataFrame long-format untuk memakai logic groupby existing
+
+**Aggregation (per PIN + tanggal):**
+- **Jam Masuk (in_time)** = `min` dari semua scan di grup
+- **Jam Pulang (out_time)** = `max` dari semua scan di grup
+- **Handling duplicate rows**: jika PIN+Tanggal muncul multiple rows, semua scan di flatten dulu ke long format, lalu groupby min/max otomatis ambil earliest & latest lintas semua rows ✓
+- Overtime dihitung dari `max(0, out_time - 17:00) / 60`
+
+**Matching Employee:**
+- Primary: `employee.nik == file.PIN`
+- Fallback: `employee.name` case-insensitive == `file.Nama` (untuk kasus PIN mesin finger != NIK internal)
+
+### Response Enhancement
+Endpoint kini return `unmatched_details[]` selain `unmatched_niks`:
+```json
+{
+  "unmatched_details": [
+    {"pin": "1", "name": "SYARIFUDIN", "days_worked": 11, "overtime_hours": 1.54},
+    ...
+  ]
+}
+```
+
+### UI (Payroll.jsx)
+Setelah upload, muncul preview tabel kuning **"HASIL PARSING PIN YANG BELUM TER-MAPPING KE KARYAWAN"** menampilkan PIN, Nama (dari file), Hari Hadir, Lembur (jam) untuk setiap PIN unmatched — user langsung tahu mana PIN yang perlu di-mapping ke NIK karyawan.
+
+### Testing
+**File user real (12 PIN, 288 scans):** Parser berhasil ekstraksi:
+- PIN 1 SYARIFUDIN (11 hari, 1.54h OT), PIN 2 ZIA (11d, 0h), PIN 7 WINARTI (12d, 4.77h OT), PIN 8 DAFFA (11d, 6.1h), PIN 9 PUPUT (11d, 0h), PIN 10 NURIS (9d, 5.58h), PIN 11 JOKO (11d, 4.77h), PIN 12 DEDY (12d, 6.97h), PIN 13 DINAR (10d, 5.48h), PIN 14 UBED, PIN 15 ALI, PIN 3 VERGIO ✓
+
+**Test synthetic (same PIN + same date, 2 rows):**
+- Row 1: PIN 1, 2026-07-15, scan 07:00 + 08:00
+- Row 2: PIN 1, 2026-07-15, scan 15:00 + 17:30
+- Result: in=07:00, out=17:30, overtime=0.5h ✓ (aggregasi lintas rows benar)
+
+**Test row dgn 4 scans (multi-scan per row):**
+- Row: PIN 1, 2026-07-16, scans 06:55 + 12:00 + 13:00 + 18:30
+- Result: in=06:55, out=18:30, overtime=1.5h ✓
+
+### Files Changed
+- `backend/server.py`: `_parse_wide_finger_format` (helper baru ~100 lines), integrasi ke endpoint `POST /attendance/import`, response `unmatched_details`, fallback match by name
+- `frontend/src/pages/Payroll.jsx`: preview tabel unmatched (PIN, Nama, Hari, Lembur)
+
+### Backward Compatibility
+Format LONG (1 baris = 1 scan) dengan header eksplisit ("nik/pin", "date", "time") tetap berjalan sebagai fallback bila wide detection gagal.

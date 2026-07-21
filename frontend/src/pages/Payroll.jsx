@@ -192,18 +192,48 @@ export default function Payroll() {
           </div>
 
           {fpResult && (
-            <div className="mb-3 p-3 border border-zinc-200 bg-zinc-50 flex items-start justify-between">
-              <div className="text-xs">
-                <div className="font-mono text-zinc-900">
-                  <span className="font-semibold">{fpResult.matched_employees}</span> karyawan ter-update · <span className="font-semibold">{fpResult.total_scans}</span> scan diproses
-                </div>
-                {fpResult.unmatched_niks?.length > 0 && (
-                  <div className="mt-1 text-[#E81123]">
-                    NIK tidak ditemukan: <span className="font-mono">{fpResult.unmatched_niks.join(", ")}</span>
+            <div className="mb-3 p-3 border border-zinc-200 bg-zinc-50">
+              <div className="flex items-start justify-between">
+                <div className="text-xs">
+                  <div className="font-mono text-zinc-900">
+                    <span className="font-semibold">{fpResult.matched_employees}</span> karyawan ter-update · <span className="font-semibold">{fpResult.total_scans}</span> scan diproses
                   </div>
-                )}
+                  {fpResult.unmatched_niks?.length > 0 && (
+                    <div className="mt-1 text-[#E81123]">
+                      PIN tidak cocok dengan NIK karyawan: <span className="font-mono">{fpResult.unmatched_niks.join(", ")}</span>
+                    </div>
+                  )}
+                </div>
+                <button onClick={() => setFpResult(null)} className="text-zinc-400 hover:text-zinc-700 text-xs uppercase tracking-widest font-semibold">tutup</button>
               </div>
-              <button onClick={() => setFpResult(null)} className="text-zinc-400 hover:text-zinc-700 text-xs uppercase tracking-widest font-semibold">tutup</button>
+
+              {fpResult.unmatched_details?.length > 0 && (
+                <div className="mt-3 border border-zinc-200 bg-white overflow-x-auto">
+                  <div className="px-3 py-2 bg-yellow-50 border-b border-zinc-200 text-[10px] uppercase tracking-widest font-bold text-yellow-900">
+                    Hasil parsing PIN yang belum ter-mapping ke karyawan (silakan sesuaikan NIK karyawan)
+                  </div>
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-zinc-50 border-b border-zinc-200 text-[10px] font-bold text-zinc-600 uppercase tracking-widest">
+                        <th className="px-3 py-2">PIN</th>
+                        <th className="px-3 py-2">Nama (dari file)</th>
+                        <th className="px-3 py-2 text-right">Hari Hadir</th>
+                        <th className="px-3 py-2 text-right">Lembur (jam)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fpResult.unmatched_details.map((u) => (
+                        <tr key={u.pin} data-testid={`unmatched-row-${u.pin}`} className="border-b border-zinc-100">
+                          <td className="px-3 py-2 font-mono text-zinc-800">{u.pin}</td>
+                          <td className="px-3 py-2 text-zinc-900">{u.name || <span className="text-zinc-400">—</span>}</td>
+                          <td className="px-3 py-2 text-right font-mono">{u.days_worked}</td>
+                          <td className="px-3 py-2 text-right font-mono">{u.overtime_hours}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
