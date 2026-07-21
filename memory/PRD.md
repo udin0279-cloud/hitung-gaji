@@ -774,3 +774,18 @@ Iteration 36: **backend 6/6 pytest PASS + frontend 19/19 E2E PASS** — semua sk
 
 ### Known Cosmetic (Optional)
 - React dev-mode hydration warning di Inventory BOM `<span> inside <option>` — pre-existing, tidak berdampak.
+
+---
+
+## Update: 2026-07-21 — Pagination Client-Side di Laporan Penjualan
+
+### Feature
+- Tabel Laporan Penjualan sekarang paginated **20 baris per halaman**.
+- Kontrol: `«` (First), `Previous`, tombol nomor halaman (up to 5 di sekitar current), `Next`, `»` (Last).
+- Info: `Menampilkan X–Y dari Z baris · Halaman P / Total`.
+- Reset otomatis ke halaman 1 saat filter/search berubah.
+- Footer total omzet & payment column tetap dihitung dari SELURUH data terfilter (bukan hanya halaman visible) — konsisten dengan Summary Card.
+- Client-side (data sudah ter-load via `/api/sales/report/analytics`, tidak ada backend change).
+
+### Files Changed
+- `frontend/src/pages/SalesReport.jsx`: `PAGE_SIZE=20` constant, state `page`, `pagedRows` computed slice, pagination bar dengan `data-testid: report-pagination, pagination-first, pagination-prev, pagination-page-N, pagination-next, pagination-last`.

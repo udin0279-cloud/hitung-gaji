@@ -5,7 +5,9 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from "recharts";
-import { Search, TrendingUp, Package, Calendar, Award, Users } from "lucide-react";
+import { Search, TrendingUp, Package, Calendar, Award, Users, ChevronLeft, ChevronRight } from "lucide-react";
+
+const PAGE_SIZE = 20;
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -27,6 +29,10 @@ export default function SalesReport() {
   const [data, setData] = useState({ rows: [], summary: {}, top_products: [], daily_series: [] });
   const [loading, setLoading] = useState(true);
   const [searchRow, setSearchRow] = useState("");
+  const [page, setPage] = useState(1);
+
+  // Reset ke halaman 1 saat filter atau search berubah
+  useEffect(() => { setPage(1); }, [searchRow, dateFrom, dateTo, customer]);
 
   const load = async () => {
     setLoading(true);
@@ -56,6 +62,13 @@ export default function SalesReport() {
       (r.sale_no || "").toLowerCase().includes(q)
     );
   }, [data.rows, searchRow]);
+
+  // Pagination (client-side) — max 20 baris per halaman
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const pageStart = (safePage - 1) * PAGE_SIZE;
+  const pageEnd = Math.min(rows.length, pageStart + PAGE_SIZE);
+  const pagedRows = rows.slice(pageStart, pageEnd);
 
   const barData = (data.top_products || []).slice(0, 8).map((p) => ({
     name: p.name.length > 18 ? p.name.slice(0, 17) + "…" : p.name,
@@ -302,7 +315,8 @@ export default function SalesReport() {
               {!loading && rows.length === 0 && (
                 <tr><td colSpan={24} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi pada periode ini.</td></tr>
               )}
-              {rows.map((r, idx) => {
+              {pagedRows.map((r, i) => {
+                const idx = pageStart + i;
                 const isFirst = !!r.is_first_item_of_sale;
                 const rowPayCol = r.payment_column;
                 const rowPayNominal = Number(r.payment_nominal_on_row || 0);
@@ -382,6 +396,80 @@ export default function SalesReport() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls */}
+        {!loading && rows.length > 0 && (
+          <div data-testid="report-pagination" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-zinc-200 bg-zinc-50/50">
+            <div className="text-[11px] font-mono text-zinc-600">
+              Menampilkan <b className="text-zinc-900">{pageStart + 1}</b>–<b className="text-zinc-900">{pageEnd}</b> dari <b className="text-zinc-900">{rows.length}</b> baris
+              <span className="text-zinc-400"> · </span>
+              Halaman <b className="text-[#002FA7]">{safePage}</b> / {totalPages}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                data-testid="pagination-first"
+                onClick={() => setPage(1)}
+                disabled={safePage <= 1}
+                className="px-2.5 py-1.5 border border-zinc-300 bg-white text-xs font-mono hover:bg-zinc-900 hover:text-white hover:border-zinc-900 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-zinc-500"
+                title="Halaman Pertama"
+              >
+                «
+              </button>
+              <button
+                data-testid="pagination-prev"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="inline-flex items-center gap-1 px-3 py-1.5 border border-zinc-300 bg-white text-xs font-semibold uppercase tracking-wider hover:bg-zinc-900 hover:text-white hover:border-zinc-900 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-zinc-500"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Previous
+              </button>
+
+              {/* Page number buttons (max 5 around current) */}
+              {(() => {
+                const buttons = [];
+                const maxBtns = 5;
+                let start = Math.max(1, safePage - 2);
+                let end = Math.min(totalPages, start + maxBtns - 1);
+                if (end - start + 1 < maxBtns) start = Math.max(1, end - maxBtns + 1);
+                for (let p = start; p <= end; p++) {
+                  buttons.push(
+                    <button
+                      key={p}
+                      data-testid={`pagination-page-${p}`}
+                      onClick={() => setPage(p)}
+                      className={`min-w-[32px] px-2 py-1.5 border text-xs font-mono font-bold ${
+                        p === safePage
+                          ? "border-[#002FA7] bg-[#002FA7] text-white"
+                          : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-900 hover:text-white hover:border-zinc-900"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  );
+                }
+                return buttons;
+              })()}
+
+              <button
+                data-testid="pagination-next"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="inline-flex items-center gap-1 px-3 py-1.5 border border-zinc-300 bg-white text-xs font-semibold uppercase tracking-wider hover:bg-zinc-900 hover:text-white hover:border-zinc-900 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-zinc-500"
+              >
+                Next <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                data-testid="pagination-last"
+                onClick={() => setPage(totalPages)}
+                disabled={safePage >= totalPages}
+                className="px-2.5 py-1.5 border border-zinc-300 bg-white text-xs font-mono hover:bg-zinc-900 hover:text-white hover:border-zinc-900 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-zinc-500"
+                title="Halaman Terakhir"
+              >
+                »
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
