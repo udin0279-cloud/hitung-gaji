@@ -1195,3 +1195,49 @@ Total OT per karyawan (period 2026-07) meningkat signifikan setelah update atura
 - Data 30 Juni & bulan lainnya tetap terimport normal (152 days, months=[2026-06, 2026-07])
 - User harus **re-import** file finger untuk mendapatkan overtime terbaru (existing records di DB ter-overwrite otomatis via upsert by pin+date)
 - Frontend Payroll `range/summary` sudah pakai persisted `overtime_hours`, jadi otomatis dapat nilai baru
+
+---
+
+## Update: 2026-07-21 (session 7) — Overtime dengan Jeda 30 Menit (Grace Period)
+
+### Feature Update
+Aturan OT diperbarui: pulang dalam jeda 30 menit setelah jam kerja selesai **tidak** dihitung lembur (grace period untuk keluar gedung/scan finger dsb).
+
+### Aturan Final
+| Hari | Jam Kerja | OT Mulai | Contoh |
+|------|-----------|----------|--------|
+| Senin-Jumat | 08:30 - 16:30 | **>17:00** | Pulang 18:00 → OT 1h |
+| Sabtu | 08:30 - 14:00 | **>14:30** | Pulang 16:00 → OT 1.5h |
+| Minggu | (libur) | Full durasi | Scan masuk-pulang seluruhnya = OT |
+
+### Backend
+**Konstanta baru:**
+- `OT_START_WEEKDAY = 17:00` (Senin-Jumat)
+- `OT_START_SATURDAY = 14:30` (Sabtu)
+
+Helper `_calculate_overtime_hours` diupdate: kalkulasi OT sekarang menggunakan `OT_START_*` sebagai anchor (bukan `WORK_END_*`). Konstanta `WORK_END_*` tetap disimpan untuk referensi.
+
+### Testing
+**Unit tests (12 cases, all PASS):**
+- Pulang tepat 16:30 / 17:00 / 14:30 → 0h ✓
+- Pulang 18:00 Senin → 1h ✓
+- Pulang 20:30 Rabu → 3.5h ✓
+- Pulang 16:00 Sabtu → 1.5h ✓
+- Pulang 20:00 Sabtu → 5.5h ✓
+- Minggu 09:00→15:00 → 6h ✓ (full duration)
+
+**E2E (real file finger user):**
+- Rabu 08-07 PIN 1: 07:19→18:32 → OT 1.54h (18:32-17:00) ✓
+- Sabtu 11-07 PIN 1: 07:43→16:46 → OT 2.28h (16:46-14:30) ✓
+- Minggu 12-07 PIN 10: 10:16→15:00 → OT 4.72h (full) ✓
+- Pulang <17:00 weekday atau <14:30 Sabtu → 0h ✓ (grace period bekerja)
+
+**Data cross-month tetap aman:**
+- 152 days_persisted, months=[2026-06, 2026-07]
+- Tanggal 30-06 (Selasa) tetap ter-import & OT dihitung dgn aturan baru
+
+### Files Changed
+- `backend/server.py`: konstanta `OT_START_WEEKDAY/OT_START_SATURDAY`, refactor `_calculate_overtime_hours` (anchor berubah dari WORK_END ke OT_START)
+
+### Regression Impact
+Total OT per karyawan turun ~10-15% dibanding session sebelumnya (grace period menghilangkan micro-lembur yang terjadi antara 16:30-17:00 dan 14:00-14:30).

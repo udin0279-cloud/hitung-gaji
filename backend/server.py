@@ -1529,17 +1529,22 @@ STANDARD_END_HOUR = 17
 STANDARD_DAYS_DEFAULT = 22
 
 # Jam kerja standar (untuk kalkulasi lembur)
-WORK_END_WEEKDAY = dtime(16, 30)  # Senin-Jumat
-WORK_END_SATURDAY = dtime(14, 0)  # Sabtu
-# Minggu: seluruh scan dihitung lembur (tidak ada jam kerja normal)
+WORK_END_WEEKDAY = dtime(16, 30)  # Senin-Jumat — jam kerja selesai
+WORK_END_SATURDAY = dtime(14, 0)  # Sabtu — jam kerja selesai
+# Overtime baru mulai dihitung setelah jeda 30 menit (grace period) dari jam kerja
+OT_START_WEEKDAY = dtime(17, 0)   # Senin-Jumat — OT mulai dihitung dari 17:00
+OT_START_SATURDAY = dtime(14, 30) # Sabtu — OT mulai dihitung dari 14:30
+# Minggu: seluruh scan dihitung lembur (tanpa jeda), dari scan masuk sampai scan pulang
 
 
 def _calculate_overtime_hours(date_obj, in_time, out_time) -> float:
     """Kalkulasi lembur per hari berdasarkan aturan:
-      - Senin-Jumat (weekday 0-4): overtime = out_time > 16:30
-      - Sabtu (weekday 5):        overtime = out_time > 14:00
-      - Minggu (weekday 6):       overtime = seluruh jam kerja (out - in)
-    Return: jam lembur (float, 2 desimal). 0 jika tidak lembur atau data invalid.
+      - Senin-Jumat (weekday 0-4): jam kerja selesai 16:30. OT dihitung jika out > 17:00 (jeda 30m).
+        Contoh: pulang 18:00 → OT = 18:00 - 17:00 = 1 jam.
+      - Sabtu (weekday 5):        jam kerja selesai 14:00. OT dihitung jika out > 14:30 (jeda 30m).
+        Contoh: pulang 16:00 → OT = 16:00 - 14:30 = 1.5 jam.
+      - Minggu (weekday 6):       hari libur. OT = seluruh durasi (out - in), tanpa jeda.
+    Return: jam lembur (float, 2 desimal).
     """
     import pandas as pd
     if in_time is None or out_time is None:
@@ -1549,13 +1554,13 @@ def _calculate_overtime_hours(date_obj, in_time, out_time) -> float:
     except Exception:
         return 0.0
 
-    if weekday == 6:  # Minggu — seluruh durasi = lembur
+    if weekday == 6:  # Minggu — seluruh durasi = lembur (tanpa jeda)
         diff_seconds = (out_time - in_time).total_seconds()
         return round(max(0.0, diff_seconds / 3600.0), 2)
 
-    cutoff = WORK_END_SATURDAY if weekday == 5 else WORK_END_WEEKDAY
-    cutoff_dt = pd.Timestamp.combine(date_obj, cutoff)
-    diff_minutes = (out_time - cutoff_dt).total_seconds() / 60.0
+    ot_start = OT_START_SATURDAY if weekday == 5 else OT_START_WEEKDAY
+    ot_start_dt = pd.Timestamp.combine(date_obj, ot_start)
+    diff_minutes = (out_time - ot_start_dt).total_seconds() / 60.0
     if diff_minutes <= 0:
         return 0.0
     return round(diff_minutes / 60.0, 2)
