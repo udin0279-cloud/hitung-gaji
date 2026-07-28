@@ -57,9 +57,18 @@ export default function PayrollDetail() {
     try {
       const { data } = await api.post(`/payroll/runs/${period}/whatsapp-all`);
       setWaResult(data);
-      toast.success(`WA: ${data.sent} terkirim · ${data.mocked} mock · ${data.skipped_no_phone} tanpa no.HP · ${data.failed} gagal`);
+      if (data.sent > 0 && data.failed === 0) {
+        toast.success(`✅ Berhasil terkirim: ${data.sent} pesan${data.skipped_no_phone ? ` · ${data.skipped_no_phone} dilewati (tanpa no.HP)` : ""}`);
+      } else if (data.failed > 0) {
+        toast.error(`⚠️ ${data.sent} terkirim, ${data.failed} gagal, ${data.skipped_no_phone} tanpa no.HP`);
+      } else if (data.mocked > 0) {
+        toast.info(`Mode mock (${data.mocked}) — pastikan FONNTE_TOKEN di .env`);
+      } else {
+        toast.warning(`Tidak ada pesan terkirim: ${data.skipped_no_phone} karyawan belum punya nomor WA`);
+      }
     } catch (err) {
-      toast.error(formatApiError(err.response?.data?.detail) || "Gagal kirim WhatsApp");
+      const detail = err.response?.data?.detail || err.message || "Kesalahan tidak diketahui";
+      toast.error(`❌ Gagal kirim WhatsApp: ${detail}`);
     } finally {
       setWaSending(false);
     }

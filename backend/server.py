@@ -2801,39 +2801,75 @@ def _whatsapp_slip_message(slip: Dict[str, Any], employee: Dict[str, Any]) -> st
 
 
 async def _send_whatsapp(phone: str, message: str) -> Dict[str, Any]:
-    """Send a WhatsApp message via Fonnte. Returns status dict."""
+    """Kirim WhatsApp via Fonnte. Return: {status: 'sent'|'mocked'|'failed', ...}.
+
+    Format nomor: normalize ke '62xxx' via `_normalize_phone_id`. Fonnte akan menerima
+    nomor dgn awalan 62 langsung — tidak perlu kirim `countryCode` lagi (menghindari
+    prefix ganda seperti '6262...').
+    """
     import httpx
 
     target = _normalize_phone_id(phone)
     if not target:
-        return {"status": "failed", "phone": phone, "reason": "phone_invalid"}
+        return {"status": "failed", "phone": phone, "reason": "Nomor WhatsApp tidak valid"}
 
     token = os.environ.get("FONNTE_TOKEN", "").strip()
     if not token:
         logger.info(f"[MOCK WA] to {target}: {message[:60]}...")
-        return {"status": "mocked", "phone": target, "reason": "no_token"}
+        return {"status": "mocked", "phone": target, "reason": "FONNTE_TOKEN belum diatur di .env"}
 
     base_url = os.environ.get("FONNTE_BASE_URL", "https://api.fonnte.com").rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
                 f"{base_url}/send",
-                data={"target": target, "message": message, "countryCode": "62"},
+                data={"target": target, "message": message},
                 headers={"Authorization": token},
             )
         try:
             payload = resp.json()
         except Exception:
             payload = {"raw": resp.text}
-        if resp.status_code >= 400 or payload.get("status") is False:
+
+        # Fonnte success: HTTP 200 + {"status": true, "id": [...]}
+        # Fonnte error:   HTTP 4xx/5xx atau {"status": false, "reason": "..."}
+        is_ok = resp.status_code < 400 and payload.get("status") is not False
+        if not is_ok:
+            raw_reason = payload.get("reason") or payload.get("message") or f"HTTP {resp.status_code}"
+            reason = str(raw_reason).strip()
+            # Terjemahkan error Fonnte umum ke bahasa yg mudah dipahami
+            reason_lc = reason.lower()
+            if "disconnected" in reason_lc or "logged out" in reason_lc:
+                reason = (
+                    "Perangkat WhatsApp di dashboard Fonnte sedang OFFLINE / logout. "
+                    "Silakan login ke https://md.fonnte.com dan scan ulang QR untuk menyambungkan WhatsApp Anda."
+                )
+            elif "quota" in reason_lc or "limit" in reason_lc:
+                reason = f"Kuota Fonnte habis atau melewati limit. Detail: {reason}"
+            elif "invalid token" in reason_lc or "unauthorized" in reason_lc:
+                reason = "Token FONNTE_TOKEN salah atau kadaluarsa. Perbarui token di .env dan restart backend."
+            elif "target invalid" in reason_lc or "not valid" in reason_lc:
+                reason = f"Nomor WhatsApp tidak valid / belum terdaftar di WhatsApp. Detail: {reason}"
+            logger.warning(f"Fonnte send failed to {target}: {raw_reason} | resp={payload}")
             return {
                 "status": "failed",
                 "phone": target,
-                "reason": payload.get("reason") or f"http_{resp.status_code}",
+                "reason": reason[:400],
+                "http_status": resp.status_code,
             }
-        return {"status": "sent", "phone": target, "fonnte_id": payload.get("id")}
+
+        # Success
+        fonnte_id = payload.get("id")
+        if isinstance(fonnte_id, list) and fonnte_id:
+            fonnte_id = fonnte_id[0]
+        logger.info(f"Fonnte OK → {target} (id={fonnte_id})")
+        return {"status": "sent", "phone": target, "fonnte_id": fonnte_id}
+    except httpx.TimeoutException:
+        return {"status": "failed", "phone": target, "reason": "Timeout menghubungi Fonnte (>20s)"}
+    except httpx.RequestError as ex:
+        return {"status": "failed", "phone": target, "reason": f"Koneksi gagal: {str(ex)[:150]}"}
     except Exception as ex:
-        logger.error(f"Fonnte send error: {ex}")
+        logger.error(f"Fonnte send exception: {ex}")
         return {"status": "failed", "phone": phone, "reason": str(ex)[:200]}
 
 

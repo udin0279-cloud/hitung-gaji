@@ -42,11 +42,16 @@ export default function Payslip() {
     setWaSending(true);
     try {
       const { data } = await api.post(`/payroll/payslip/${slip.id}/whatsapp`);
-      if (data.status === "sent") toast.success(`WhatsApp terkirim ke ${data.phone}`);
-      else if (data.status === "mocked") toast.info("Mode mock: Fonnte token belum diatur");
-      else toast.error(`Gagal: ${data.reason || "unknown"}`);
+      if (data.status === "sent") {
+        toast.success(`✅ Berhasil terkirim ke WhatsApp ${data.phone}`);
+      } else if (data.status === "mocked") {
+        toast.info(`Mode mock — ${data.reason || "Fonnte token belum diatur"}`);
+      } else {
+        toast.error(`❌ Gagal kirim: ${data.reason || "kesalahan tidak diketahui"}`);
+      }
     } catch (err) {
-      toast.error(formatApiError(err.response?.data?.detail) || "Gagal kirim");
+      const detail = err.response?.data?.detail || err.message || "Kesalahan tidak diketahui";
+      toast.error(`❌ Gagal kirim: ${detail}`);
     } finally {
       setWaSending(false);
     }
