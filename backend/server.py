@@ -99,8 +99,8 @@ async def get_current_employee(request: Request) -> Dict[str, Any]:
 
 
 def set_auth_cookies(response: Response, access: str, refresh: str) -> None:
-    response.set_cookie("access_token", access, httponly=True, secure=False, samesite="lax", max_age=43200, path="/")
-    response.set_cookie("refresh_token", refresh, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+    response.set_cookie("access_token", access, httponly=True, secure=True, samesite="lax", max_age=43200, path="/")
+    response.set_cookie("refresh_token", refresh, httponly=True, secure=True, samesite="lax", max_age=604800, path="/")
 
 
 async def get_current_user(request: Request) -> Dict[str, Any]:
@@ -568,7 +568,7 @@ async def portal_login(payload: PortalLoginIn, response: Response):
     if (emp.get("email") or "").lower() != email:
         raise HTTPException(status_code=401, detail="NIK atau email salah")
     token = create_portal_token(emp["id"], email)
-    response.set_cookie("portal_token", token, httponly=True, secure=False, samesite="lax", max_age=86400, path="/")
+    response.set_cookie("portal_token", token, httponly=True, secure=True, samesite="lax", max_age=86400, path="/")
     return {
         "id": emp["id"],
         "nik": emp["nik"],
@@ -1020,7 +1020,7 @@ async def portal_magic_login(token: str, response: Response):
 
     await db.portal_reset_tokens.update_one({"_id": rec["_id"]}, {"$set": {"used": True, "used_at": datetime.now(timezone.utc).isoformat()}})
     portal_token = create_portal_token(emp["id"], emp.get("email") or "")
-    response.set_cookie("portal_token", portal_token, httponly=True, secure=False, samesite="lax", max_age=86400, path="/")
+    response.set_cookie("portal_token", portal_token, httponly=True, secure=True, samesite="lax", max_age=86400, path="/")
     return {
         "id": emp["id"],
         "nik": emp["nik"],
