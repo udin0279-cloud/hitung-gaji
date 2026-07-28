@@ -1790,22 +1790,21 @@ async def attendance_import(
         df["_date"] = df["_dt"].dt.date
     df = df[df["_nik"] != ""]
 
-    # Aggregate per (nik, date) -> earliest=IN, latest=OUT
+    # Aggregate per (nik, date) -> earliest=IN, latest=OUT (untuk SEMUA tanggal di file)
     agg = df.groupby(["_nik", "_date"]).agg(in_time=("_dt", "min"), out_time=("_dt", "max")).reset_index()
 
-    # Filter to period (YYYY-MM)
+    # Validasi format periode (dipakai untuk summary card & backward compat)
     try:
         period_year, period_month = period.split("-")
         py, pm = int(period_year), int(period_month)
     except Exception:
         raise HTTPException(status_code=400, detail="Periode harus format YYYY-MM")
-    agg = agg[agg["_date"].apply(lambda d: d.year == py and d.month == pm)]
 
     # Aggregate per employee
     employees = await db.employees.find({}, {"_id": 0}).to_list(length=5000)
     emp_by_nik = {e["nik"]: e for e in employees}
-    # Untuk WIDE format, kita juga punya nama dari file — bangun fallback match by name (case-insensitive, contains)
-    emp_by_name_lc = {}
+    # Fallback match by nama (case-insensitive, exact match)
+    emp_by_name_lc: Dict[str, Dict[str, Any]] = {}
     for e in employees:
         nm = (e.get("name") or "").strip().lower()
         if nm:
@@ -1821,16 +1820,60 @@ async def attendance_import(
                     pin_to_name[k] = nm
 
     end_dt_template = dtime(STANDARD_END_HOUR, 0)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # 1) Persist per-day records ke `attendance_daily` (upsert by nik+date) — SEMUA tanggal, cross-month
+    daily_ops: List[Any] = []
+    date_range: List[Any] = []
+    for _, r in agg.iterrows():
+        nik_str = str(r["_nik"])
+        d_ = r["_date"]
+        in_t = r["in_time"]
+        out_t = r["out_time"]
+        # Overtime (per-day) — menit setelah STANDARD_END_HOUR:00
+        end_dt = pd.Timestamp.combine(d_, end_dt_template)
+        diff = (out_t - end_dt).total_seconds() / 60.0
+        overtime_h_day = round(max(0.0, diff) / 60.0, 2)
+        # Employee resolution
+        emp_ = emp_by_nik.get(nik_str)
+        if not emp_ and nik_str in pin_to_name:
+            emp_ = emp_by_name_lc.get(pin_to_name[nik_str].lower())
+        emp_id = emp_.get("id") if emp_ else None
+        emp_name = emp_.get("name") if emp_ else pin_to_name.get(nik_str, "")
+        emp_nik = emp_.get("nik") if emp_ else None
+        date_iso = d_.isoformat() if hasattr(d_, "isoformat") else str(d_)
+        doc_ = {
+            "pin": nik_str,
+            "date": date_iso,
+            "in_time": in_t.strftime("%H:%M:%S") if pd.notna(in_t) else None,
+            "out_time": out_t.strftime("%H:%M:%S") if pd.notna(out_t) else None,
+            "overtime_hours": overtime_h_day,
+            "employee_id": emp_id,
+            "employee_nik": emp_nik,
+            "employee_name": emp_name,
+            "source_file": file.filename,
+            "imported_at": now_iso,
+            "imported_by": user.get("email"),
+        }
+        daily_ops.append({"filter": {"pin": nik_str, "date": date_iso}, "doc": doc_})
+        date_range.append(d_)
+
+    # Bulk upsert (motor punya bulk_write, tapi kita loop utk simplicity)
+    for op in daily_ops:
+        await db.attendance_daily.update_one(op["filter"], {"$set": op["doc"]}, upsert=True)
+
+    # 2) Summary untuk period yg dipilih (backward compat: mengisi attendance_imports[period])
+    period_mask = agg["_date"].apply(lambda d: d.year == py and d.month == pm)
+    agg_period = agg[period_mask]
     summary: Dict[str, Dict[str, float]] = {}
     unmatched_details: List[Dict[str, Any]] = []
     total_scans = int(len(df))
 
-    for nik, group in agg.groupby("_nik"):
+    for nik, group in agg_period.groupby("_nik"):
         days_worked = int(len(group))
         overtime_minutes = 0.0
         for _, r in group.iterrows():
             out_t = r["out_time"]
-            # compute minutes after STANDARD_END_HOUR:00 on same date
             end_dt = pd.Timestamp.combine(r["_date"], end_dt_template)
             diff = (out_t - end_dt).total_seconds() / 60.0
             if diff > 0:
@@ -1839,7 +1882,6 @@ async def attendance_import(
 
         nik_str = str(nik)
         emp = emp_by_nik.get(nik_str)
-        # Fallback match by nama (untuk kasus PIN file ≠ NIK employee)
         if not emp and nik_str in pin_to_name:
             emp = emp_by_name_lc.get(pin_to_name[nik_str].lower())
         if not emp:
@@ -1864,16 +1906,28 @@ async def attendance_import(
     unmatched_nik = sorted([u["pin"] for u in unmatched_details])
     unmatched_details.sort(key=lambda u: (u["pin"]))
 
-    # Persist
+    # 3) Info rentang tanggal yang diimpor (untuk info user)
+    if date_range:
+        min_date = min(date_range).isoformat() if hasattr(min(date_range), "isoformat") else str(min(date_range))
+        max_date = max(date_range).isoformat() if hasattr(max(date_range), "isoformat") else str(max(date_range))
+    else:
+        min_date = max_date = None
+    months_covered = sorted({(d.year, d.month) for d in date_range})
+    months_covered_str = [f"{y:04d}-{m:02d}" for (y, m) in months_covered]
+
+    # Persist summary utk period (backward compat)
     record = {
         "period": period,
-        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "uploaded_at": now_iso,
         "filename": file.filename,
         "summary": summary,
         "total_scans": total_scans,
         "matched_employees": len(summary),
         "unmatched_niks": unmatched_nik,
         "unmatched_details": unmatched_details,
+        "date_range": {"from": min_date, "to": max_date},
+        "months_covered": months_covered_str,
+        "total_days_persisted": len(daily_ops),
     }
     await db.attendance_imports.replace_one({"period": period}, record, upsert=True)
 
@@ -1884,6 +1938,9 @@ async def attendance_import(
         "unmatched_niks": unmatched_nik,
         "unmatched_details": unmatched_details,
         "summary": summary,
+        "date_range": {"from": min_date, "to": max_date},
+        "months_covered": months_covered_str,
+        "total_days_persisted": len(daily_ops),
     }
 
 
@@ -1893,6 +1950,114 @@ async def get_attendance(period: str, user: dict = Depends(require_super_admin))
     if not rec:
         return {"period": period, "summary": {}, "matched_employees": 0, "total_scans": 0, "unmatched_niks": []}
     return rec
+
+
+@api_router.get("/attendance/daily/list")
+async def attendance_daily_list(
+    user: dict = Depends(require_super_admin),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    pin: Optional[str] = None,
+    employee_id: Optional[str] = None,
+):
+    """Daftar record absensi harian dgn filter fleksibel (cross-month/year OK).
+
+    Params:
+      - date_from / date_to: YYYY-MM-DD (inclusive)
+      - pin: filter PIN mesin finger
+      - employee_id: filter employee id
+    """
+    q: Dict[str, Any] = {}
+    if date_from or date_to:
+        q["date"] = {}
+        if date_from:
+            q["date"]["$gte"] = date_from
+        if date_to:
+            q["date"]["$lte"] = date_to
+    if pin:
+        q["pin"] = str(pin).strip()
+    if employee_id:
+        q["employee_id"] = employee_id
+    items = await db.attendance_daily.find(q, {"_id": 0}).sort([("date", 1), ("pin", 1)]).to_list(length=20000)
+    total_overtime = round(sum(float(i.get("overtime_hours") or 0) for i in items), 2)
+    unique_dates = sorted({i.get("date") for i in items if i.get("date")})
+    unique_pins = sorted({i.get("pin") for i in items if i.get("pin")})
+    return {
+        "items": items,
+        "count": len(items),
+        "total_overtime_hours": total_overtime,
+        "unique_dates": len(unique_dates),
+        "unique_pins": len(unique_pins),
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+
+
+@api_router.get("/attendance/range/summary")
+async def attendance_range_summary(
+    user: dict = Depends(require_super_admin),
+    date_from: str = "",
+    date_to: str = "",
+):
+    """Ringkasan per-karyawan untuk rentang tanggal (bisa cross-month).
+
+    Return: {summary: {employee_id: {nik, name, days_worked, overtime_hours, ...}}, unmatched_details: [...]}
+    Cocok untuk mengisi kolom Hari Hadir & Lembur di halaman Payroll saat rentang tanggal berbeda dari period bulanan.
+    """
+    if not date_from or not date_to:
+        raise HTTPException(status_code=400, detail="date_from dan date_to wajib (format YYYY-MM-DD)")
+    try:
+        datetime.strptime(date_from, "%Y-%m-%d")
+        datetime.strptime(date_to, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Format tanggal harus YYYY-MM-DD")
+    if date_to < date_from:
+        raise HTTPException(status_code=400, detail="date_to harus >= date_from")
+
+    items = await db.attendance_daily.find(
+        {"date": {"$gte": date_from, "$lte": date_to}},
+        {"_id": 0},
+    ).to_list(length=50000)
+
+    # Aggregate per (employee_id or pin)
+    summary: Dict[str, Dict[str, Any]] = {}
+    unmatched_by_pin: Dict[str, Dict[str, Any]] = {}
+    for it in items:
+        emp_id = it.get("employee_id")
+        pin = it.get("pin")
+        ot = float(it.get("overtime_hours") or 0)
+        if emp_id:
+            entry = summary.setdefault(emp_id, {
+                "employee_id": emp_id,
+                "nik": it.get("employee_nik"),
+                "pin": pin,
+                "name": it.get("employee_name"),
+                "days_worked": 0,
+                "overtime_hours": 0.0,
+                "bonus": 0,
+                "deduction": 0,
+            })
+            entry["days_worked"] += 1
+            entry["overtime_hours"] = round(entry["overtime_hours"] + ot, 2)
+        else:
+            key = pin or "-"
+            entry = unmatched_by_pin.setdefault(key, {
+                "pin": key,
+                "name": it.get("employee_name") or "",
+                "days_worked": 0,
+                "overtime_hours": 0.0,
+            })
+            entry["days_worked"] += 1
+            entry["overtime_hours"] = round(entry["overtime_hours"] + ot, 2)
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "summary": summary,
+        "matched_employees": len(summary),
+        "unmatched_details": sorted(unmatched_by_pin.values(), key=lambda x: x["pin"]),
+        "total_days": len(items),
+    }
 
 
 # ---------------- Dashboard ----------------

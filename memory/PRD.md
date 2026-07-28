@@ -1067,3 +1067,55 @@ Setelah upload, muncul preview tabel kuning **"HASIL PARSING PIN YANG BELUM TER-
 
 ### Backward Compatibility
 Format LONG (1 baris = 1 scan) dengan header eksplisit ("nik/pin", "date", "time") tetap berjalan sebagai fallback bila wide detection gagal.
+
+---
+
+## Update: 2026-07-21 (session 4) — Cross-Month Attendance + Range Filter Fleksibel
+
+### Feature
+Attendance import & payroll kini mendukung **cross-month/year**: satu file Excel bisa berisi beberapa bulan sekaligus dan sistem menyimpannya seluruhnya. User bisa memilih rentang tanggal apapun (misal 25-Jun s/d 5-Jul) untuk menghitung Payroll.
+
+### Backend
+**Perubahan `POST /api/attendance/import`:**
+- ❌ TIDAK LAGI membatasi data ke `period` — semua tanggal di file diproses
+- ✅ Persistensi ke collection baru `attendance_daily` (upsert by `pin+date`): satu dokumen per (PIN, tanggal) dengan `in_time`, `out_time`, `overtime_hours`, `employee_id`, `employee_nik`, `employee_name`, `source_file`
+- ✅ Summary `attendance_imports[period]` tetap dibuat (backward compat) untuk hanya bulan yg dipilih
+- Response tambahan: `total_days_persisted`, `date_range: {from, to}`, `months_covered: ["2026-06", "2026-07"]`
+
+**Endpoint baru:**
+- `GET /api/attendance/daily/list?date_from=&date_to=&pin=&employee_id=` → daftar record harian per (PIN, tanggal) untuk rentang apapun. Return: items, count, total_overtime_hours, unique_dates, unique_pins.
+- `GET /api/attendance/range/summary?date_from=&date_to=` → agregat per karyawan dalam rentang (days_worked + overtime_hours). Return: `summary: {employee_id: {...}}`, `unmatched_details: [...]`.
+
+### Frontend (`Payroll.jsx`)
+**Range picker bar (biru):**
+- Icon `CalendarDays` + label "RENTANG ABSENSI (FLEKSIBEL · CROSS-MONTH)"
+- Input `Dari Tanggal` + `Sampai Tanggal` (default = tanggal 1 s/d akhir bulan periode)
+- Tombol "TERAPKAN RENTANG" → panggil `/attendance/range/summary` → auto-merge `days_worked` & `overtime_hours` ke tabel Input Kehadiran (data yang sudah diedit user manual tetap terpelihara)
+- Tombol "DETAIL ABSEN HARIAN" → buka modal
+- Metadata inline: "N ter-mapping · M hari-karyawan · X PIN unmatched"
+
+**Modal `DetailAbsenModal`:**
+- Filter fleksibel: Dari, Sampai, PIN (opsional), Quick Bulan (input type=month → langsung set Dari/Sampai jadi tanggal 1 s/d akhir bulan)
+- Summary: baris count, jumlah tanggal unik, jumlah PIN unik, total lembur
+- Table sticky-header: No, Tanggal, PIN, Nama, NIK Karyawan, Jam Masuk, Jam Pulang, Lembur (jam), Status (OK/Unmatched dgn badge warna)
+- Baris unmatched di-highlight kuning muda
+
+### Testing
+**Backend curl E2E (`finger.xls` user):**
+- Import 2026-07 → 288 scans → 152 days persisted → months_covered=["2026-06","2026-07"] ✓
+- `daily/list ?from=2026-06-01&to=2026-06-30` → 21 rows, 2 tanggal (29 & 30 Jun), 12 PIN ✓
+- `daily/list ?from=2026-07-01&to=2026-07-31` → 131 rows, 12 unique dates ✓
+- `range/summary ?from=2026-06-25&to=2026-07-05` (CROSS-MONTH) → 67 hari-karyawan tergabung dari kedua bulan ✓
+
+**Frontend Playwright E2E:**
+- Payroll page menampilkan range bar dgn default 2026-07-01 s/d 2026-07-31 ✓
+- Ubah ke 2026-06-25 s/d 2026-07-05, klik Terapkan → toast "Rentang ... 67 hari-karyawan (12 PIN belum ter-mapping)" + metadata inline muncul ✓
+- Open Detail Absen Modal → 67 rows cross-month ditampilkan, filter ke bulan Juni saja → 21 rows ✓
+
+### Files Changed
+- `backend/server.py`: refactor endpoint import (drop period filter, persist ke `attendance_daily`), tambah endpoints `daily/list` dan `range/summary`
+- `frontend/src/pages/Payroll.jsx`: state `dateFrom`/`dateTo`/`rangeInfo`, function `fetchRangeSummary`, range picker bar, komponen `DetailAbsenModal` (~155 lines)
+
+### Backward Compatibility
+- `attendance_imports[period]` tetap dibuat untuk `/attendance/{period}` endpoint lama (dipakai payroll preview/run)
+- Sale/Payroll runs periode existing tidak berubah

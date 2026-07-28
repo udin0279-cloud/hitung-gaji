@@ -2,15 +2,29 @@ import { useEffect, useMemo, useState } from "react";
 import { api, formatIDR, formatApiError } from "../lib/api";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Calculator, ChevronRight, Eye, Trash2, ArrowRight, Fingerprint } from "lucide-react";
+import { Calculator, ChevronRight, Eye, Trash2, ArrowRight, Fingerprint, CalendarDays, X } from "lucide-react";
 
 function defaultPeriod() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function firstAndLastOfMonth(period) {
+  const [y, m] = period.split("-").map(Number);
+  const first = `${y}-${String(m).padStart(2, "0")}-01`;
+  const lastDay = new Date(y, m, 0).getDate();
+  const last = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+  return { first, last };
+}
+
 export default function Payroll() {
   const [period, setPeriod] = useState(defaultPeriod());
+  const _def = firstAndLastOfMonth(defaultPeriod());
+  const [dateFrom, setDateFrom] = useState(_def.first);
+  const [dateTo, setDateTo] = useState(_def.last);
+  const [rangeLoading, setRangeLoading] = useState(false);
+  const [rangeInfo, setRangeInfo] = useState(null);  // { matched_employees, total_days, unmatched_details }
+  const [showDetailAbsen, setShowDetailAbsen] = useState(false);
   const [employees, setEmployees] = useState([]);
   const [attendance, setAttendance] = useState({});
   const [preview, setPreview] = useState(null);
@@ -44,6 +58,42 @@ export default function Payroll() {
   };
 
   useEffect(() => { load(); }, []);
+
+  // Auto-adjust default date range saat period berubah (kecuali user sudah customize)
+  useEffect(() => {
+    const { first, last } = firstAndLastOfMonth(period);
+    setDateFrom(first);
+    setDateTo(last);
+  }, [period]);
+
+  const fetchRangeSummary = async (from, to) => {
+    if (!from || !to) return;
+    setRangeLoading(true);
+    try {
+      const { data } = await api.get(`/attendance/range/summary?date_from=${from}&date_to=${to}`);
+      setRangeInfo(data);
+      // Merge ke attendance table
+      setAttendance((curr) => {
+        const next = { ...curr };
+        Object.entries(data.summary || {}).forEach(([empId, v]) => {
+          next[empId] = {
+            ...(next[empId] || { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 }),
+            days_worked: v.days_worked,
+            overtime_hours: v.overtime_hours,
+          };
+        });
+        return next;
+      });
+      const msg = data.matched_employees > 0
+        ? `${data.matched_employees} karyawan ter-update dari rentang ${from} s/d ${to} (${data.total_days} hari-karyawan)`
+        : `Rentang ${from} s/d ${to} — ${data.total_days} hari-karyawan (${data.unmatched_details?.length || 0} PIN belum ter-mapping)`;
+      toast.success(msg);
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat rentang absensi");
+    } finally {
+      setRangeLoading(false);
+    }
+  };
 
   const updateAtt = (id, field, value) => {
     setAttendance((a) => ({ ...a, [id]: { ...a[id], [field]: Number(value) || 0 } }));
@@ -159,6 +209,56 @@ export default function Payroll() {
           </button>
         </div>
       </div>
+
+      {/* Range Absensi (Cross-Month Support) */}
+      {employees.length > 0 && (
+        <div className="mt-6 p-4 border border-zinc-200 bg-[#002FA7]/5 flex flex-wrap items-end gap-3">
+          <div className="flex items-center gap-2 mr-2">
+            <CalendarDays className="w-4 h-4 text-[#002FA7]" />
+            <div className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Rentang Absensi (Fleksibel · Cross-Month)</div>
+          </div>
+          <label className="block">
+            <span className="block text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-1">Dari Tanggal</span>
+            <input
+              data-testid="attendance-date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="rounded-none border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-1">Sampai Tanggal</span>
+            <input
+              data-testid="attendance-date-to"
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="rounded-none border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none"
+            />
+          </label>
+          <button
+            data-testid="apply-attendance-range"
+            onClick={() => fetchRangeSummary(dateFrom, dateTo)}
+            disabled={rangeLoading || !dateFrom || !dateTo}
+            className="rounded-none bg-[#002FA7] text-white px-5 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#002080] disabled:opacity-50"
+          >
+            {rangeLoading ? "Memuat…" : "Terapkan Rentang"}
+          </button>
+          <button
+            data-testid="open-detail-absen"
+            onClick={() => setShowDetailAbsen(true)}
+            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-4 py-2 text-xs font-bold uppercase tracking-wider hover:bg-zinc-50 inline-flex items-center gap-2"
+          >
+            <Eye className="w-3.5 h-3.5" /> Detail Absen Harian
+          </button>
+          {rangeInfo && (
+            <div className="text-[11px] font-mono text-zinc-600 ml-auto">
+              {rangeInfo.matched_employees} ter-mapping · {rangeInfo.total_days} hari-karyawan · {rangeInfo.unmatched_details?.length || 0} PIN unmatched
+            </div>
+          )}
+        </div>
+      )}
 
       {employees.length === 0 && !loading && (
         <div className="mt-6 p-6 border border-zinc-200 bg-white">
@@ -377,6 +477,158 @@ export default function Payroll() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+      {/* Detail Absen Modal */}
+      {showDetailAbsen && (
+        <DetailAbsenModal
+          initialFrom={dateFrom}
+          initialTo={dateTo}
+          onClose={() => setShowDetailAbsen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DetailAbsenModal({ initialFrom, initialTo, onClose }) {
+  const [from, setFrom] = useState(initialFrom);
+  const [to, setTo] = useState(initialTo);
+  const [pin, setPin] = useState("");
+  const [items, setItems] = useState([]);
+  const [meta, setMeta] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (from) params.set("date_from", from);
+      if (to) params.set("date_to", to);
+      if (pin) params.set("pin", pin);
+      const { data } = await api.get(`/attendance/daily/list?${params.toString()}`);
+      setItems(data.items || []);
+      setMeta({
+        count: data.count,
+        total_overtime: data.total_overtime_hours,
+        unique_dates: data.unique_dates,
+        unique_pins: data.unique_pins,
+      });
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat detail absen");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  // Quick month/year filter
+  const applyMonth = (period) => {
+    const [y, m] = period.split("-").map(Number);
+    const last = new Date(y, m, 0).getDate();
+    setFrom(`${y}-${String(m).padStart(2, "0")}-01`);
+    setTo(`${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white border border-zinc-300 w-full max-w-6xl max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-200">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 flex items-center justify-center bg-[#002FA7]">
+              <CalendarDays className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Detail Absensi Harian</div>
+              <h3 className="font-bold text-zinc-900 text-lg">Log Scan per PIN per Tanggal</h3>
+            </div>
+          </div>
+          <button data-testid="detail-absen-close" onClick={onClose} className="p-2 hover:bg-zinc-100"><X className="w-4 h-4" /></button>
+        </div>
+
+        {/* Filter bar */}
+        <div className="p-4 border-b border-zinc-200 bg-zinc-50 space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block">
+              <span className="block text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-1">Dari</span>
+              <input data-testid="detail-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-none border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none" />
+            </label>
+            <label className="block">
+              <span className="block text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-1">Sampai</span>
+              <input data-testid="detail-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-none border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none" />
+            </label>
+            <label className="block">
+              <span className="block text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-1">PIN (opsional)</span>
+              <input data-testid="detail-pin" type="text" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="1, 2, 10..." className="rounded-none border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none w-32" />
+            </label>
+            <label className="block">
+              <span className="block text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-1">Quick Bulan</span>
+              <input data-testid="detail-month-quick" type="month" onChange={(e) => e.target.value && applyMonth(e.target.value)} className="rounded-none border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none" />
+            </label>
+            <button data-testid="detail-apply" onClick={load} disabled={loading} className="rounded-none bg-[#002FA7] text-white px-4 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#002080] disabled:opacity-50">
+              {loading ? "Memuat…" : "Terapkan"}
+            </button>
+          </div>
+          {meta && (
+            <div className="flex flex-wrap gap-4 text-[11px] font-mono text-zinc-700">
+              <span><b className="text-zinc-900">{meta.count}</b> baris</span>
+              <span><b className="text-zinc-900">{meta.unique_dates}</b> tanggal</span>
+              <span><b className="text-zinc-900">{meta.unique_pins}</b> PIN</span>
+              <span>Total lembur: <b className="text-[#002FA7]">{meta.total_overtime}</b> jam</span>
+            </div>
+          )}
+        </div>
+
+        {/* Table */}
+        <div className="flex-1 overflow-y-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="sticky top-0 bg-zinc-100 border-b border-zinc-200">
+              <tr className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">
+                <th className="px-3 py-2 w-12 text-center">No</th>
+                <th className="px-3 py-2">Tanggal</th>
+                <th className="px-3 py-2">PIN</th>
+                <th className="px-3 py-2">Nama</th>
+                <th className="px-3 py-2">NIK Karyawan</th>
+                <th className="px-3 py-2 text-center">Jam Masuk</th>
+                <th className="px-3 py-2 text-center">Jam Pulang</th>
+                <th className="px-3 py-2 text-right">Lembur (jam)</th>
+                <th className="px-3 py-2 text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && <tr><td colSpan={9} className="px-4 py-8 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+              {!loading && items.length === 0 && (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-zinc-400 font-mono text-xs">Tidak ada data pada rentang ini.</td></tr>
+              )}
+              {items.map((it, i) => {
+                const matched = !!it.employee_id;
+                return (
+                  <tr key={`${it.pin}-${it.date}-${i}`} data-testid="detail-row" className={`border-b border-zinc-100 ${matched ? "" : "bg-yellow-50/50"}`}>
+                    <td className="px-3 py-2 text-center font-mono text-[11px] text-zinc-500">{i + 1}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-zinc-900">{it.date}</td>
+                    <td className="px-3 py-2 font-mono text-xs font-bold text-zinc-900">{it.pin}</td>
+                    <td className="px-3 py-2 text-xs">{it.employee_name || <span className="text-zinc-300">—</span>}</td>
+                    <td className="px-3 py-2 font-mono text-[11px] text-zinc-600">{it.employee_nik || <span className="text-zinc-300">—</span>}</td>
+                    <td className="px-3 py-2 text-center font-mono text-xs">{it.in_time || <span className="text-zinc-300">—</span>}</td>
+                    <td className="px-3 py-2 text-center font-mono text-xs">{it.out_time || <span className="text-zinc-300">—</span>}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{Number(it.overtime_hours || 0).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-center">
+                      {matched ? (
+                        <span className="inline-block bg-[#008A00]/15 text-[#008A00] border border-[#008A00]/30 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest">OK</span>
+                      ) : (
+                        <span className="inline-block bg-yellow-400 text-yellow-900 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest">Unmatched</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-3 border-t border-zinc-200 bg-zinc-50">
+          <button data-testid="detail-close-btn" onClick={onClose} className="rounded-none bg-white border border-zinc-300 text-zinc-900 px-4 py-2 text-xs font-bold uppercase tracking-wider hover:bg-zinc-50">Tutup</button>
         </div>
       </div>
     </div>
