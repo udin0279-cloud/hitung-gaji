@@ -1150,3 +1150,48 @@ User report: modal Detail Absen Harian secara default filter ke bulan berjalan. 
 
 ### Note
 Fitur ini juga menegaskan bahwa **semua data telah benar tersimpan** — tidak ada masalah pada backend/database. Sebelumnya user melihat filter otomatis di UI membuat data lain terlihat "hilang".
+
+---
+
+## Update: 2026-07-21 (session 6) — Overtime Logic (Weekday/Sabtu/Minggu)
+
+### Feature
+Aturan lembur sesuai realita kerja Indonesia:
+- **Senin-Jumat** (weekday 0-4): jam kerja 08:30 - 16:30. Overtime = out_time > 16:30
+- **Sabtu** (weekday 5): jam kerja 08:30 - 14:00. Overtime = out_time > 14:00
+- **Minggu** (weekday 6): seluruh scan hari itu dihitung lembur (out - in)
+
+### Backend
+**Helper baru `_calculate_overtime_hours(date_obj, in_time, out_time)`:**
+- Mengembalikan jam lembur berdasarkan hari kerja
+- Digunakan di endpoint import (persist daily records) dan summary aggregation (attendance_imports[period])
+- Constants: `WORK_END_WEEKDAY = 16:30`, `WORK_END_SATURDAY = 14:00`
+
+**Perubahan struktur `attendance_daily`:**
+- Field baru `weekday`: "Senin" / "Selasa" / ... / "Minggu" — untuk display & audit
+- `overtime_hours` sekarang pakai aturan baru
+
+### Testing (Backend E2E dengan file real user)
+Re-import → 152 days_persisted:
+| Tanggal | Weekday | Sample: PIN 1 SYARIFUDIN | OT |
+|---------|---------|---------------------------|-----|
+| 30-06-2026 | Selasa | 07:08→16:40 (>16:30) | 0.18h ✓ |
+| 04-07-2026 | Sabtu | 07:39→14:13:51 (>14:00) | 0.23h ✓ |
+| 08-07-2026 | Rabu | 07:19→18:32 (>16:30) | 2.04h ✓ |
+| 11-07-2026 | Sabtu | 07:43→16:46 (>14:00) | 2.78h ✓ |
+| 12-07-2026 | Minggu | (semua scan lembur) | 4.72h ✓ |
+| 13-07-2026 | Senin | 07:08 single-scan | 0.00h ✓ |
+
+Total OT per karyawan (period 2026-07) meningkat signifikan setelah update aturan:
+- DEDY 6.97h → 17.49h (+10.5h dari cutoff mundur ke 16:30 + Sabtu/Minggu)
+- DAFFA 6.10h → 16.33h
+- JOKO 4.77h → 15.05h
+
+### Files Changed
+- `backend/server.py`: constant + helper `_calculate_overtime_hours`, refactor 2 spot OT calc di endpoint import
+- Tidak ada perubahan frontend — jam lembur yang tampil di UI otomatis pakai nilai baru (dari DB)
+
+### Notes
+- Data 30 Juni & bulan lainnya tetap terimport normal (152 days, months=[2026-06, 2026-07])
+- User harus **re-import** file finger untuk mendapatkan overtime terbaru (existing records di DB ter-overwrite otomatis via upsert by pin+date)
+- Frontend Payroll `range/summary` sudah pakai persisted `overtime_hours`, jadi otomatis dapat nilai baru

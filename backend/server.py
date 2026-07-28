@@ -11,7 +11,7 @@ import uuid
 import asyncio
 import bcrypt
 import jwt
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dtime
 from typing import List, Optional, Dict, Any, Tuple
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Form, Body
@@ -1528,6 +1528,38 @@ STANDARD_START_HOUR = 8
 STANDARD_END_HOUR = 17
 STANDARD_DAYS_DEFAULT = 22
 
+# Jam kerja standar (untuk kalkulasi lembur)
+WORK_END_WEEKDAY = dtime(16, 30)  # Senin-Jumat
+WORK_END_SATURDAY = dtime(14, 0)  # Sabtu
+# Minggu: seluruh scan dihitung lembur (tidak ada jam kerja normal)
+
+
+def _calculate_overtime_hours(date_obj, in_time, out_time) -> float:
+    """Kalkulasi lembur per hari berdasarkan aturan:
+      - Senin-Jumat (weekday 0-4): overtime = out_time > 16:30
+      - Sabtu (weekday 5):        overtime = out_time > 14:00
+      - Minggu (weekday 6):       overtime = seluruh jam kerja (out - in)
+    Return: jam lembur (float, 2 desimal). 0 jika tidak lembur atau data invalid.
+    """
+    import pandas as pd
+    if in_time is None or out_time is None:
+        return 0.0
+    try:
+        weekday = date_obj.weekday()  # Mon=0 .. Sun=6
+    except Exception:
+        return 0.0
+
+    if weekday == 6:  # Minggu — seluruh durasi = lembur
+        diff_seconds = (out_time - in_time).total_seconds()
+        return round(max(0.0, diff_seconds / 3600.0), 2)
+
+    cutoff = WORK_END_SATURDAY if weekday == 5 else WORK_END_WEEKDAY
+    cutoff_dt = pd.Timestamp.combine(date_obj, cutoff)
+    diff_minutes = (out_time - cutoff_dt).total_seconds() / 60.0
+    if diff_minutes <= 0:
+        return 0.0
+    return round(diff_minutes / 60.0, 2)
+
 
 def _normalize_col(c):
     return str(c).strip().lower().replace(" ", "_") if c is not None else ""
@@ -1819,7 +1851,7 @@ async def attendance_import(
                 if nm:
                     pin_to_name[k] = nm
 
-    end_dt_template = dtime(STANDARD_END_HOUR, 0)
+    end_dt_template = dtime(STANDARD_END_HOUR, 0)  # legacy, no longer used for OT calc
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # 1) Persist per-day records ke `attendance_daily` (upsert by nik+date) — SEMUA tanggal, cross-month
@@ -1830,10 +1862,14 @@ async def attendance_import(
         d_ = r["_date"]
         in_t = r["in_time"]
         out_t = r["out_time"]
-        # Overtime (per-day) — menit setelah STANDARD_END_HOUR:00
-        end_dt = pd.Timestamp.combine(d_, end_dt_template)
-        diff = (out_t - end_dt).total_seconds() / 60.0
-        overtime_h_day = round(max(0.0, diff) / 60.0, 2)
+        # Overtime menggunakan aturan Mon-Fri (>16:30), Sabtu (>14:00), Minggu (seluruh durasi)
+        overtime_h_day = _calculate_overtime_hours(d_, in_t, out_t)
+        # Weekday name untuk konteks di UI
+        try:
+            _WD = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+            weekday_name = _WD[d_.weekday()]
+        except Exception:
+            weekday_name = None
         # Employee resolution
         emp_ = emp_by_nik.get(nik_str)
         if not emp_ and nik_str in pin_to_name:
@@ -1845,6 +1881,7 @@ async def attendance_import(
         doc_ = {
             "pin": nik_str,
             "date": date_iso,
+            "weekday": weekday_name,
             "in_time": in_t.strftime("%H:%M:%S") if pd.notna(in_t) else None,
             "out_time": out_t.strftime("%H:%M:%S") if pd.notna(out_t) else None,
             "overtime_hours": overtime_h_day,
@@ -1871,14 +1908,10 @@ async def attendance_import(
 
     for nik, group in agg_period.groupby("_nik"):
         days_worked = int(len(group))
-        overtime_minutes = 0.0
+        overtime_hours_total = 0.0
         for _, r in group.iterrows():
-            out_t = r["out_time"]
-            end_dt = pd.Timestamp.combine(r["_date"], end_dt_template)
-            diff = (out_t - end_dt).total_seconds() / 60.0
-            if diff > 0:
-                overtime_minutes += diff
-        overtime_hours = round(overtime_minutes / 60.0, 2)
+            overtime_hours_total += _calculate_overtime_hours(r["_date"], r["in_time"], r["out_time"])
+        overtime_hours = round(overtime_hours_total, 2)
 
         nik_str = str(nik)
         emp = emp_by_nik.get(nik_str)
