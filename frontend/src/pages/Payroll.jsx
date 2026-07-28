@@ -492,21 +492,24 @@ export default function Payroll() {
 }
 
 function DetailAbsenModal({ initialFrom, initialTo, onClose }) {
-  const [from, setFrom] = useState(initialFrom);
-  const [to, setTo] = useState(initialTo);
+  // Default: no filter → tampilkan SEMUA data yang sudah diimport
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [pin, setPin] = useState("");
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
+  const load = async (params) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (from) params.set("date_from", from);
-      if (to) params.set("date_to", to);
-      if (pin) params.set("pin", pin);
-      const { data } = await api.get(`/attendance/daily/list?${params.toString()}`);
+      const p = params !== undefined ? params : { from, to, pin };
+      const qs = new URLSearchParams();
+      // Kalau kosong, kirim rentang super luas agar backend return semua
+      qs.set("date_from", p.from || "2000-01-01");
+      qs.set("date_to", p.to || "2099-12-31");
+      if (p.pin) qs.set("pin", p.pin);
+      const { data } = await api.get(`/attendance/daily/list?${qs.toString()}`);
       setItems(data.items || []);
       setMeta({
         count: data.count,
@@ -521,14 +524,22 @@ function DetailAbsenModal({ initialFrom, initialTo, onClose }) {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load({ from: "", to: "", pin: "" }); /* eslint-disable-next-line */ }, []);
 
-  // Quick month/year filter
+  // Quick actions
+  const showAll = () => { setFrom(""); setTo(""); setPin(""); load({ from: "", to: "", pin: "" }); };
   const applyMonth = (period) => {
+    if (!period) return;
     const [y, m] = period.split("-").map(Number);
     const last = new Date(y, m, 0).getDate();
-    setFrom(`${y}-${String(m).padStart(2, "0")}-01`);
-    setTo(`${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`);
+    const f = `${y}-${String(m).padStart(2, "0")}-01`;
+    const t = `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+    setFrom(f); setTo(t);
+    load({ from: f, to: t, pin });
+  };
+  const applyCurrentMonth = () => {
+    const d = new Date();
+    applyMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   };
 
   return (
@@ -541,7 +552,7 @@ function DetailAbsenModal({ initialFrom, initialTo, onClose }) {
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Detail Absensi Harian</div>
-              <h3 className="font-bold text-zinc-900 text-lg">Log Scan per PIN per Tanggal</h3>
+              <h3 className="font-bold text-zinc-900 text-lg">Semua Data Absensi ter-Import</h3>
             </div>
           </div>
           <button data-testid="detail-absen-close" onClick={onClose} className="p-2 hover:bg-zinc-100"><X className="w-4 h-4" /></button>
@@ -562,20 +573,40 @@ function DetailAbsenModal({ initialFrom, initialTo, onClose }) {
               <span className="block text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-1">PIN (opsional)</span>
               <input data-testid="detail-pin" type="text" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="1, 2, 10..." className="rounded-none border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none w-32" />
             </label>
-            <label className="block">
-              <span className="block text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-1">Quick Bulan</span>
-              <input data-testid="detail-month-quick" type="month" onChange={(e) => e.target.value && applyMonth(e.target.value)} className="rounded-none border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none" />
-            </label>
-            <button data-testid="detail-apply" onClick={load} disabled={loading} className="rounded-none bg-[#002FA7] text-white px-4 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#002080] disabled:opacity-50">
-              {loading ? "Memuat…" : "Terapkan"}
+            <button data-testid="detail-apply" onClick={() => load()} disabled={loading} className="rounded-none bg-[#002FA7] text-white px-4 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#002080] disabled:opacity-50">
+              {loading ? "Memuat…" : "Terapkan Filter"}
             </button>
           </div>
+          {/* Quick actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mr-1">Cepat:</span>
+            <button
+              data-testid="detail-show-all"
+              onClick={showAll}
+              className="rounded-none bg-[#008A00] text-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-[#006D00]"
+            >
+              Tampilkan Semua
+            </button>
+            <button
+              data-testid="detail-current-month"
+              onClick={applyCurrentMonth}
+              className="rounded-none bg-white border border-zinc-300 text-zinc-900 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-zinc-50"
+            >
+              Bulan Ini
+            </button>
+            <label className="inline-flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Ke Bulan Spesifik:</span>
+              <input data-testid="detail-month-quick" type="month" onChange={(e) => applyMonth(e.target.value)} className="rounded-none border border-zinc-300 px-2 py-1 text-xs font-mono focus:border-[#002FA7] focus:outline-none" />
+            </label>
+          </div>
           {meta && (
-            <div className="flex flex-wrap gap-4 text-[11px] font-mono text-zinc-700">
+            <div className="flex flex-wrap gap-4 text-[11px] font-mono text-zinc-700 pt-1">
               <span><b className="text-zinc-900">{meta.count}</b> baris</span>
               <span><b className="text-zinc-900">{meta.unique_dates}</b> tanggal</span>
               <span><b className="text-zinc-900">{meta.unique_pins}</b> PIN</span>
               <span>Total lembur: <b className="text-[#002FA7]">{meta.total_overtime}</b> jam</span>
+              {!from && !to && <span className="text-[#008A00] font-bold">· Menampilkan SEMUA data</span>}
+              {(from || to) && <span className="text-[#002FA7]">· Filter: {from || "…"} s/d {to || "…"}</span>}
             </div>
           )}
         </div>

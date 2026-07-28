@@ -1119,3 +1119,34 @@ Attendance import & payroll kini mendukung **cross-month/year**: satu file Excel
 ### Backward Compatibility
 - `attendance_imports[period]` tetap dibuat untuk `/attendance/{period}` endpoint lama (dipakai payroll preview/run)
 - Sale/Payroll runs periode existing tidak berubah
+
+---
+
+## Update: 2026-07-21 (session 5) — UI Fix: Detail Absensi Default "Tampilkan Semua"
+
+### Feature Fix (URGENT)
+User report: modal Detail Absen Harian secara default filter ke bulan berjalan. User ingin default menampilkan SEMUA data yang ter-import.
+
+### Perubahan
+1. **Backend**: (tidak berubah) Verified — semua 152 hari-karyawan (14 tanggal unik lintas 2026-06 dan 2026-07) sudah tersimpan benar termasuk 30-06-2026 & 29-06-2026. Parsing DD-MM-YYYY `dayfirst=True` bekerja normal.
+
+2. **Frontend `DetailAbsenModal`:**
+   - Default state Dari/Sampai/PIN = KOSONG → API dipanggil dgn rentang 2000-01-01 s/d 2099-12-31 (effektif ambil semua)
+   - Title berubah dari "Log Scan per PIN per Tanggal" → **"Semua Data Absensi ter-Import"**
+   - Ditambah **3 tombol Quick Action** yang prominent:
+     - 🟢 **TAMPILKAN SEMUA** (hijau, testid `detail-show-all`) → clear filter, reload semua
+     - **BULAN INI** (testid `detail-current-month`) → set filter ke bulan berjalan
+     - **Ke Bulan Spesifik** (dropdown `type=month`) → set filter ke bulan tertentu
+   - Badge status: 🟢 "Menampilkan SEMUA data" (jika tidak ada filter aktif) atau 🔵 "Filter: X s/d Y" (jika filter aktif)
+   - Meta summary tetap tampil (baris, tanggal, PIN, lembur)
+
+### Testing (Playwright)
+- Modal open default → 152 baris ditampilkan ✓ (mencakup 30-06-2026 & tanggal lainnya)
+- Klik "Bulan Ini" → 131 baris (Juli saja) ✓
+- Klik "Tampilkan Semua" → kembali ke 152 baris ✓
+
+### Files Changed
+- `frontend/src/pages/Payroll.jsx`: refactor `DetailAbsenModal` — default no-filter, tambah quick action buttons, badge status "Semua data"/"Filter"
+
+### Note
+Fitur ini juga menegaskan bahwa **semua data telah benar tersimpan** — tidak ada masalah pada backend/database. Sebelumnya user melihat filter otomatis di UI membuat data lain terlihat "hilang".
