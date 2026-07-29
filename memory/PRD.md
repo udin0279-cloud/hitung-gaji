@@ -1532,3 +1532,32 @@ User request: modul Buku Kas tidak boleh menampilkan angka "101" atau kolom "Kod
 
 ### Files Changed
 - `frontend/src/pages/CashBook.jsx`: JournalTab table (hapus col Kode Akun + colSpan), BookTab labels, chip badge, konvensi footnote
+
+---
+
+## Update: 2026-07-29 (session 7) — Toggle "Tampilkan Kode Akun" di Buku Kas
+
+### Feature
+Kembalikan opsi menampilkan Kode Akun via toggle checkbox di tab bar modul Kas Operasional. Default OFF (sesuai request URGENT sebelumnya).
+
+### Behavior
+- **State default OFF**: kolom `Kode Akun` disembunyikan di JournalTab, semua teks bertuliskan "101" (chip badge "Kredit: Hanya 101 Kas", label "transaksi Kas 101", konvensi "khusus Akun 101 Kas", "301 Penjualan Tunai / 301-BCA") diganti menjadi "Kas Utama" / disederhanakan
+- **Toggle ON**: kolom `Kode Akun` muncul kembali di JournalTab + colSpan header/footer/empty state auto-adjust (7→8), semua teks angka akun kembali ke bentuk originalnya untuk kebutuhan audit/finance
+- **Persistence**: state disimpan di `localStorage['cashbook.showAccountCode']` (`"1"` / `"0"`) — bertahan setelah reload / logout-login
+- **Testid**: `toggle-account-code` untuk QA
+
+### Filter Behavior (unchanged)
+Filter data internal tetap `t.account_code === "101"` — toggle hanya mempengaruhi visibility, tidak mempengaruhi filter aggregasi/render.
+
+### Files Changed
+- `frontend/src/pages/CashBook.jsx`:
+  - Parent state `showAccountCode` + useEffect persist localStorage
+  - Toggle checkbox di tab bar (kanan atas)
+  - Prop drill `showAccountCode` ke BookTab & JournalTab
+  - BookTab: conditional label "Kas 101" vs "Kas Utama"
+  - JournalTab: conditional column `Kode Akun` (header/cell/colSpan), chip badge, konvensi footnote
+
+### Testing (Playwright E2E)
+- Default state OFF: `Kode Akun` in body = **FALSE**, `101` in body = **FALSE** ✓
+- Toggle ON: header `KODE AKUN · NAMA AKUN · TANGGAL · KETERANGAN · DEBET · KREDIT · SALDO · AKSI`, chip "HANYA 101 KAS", footnote "301 Penjualan Tunai" muncul, `101` in body = TRUE ✓
+- Persistence: uncheck → reload page → state tetap unchecked ✓
