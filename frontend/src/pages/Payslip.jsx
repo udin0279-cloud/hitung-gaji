@@ -174,6 +174,13 @@ export default function Payslip() {
                 value={e.overtime}
               />
             )}
+            {e.overtime > 0 && (
+              <tr>
+                <td colSpan={2} className="pl-8 pr-2 py-1 text-[10px] text-zinc-500 font-mono border-b border-zinc-100">
+                  Rincian upah: Gaji Pokok Rp {Number(slip.earnings.basic_salary).toLocaleString("id-ID")} ÷ {slip.attendance.standard_workdays} hari ÷ {slip.attendance.work_hours_per_day} jam = <b>Rp {Number(slip.attendance.overtime_rate_per_hour).toLocaleString("id-ID")}/jam</b> ({slip.attendance.overtime_minutes} menit × Rp {Number(slip.attendance.overtime_rate_per_minute).toLocaleString("id-ID")}/menit)
+                </td>
+              </tr>
+            )}
             {e.bonus > 0 && <Row label="Bonus" value={e.bonus} />}
             <Row label="Total Bruto" value={e.gross} bold border />
           </div>

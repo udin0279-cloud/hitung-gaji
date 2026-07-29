@@ -1275,3 +1275,54 @@ Menambah opsi konfigurasi **"Tarif Lembur per Jam (Rp)"** di halaman Settings. J
 - `backend/server.py`: CONFIG default, calculate_payslip logic, config_constants GET/PUT schema, slip payload, PDF label
 - `frontend/src/pages/Settings.jsx`: field baru di section Biaya Jabatan & Kerja, load/save handling
 - `frontend/src/pages/Payslip.jsx`: label lembur dinamis dgn breakdown
+
+---
+
+## Update: 2026-07-21 (session 9) — Formula Lembur Pro-Rata Harian (per-Menit)
+
+### Feature
+Rumus lembur diganti total ke pro-rata harian berdasarkan gaji pokok, mengabaikan tarif manual di Konfigurasi. Grace period 30 menit tetap terjaga.
+
+**Rumus:**
+```
+Upah per Hari  = Gaji Pokok / standard_workdays (default 22, bisa diubah di Settings, misal 26)
+Upah per Jam   = Upah per Hari / 7 (jam kerja per hari)
+Upah per Menit = Upah per Jam / 60
+Total Lembur   = Total Menit OT × Upah per Menit
+```
+
+### Backend
+- **`calculate_payslip`:** hapus branching `configured/auto_1_173`. Sekarang selalu pakai formula pro-rata harian.
+- **Konstanta:** `WORK_HOURS_PER_DAY = 7` (inline dalam fungsi)
+- **Slip payload attendance** field baru:
+  - `overtime_minutes` (jam × 60)
+  - `overtime_rate_per_hour` (upah/jam)
+  - `overtime_rate_per_minute` (upah/menit)
+  - `wage_per_day` (upah/hari)
+  - `work_hours_per_day` = 7
+  - `standard_workdays` (dari CONFIG)
+  - `overtime_rate_source` = "auto_pro_rata_daily"
+
+### Frontend
+- **Settings.jsx:** hapus field "Tarif Lembur per Jam (Rp)" & "Multiplier Lembur (fallback)" — tidak lagi digunakan
+- **Payslip.jsx:** di bawah row Lembur, tampil baris rincian format:
+  ```
+  Rincian upah: Gaji Pokok Rp 10,000,000 ÷ 26 hari ÷ 7 jam = Rp 54.945/jam
+  (300 menit × Rp 915.75/menit)
+  ```
+
+### Testing (E2E via curl)
+Set standard_workdays = 26, employee basic = 10jt, OT = 5 jam:
+- Upah/Hari  : Rp 384.615 (10M / 26) ✓
+- Upah/Jam   : Rp 54.945 (per hari / 7) ✓
+- Upah/Menit : Rp 915,75 (per jam / 60) ✓
+- Total OT   : 300 menit × 915,75 = **Rp 274.725** ✓ (match expected exactly)
+
+### Files Changed
+- `backend/server.py`: `calculate_payslip` — hapus config check, ganti dgn formula pro-rata daily; slip payload fields
+- `frontend/src/pages/Payslip.jsx`: baris rincian upah di bawah row Lembur
+- `frontend/src/pages/Settings.jsx`: hapus 2 field yg tidak dipakai (overtime_multiplier & overtime_hourly_rate)
+
+### Note
+- CONFIG field `overtime_hourly_rate` & `overtime_multiplier` masih ada di DB (backward-compat) tapi TIDAK dipakai
+- Grace period 30 menit (dari session 7) tetap aktif — nilai `overtime_hours` sudah accounted for grace period saat import

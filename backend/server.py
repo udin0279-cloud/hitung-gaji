@@ -390,18 +390,21 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     standard_days = float(CONFIG["standard_workdays"]) or 22.0
     days_worked = float(attendance.get("days_worked", standard_days) or standard_days)
 
-    # Overtime pay:
-    # - Jika CONFIG["overtime_hourly_rate"] > 0 → pakai nilai flat dari konfigurasi
-    # - Jika 0 → pakai formula standar Indonesia (basic / 173) * overtime_multiplier
-    _configured_ot_rate = float(CONFIG.get("overtime_hourly_rate", 0) or 0)
-    if _configured_ot_rate > 0:
-        overtime_rate_per_hour = _configured_ot_rate
-        overtime_pay = overtime_rate_per_hour * overtime_hours
-        _ot_source = "configured"  # untuk display di slip
-    else:
-        overtime_rate_per_hour = (basic / 173) * float(CONFIG["overtime_multiplier"]) if basic else 0
-        overtime_pay = overtime_rate_per_hour * overtime_hours
-        _ot_source = "auto_1_173"
+    # Overtime pay — RUMUS BARU (per-menit berdasarkan gaji pokok):
+    #   Upah/Hari  = Gaji Pokok / Jumlah Hari Kerja per Bulan (CONFIG.standard_workdays)
+    #   Upah/Jam   = Upah/Hari / 7   (7 jam kerja normal per hari)
+    #   Upah/Menit = Upah/Jam / 60
+    #   Total Lembur = Total Menit Overtime × Upah/Menit
+    # `overtime_hours` di attendance sudah dalam satuan JAM (dgn jeda 30m grace period),
+    # convert ke menit dulu.
+    WORK_HOURS_PER_DAY = 7
+    _wage_per_day = (basic / standard_days) if standard_days > 0 else 0
+    _wage_per_hour = _wage_per_day / WORK_HOURS_PER_DAY if _wage_per_day else 0
+    _wage_per_minute = _wage_per_hour / 60 if _wage_per_hour else 0
+    overtime_minutes = float(overtime_hours) * 60.0
+    overtime_rate_per_hour = round(_wage_per_hour, 2)
+    overtime_pay = round(overtime_minutes * _wage_per_minute, 2)
+    _ot_source = "auto_pro_rata_daily"  # source untuk display di slip
 
     # Pro-rate basic if days_worked < standard
     prorate_factor = min(days_worked / standard_days, 1.0) if standard_days > 0 else 1.0
@@ -513,8 +516,13 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
         "attendance": {
             "days_worked": days_worked,
             "overtime_hours": overtime_hours,
+            "overtime_minutes": round(overtime_minutes, 2),
             "overtime_rate_per_hour": round(overtime_rate_per_hour, 2),
-            "overtime_rate_source": _ot_source,  # "configured" atau "auto_1_173"
+            "overtime_rate_per_minute": round(_wage_per_minute, 2),
+            "wage_per_day": round(_wage_per_day, 2),
+            "work_hours_per_day": WORK_HOURS_PER_DAY,
+            "standard_workdays": standard_days,
+            "overtime_rate_source": _ot_source,  # "auto_pro_rata_daily"
             "overtime_multiplier": float(CONFIG["overtime_multiplier"]),
         },
         "net_salary": round(net_salary, 2),
@@ -1320,8 +1328,9 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
     if e.get("insentif_lain", 0):
         earn_rows.append(["Insentif Lain-lain", _format_idr(e["insentif_lain"])])
     if e.get("overtime", 0):
-        _ot_hours = slip.get("attendance", {}).get("overtime_hours", 0)
-        _ot_rate = slip.get("attendance", {}).get("overtime_rate_per_hour", 0)
+        _att = slip.get("attendance", {})
+        _ot_hours = _att.get("overtime_hours", 0)
+        _ot_rate = _att.get("overtime_rate_per_hour", 0)
         _label = f"Lembur ({_ot_hours} jam × {_format_idr(_ot_rate)}/jam)" if _ot_rate else "Lembur"
         earn_rows.append([_label, _format_idr(e["overtime"])])
     if e.get("bonus", 0):

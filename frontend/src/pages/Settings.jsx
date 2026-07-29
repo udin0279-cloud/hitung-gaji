@@ -28,8 +28,6 @@ const RATE_FIELDS = [
     { key: "biaya_jabatan_rate", label: "Biaya Jabatan Rate", type: "pct" },
     { key: "biaya_jabatan_max_year", label: "Biaya Jabatan Max/Tahun", type: "money" },
     { key: "standard_workdays", label: "Hari Kerja Standar/Bulan", type: "num" },
-    { key: "overtime_multiplier", label: "Multiplier Lembur (fallback)", type: "num" },
-    { key: "overtime_hourly_rate", label: "Tarif Lembur per Jam (Rp)", type: "money" },
   ]},
 ];
 
