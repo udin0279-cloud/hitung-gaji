@@ -33,7 +33,31 @@ export default function Payroll() {
   const [running, setRunning] = useState(false);
   const [fpImporting, setFpImporting] = useState(false);
   const [fpResult, setFpResult] = useState(null);
+  const [draftLoaded, setDraftLoaded] = useState(false);  // apakah draft berhasil dimuat dari localStorage
+  const [lastSavedAt, setLastSavedAt] = useState(null);   // waktu terakhir auto-save
   const navigate = useNavigate();
+
+  // ---------- DRAFT AUTOSAVE ke localStorage per periode ----------
+  const draftKey = (p) => `payroll_draft_${p}`;
+
+  const loadDraft = (p) => {
+    try {
+      const raw = localStorage.getItem(draftKey(p));
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  };
+
+  const saveDraft = (p, att) => {
+    try {
+      localStorage.setItem(draftKey(p), JSON.stringify({ attendance: att, saved_at: Date.now() }));
+      setLastSavedAt(Date.now());
+    } catch { /* quota exceeded */ }
+  };
+
+  const clearDraft = (p) => {
+    try { localStorage.removeItem(draftKey(p)); } catch { /* ignore */ }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -46,18 +70,60 @@ export default function Payroll() {
       setEmployees(activeEmp);
       setRuns(rns.data);
 
-      // initialize default attendance: 22 days
-      const att = {};
+      // Initialize default attendance
+      const defaults = {};
       activeEmp.forEach((e) => {
-        att[e.id] = { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 };
+        defaults[e.id] = { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 };
       });
-      setAttendance(att);
+
+      // Merge dengan draft dari localStorage (jika ada) untuk periode saat ini
+      const draft = loadDraft(period);
+      if (draft && draft.attendance) {
+        const merged = { ...defaults };
+        Object.entries(draft.attendance).forEach(([empId, val]) => {
+          if (defaults[empId]) merged[empId] = { ...defaults[empId], ...val };
+        });
+        setAttendance(merged);
+        setDraftLoaded(true);
+        toast.info(`📥 Draft absensi periode ${period} dimuat kembali (tersimpan ${new Date(draft.saved_at).toLocaleString("id-ID")})`);
+      } else {
+        setAttendance(defaults);
+        setDraftLoaded(false);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  // Autosave: setiap attendance/period berubah → simpan ke localStorage (debounced ~600ms)
+  useEffect(() => {
+    if (loading || employees.length === 0) return;
+    const t = setTimeout(() => saveDraft(period, attendance), 600);
+    return () => clearTimeout(t);
+  }, [attendance, period, loading, employees.length]);
+
+  // Saat period berubah manual: reload draft yg sesuai
+  useEffect(() => {
+    if (loading || employees.length === 0) return;
+    const defaults = {};
+    employees.forEach((e) => {
+      defaults[e.id] = { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 };
+    });
+    const draft = loadDraft(period);
+    if (draft && draft.attendance) {
+      const merged = { ...defaults };
+      Object.entries(draft.attendance).forEach(([empId, val]) => {
+        if (defaults[empId]) merged[empId] = { ...defaults[empId], ...val };
+      });
+      setAttendance(merged);
+      setDraftLoaded(true);
+    } else {
+      setAttendance(defaults);
+      setDraftLoaded(false);
+    }
+  }, [period]);  // eslint-disable-line
 
   // Auto-adjust default date range saat period berubah (kecuali user sudah customize)
   useEffect(() => {
@@ -127,6 +193,7 @@ export default function Payroll() {
     try {
       const { data } = await api.post("/payroll/run", { period, attendance });
       toast.success(`✅ Payroll ${period} berhasil dijalankan — ${data.employee_count} slip generated (Total Net Rp ${Number(data.total_net || 0).toLocaleString("id-ID")})`);
+      clearDraft(period);  // draft dibersihkan setelah berhasil generate
       navigate(`/payroll/${period}`);
     } catch (err) {
       const detail = err.response?.data?.detail || err.message || "Kesalahan tidak diketahui";
@@ -228,6 +295,36 @@ export default function Payroll() {
           </button>
         </div>
       </div>
+
+      {/* Autosave indicator */}
+      {employees.length > 0 && !loading && (
+        <div className="mt-2 flex items-center gap-3 text-[11px] text-zinc-500 font-mono">
+          {lastSavedAt && (
+            <span data-testid="autosave-indicator" className="inline-flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-[#008A00] rounded-full animate-pulse" />
+              Draft tersimpan otomatis · {new Date(lastSavedAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </span>
+          )}
+          {draftLoaded && (
+            <button
+              data-testid="reset-draft-btn"
+              onClick={() => {
+                if (window.confirm("Reset semua input Hari Hadir/Lembur/Bonus/Potongan ke default?")) {
+                  const defaults = {};
+                  employees.forEach((e) => { defaults[e.id] = { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 }; });
+                  setAttendance(defaults);
+                  clearDraft(period);
+                  setDraftLoaded(false);
+                  toast.success("Draft di-reset ke default");
+                }
+              }}
+              className="text-[#E81123] hover:underline uppercase tracking-widest font-bold"
+            >
+              Reset Draft
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Helper hint saat tombol disabled atau kondisi tertentu */}
       {(() => {
