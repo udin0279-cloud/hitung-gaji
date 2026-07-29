@@ -1555,13 +1555,41 @@ STANDARD_START_HOUR = 8
 STANDARD_END_HOUR = 17
 STANDARD_DAYS_DEFAULT = 22
 
-# Jam kerja standar (untuk kalkulasi lembur)
+# Jam kerja standar (untuk kalkulasi lembur & keterlambatan)
+WORK_START = dtime(8, 30)         # Semua hari (Sen-Sabtu) — batas masuk normal
 WORK_END_WEEKDAY = dtime(16, 30)  # Senin-Jumat — jam kerja selesai
 WORK_END_SATURDAY = dtime(14, 0)  # Sabtu — jam kerja selesai
 # Overtime baru mulai dihitung setelah jeda 30 menit (grace period) dari jam kerja
 OT_START_WEEKDAY = dtime(17, 0)   # Senin-Jumat — OT mulai dihitung dari 17:00
 OT_START_SATURDAY = dtime(14, 30) # Sabtu — OT mulai dihitung dari 14:30
 # Minggu: seluruh scan dihitung lembur (tanpa jeda), dari scan masuk sampai scan pulang
+
+# Penalti keterlambatan: berlaku jika telat > 4 jam (240 menit)
+LATE_PENALTY_THRESHOLD_MIN = 240
+
+
+def _calculate_late_minutes(date_obj, in_time) -> Dict[str, float]:
+    """Kalkulasi keterlambatan per hari.
+    Return: {late_minutes: total menit telat dari 08:30, penalty_minutes: 0 jika ≤ 4 jam, atau total menit jika > 4 jam}
+    Minggu (libur) tidak dihitung sebagai telat.
+    """
+    import pandas as pd
+    if in_time is None:
+        return {"late_minutes": 0, "penalty_minutes": 0}
+    try:
+        weekday = date_obj.weekday()
+    except Exception:
+        return {"late_minutes": 0, "penalty_minutes": 0}
+    if weekday == 6:  # Minggu libur, tidak ada penalti
+        return {"late_minutes": 0, "penalty_minutes": 0}
+    start_dt = pd.Timestamp.combine(date_obj, WORK_START)
+    diff_min = (in_time - start_dt).total_seconds() / 60.0
+    if diff_min <= 0:
+        return {"late_minutes": 0, "penalty_minutes": 0}
+    late_min = round(diff_min, 2)
+    # Penalti berlaku hanya jika telat > 4 jam (240 menit)
+    penalty_min = late_min if late_min > LATE_PENALTY_THRESHOLD_MIN else 0
+    return {"late_minutes": late_min, "penalty_minutes": round(penalty_min, 2)}
 
 
 def _calculate_overtime_hours(date_obj, in_time, out_time) -> float:
@@ -1894,8 +1922,10 @@ async def attendance_import(
         d_ = r["_date"]
         in_t = r["in_time"]
         out_t = r["out_time"]
-        # Overtime menggunakan aturan Mon-Fri (>16:30), Sabtu (>14:00), Minggu (seluruh durasi)
+        # Overtime menggunakan aturan Mon-Fri (>17:00 setelah grace), Sabtu (>14:30 setelah grace), Minggu (seluruh durasi)
         overtime_h_day = _calculate_overtime_hours(d_, in_t, out_t)
+        # Keterlambatan (untuk penalti bila > 4 jam)
+        late_info = _calculate_late_minutes(d_, in_t)
         # Weekday name untuk konteks di UI
         try:
             _WD = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
@@ -1917,6 +1947,8 @@ async def attendance_import(
             "in_time": in_t.strftime("%H:%M:%S") if pd.notna(in_t) else None,
             "out_time": out_t.strftime("%H:%M:%S") if pd.notna(out_t) else None,
             "overtime_hours": overtime_h_day,
+            "late_minutes": late_info["late_minutes"],
+            "late_penalty_minutes": late_info["penalty_minutes"],  # 0 jika ≤ 4h, atau total menit jika > 4h
             "employee_id": emp_id,
             "employee_nik": emp_nik,
             "employee_name": emp_name,
