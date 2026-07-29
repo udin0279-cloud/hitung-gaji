@@ -242,7 +242,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
           </div>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
-          {filtered.length} transaksi Kas 101 · Saldo Awal <b className="text-zinc-900">{formatIDR(txData.opening_balance)}</b> → Akhir <b className="text-zinc-900">{formatIDR(txData.closing_balance)}</b>
+          {filtered.length} transaksi Kas Utama · Saldo Awal <b className="text-zinc-900">{formatIDR(txData.opening_balance)}</b> → Akhir <b className="text-zinc-900">{formatIDR(txData.closing_balance)}</b>
         </div>
       </div>
 
@@ -281,7 +281,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             </tr>
             {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi Kas 101 bulan ini.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi Kas Utama bulan ini.</td></tr>
             )}
             {filtered.map((t) => (
               <tr key={t.id} data-testid="cash-tx-row" className={`border-b border-zinc-100 hover:bg-zinc-50/80 ${t.auto ? "bg-amber-50/30" : ""}`}>
@@ -708,7 +708,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Debet: Semua · Kredit: Hanya 101 Kas</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Debet: Semua · Kredit: Hanya Kas Utama</span>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
           {jurnal.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
@@ -719,7 +719,6 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="bg-zinc-900 text-white text-[11px] font-bold uppercase tracking-widest">
-              <th className="px-3 py-3 border-r border-zinc-700">Kode Akun</th>
               <th className="px-3 py-3 border-r border-zinc-700">Nama Akun</th>
               <th className="px-3 py-3 border-r border-zinc-700 whitespace-nowrap">Tanggal</th>
               <th className="px-3 py-3 border-r border-zinc-700">Keterangan</th>
@@ -731,7 +730,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
           </thead>
           <tbody>
             <tr className="border-b border-zinc-200 bg-[#002FA7]/5">
-              <td colSpan={4} className="px-3 py-2.5">
+              <td colSpan={3} className="px-3 py-2.5">
                 <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Saldo Awal {monthLabel(month)}</span>
               </td>
               <td className="px-3 py-2.5"></td>
@@ -739,13 +738,12 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]">{formatIDR(txData.opening_balance)}</td>
               <td className="px-3 py-2.5"></td>
             </tr>
-            {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && jurnal.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada arus kas bulan ini.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada arus kas bulan ini.</td></tr>
             )}
             {jurnal.map((t) => (
               <tr key={t.id} data-testid="journal-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${t.auto ? "bg-amber-50/40" : ""}`}>
-                <td className="px-3 py-2.5 font-mono text-xs font-bold text-zinc-700 whitespace-nowrap">{t.account_code}</td>
                 <td className="px-3 py-2.5 text-xs">
                   {t.account_name}
                   {t.auto && <span className="ml-2 text-[9px] uppercase tracking-widest font-bold text-amber-700 inline-flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Auto</span>}
@@ -786,7 +784,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             ))}
             {!loading && jurnal.length > 0 && (
               <tr className="border-t-2 border-zinc-900 bg-zinc-50">
-                <td colSpan={4} className="px-3 py-3">
+                <td colSpan={3} className="px-3 py-3">
                   <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total Debet / Kredit</span>
                 </td>
                 <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebet)}</td>
@@ -799,8 +797,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         </table>
       </div>
       <div className="mt-3 text-[11px] text-zinc-500">
-        <b>Konvensi:</b> Debet = pengeluaran kas (semua arus keluar) · Kredit = pemasukan kas <b>khusus Akun 101 Kas</b> · Saldo = Saldo Awal + Kredit − Debet.
-        Pemasukan dari akun lain (misal 301 Penjualan Tunai / 301-BCA / Shopee) <b>tidak masuk kredit di jurnal ini</b>. Untuk menambah transaksi, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
+        <b>Konvensi:</b> Debet = pengeluaran kas (semua arus keluar) · Kredit = pemasukan kas <b>khusus Kas Utama</b> · Saldo = Saldo Awal + Kredit − Debet.
+        Pemasukan dari akun lain (misal Penjualan Tunai / BCA / Shopee) <b>tidak masuk kredit di jurnal ini</b>. Untuk menambah transaksi, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
       </div>
     </div>
   );

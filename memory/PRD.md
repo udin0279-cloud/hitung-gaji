@@ -1500,3 +1500,35 @@ Seed 5 records (2026-07) → hasil match exact:
 - `frontend/src/pages/Dashboard.jsx`: STATUS_LABEL + kontrak_24
 - `frontend/src/pages/Payslip.jsx`: hapus tax detail `<details>` + unused var
 - `frontend/src/pages/Portal.jsx`: hapus tax detail `<details>` + unused var
+
+---
+
+## Update: 2026-07-29 (session 6) — Sembunyikan Kolom Kode Akun & Teks "101" dari Buku Kas
+
+### Feature (URGENT UI FIX)
+User request: modul Buku Kas tidak boleh menampilkan angka "101" atau kolom "Kode Akun" sama sekali. Filter data internal tetap.
+
+### Changes (frontend/src/pages/CashBook.jsx)
+**Jurnal Akuntansi tab:**
+- Kolom `Kode Akun` (header + cell rendering `{t.account_code}`) dihapus dari tabel
+- colSpan header/footer/empty state disesuaikan dari 8 → 7
+- Saldo Awal row colSpan: 4 → 3
+- Chip badge: `Kredit: Hanya 101 Kas` → `Kredit: Hanya Kas Utama`
+- Konvensi footnote: `khusus Akun 101 Kas` → `khusus Kas Utama`; `301 Penjualan Tunai / 301-BCA` → `Penjualan Tunai / BCA`
+
+**Buku Kas tab:**
+- Info footer bar: `transaksi Kas 101` → `transaksi Kas Utama`
+- Empty state: `Belum ada transaksi Kas 101 bulan ini` → `Belum ada transaksi Kas Utama bulan ini`
+
+### Filter Behavior (unchanged)
+- Line 57-59: filter data `t.account_code === "101"` **tetap ada** (kode internal, tidak terlihat user)
+- Line 678-680: JournalTab filter Kredit `t.account_code === "101"` **tetap ada**
+
+### Testing (Playwright screenshot)
+- Buku Kas tab: `Kode Akun` = **FALSE** · `101` = **FALSE** ✓
+- Jurnal Akuntansi tab: `Kode Akun` = **FALSE** · `101` = **FALSE** · `101 Kas` = **FALSE** ✓
+- Header table Jurnal: `NAMA AKUN · TANGGAL · KETERANGAN · DEBET · KREDIT · SALDO · AKSI` (7 kolom, tanpa Kode Akun) ✓
+- Header table Buku Kas: `TANGGAL · NAMA AKUN · KETERANGAN · PEMASUKAN · PENGELUARAN · SALDO · AKSI` ✓
+
+### Files Changed
+- `frontend/src/pages/CashBook.jsx`: JournalTab table (hapus col Kode Akun + colSpan), BookTab labels, chip badge, konvensi footnote
