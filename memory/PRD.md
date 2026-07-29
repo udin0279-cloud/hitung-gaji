@@ -1402,3 +1402,41 @@ Widget baru di halaman Dashboard yang menampilkan **Top N karyawan dengan total 
 ### Files Changed
 - `backend/server.py`: `_top_late_offenders` helper + `/dashboard/late-offenders` endpoint + `late_offenders` field di dashboard_stats + import `date` from datetime
 - `frontend/src/pages/Dashboard.jsx`: import `Clock` icon, `LateOffendersWidget` component, mounted setelah ContractReminder
+
+---
+
+## Update: 2026-07-29 (session 3) — Refresh Kolom Tabel Payroll
+
+### Feature
+User request: "Perbarui tampilan tabel Jalankan Payroll dgn kolom-kolom otomatis dari Absensi + Master Karyawan."
+
+**Kolom baru (8, berurutan):**
+1. NIK
+2. NAMA (rename dari "Karyawan")
+3. GAJI POKOK
+4. HARI HADIR (auto dari attendance)
+5. LEMBUR (JAM) (auto dari attendance)
+6. **LEMBUR (RP)** — read-only, biru, auto-calc: `jam × 60 × ((Gaji Pokok / 26) / 7) / 60`
+7. TERLAMBAT (JAM) — dari `late_penalty_minutes / 60`, editable, saved as menit ke backend
+8. **TERLAMBAT (RP)** — read-only, merah bold, auto-calc: `menit × ((Gaji Pokok / 26) / 7) / 60`
+
+**Kolom Bonus & Potongan Lain** — dihapus dari tampilan (state tetap 0 di payload; jarang dipakai di workflow ini).
+
+### Behavior
+- Lembur (Rp) & Terlambat (Rp) update **live** saat user edit Lembur (Jam) atau Terlambat (Jam)
+- Terlambat (Jam) input: user ketik jam, disimpan ke state sbg `late_penalty_minutes` (× 60) → tetap kompatibel dgn backend
+- Footnote rumus terpampang di bawah tabel utk transparansi
+- Highlight visual: kolom Rp biru (lembur) / merah bold (terlambat), input Terlambat berlatar merah muda saat > 0
+
+### Testing (screenshot verified)
+Seed 5 records (2026-07) → hasil match exact:
+- Daffa (Gaji 2jt): OT 21.18h → Rp 232.747; Late 13.83h → Rp 152.015 ✓
+- Siti (Gaji 15jt): OT 3h → Rp 247.253; Late 15.83h → Rp 1.304.945 ✓
+
+### Files Changed
+- `frontend/src/pages/Payroll.jsx`: table header + body rewrite (~60 lines), inline live-calc formula, footnote
+
+### data-testid Baru
+- `att-ot-rp-{id}` — Lembur (Rp) cell
+- `att-late-hours-{id}` — Terlambat (Jam) input (replaces `att-late-{id}`)
+- `att-late-rp-{id}` — Terlambat (Rp) cell

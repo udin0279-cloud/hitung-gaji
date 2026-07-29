@@ -474,18 +474,27 @@ export default function Payroll() {
               <thead>
                 <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
                   <th className="px-4 py-3">NIK</th>
-                  <th className="px-4 py-3">Karyawan</th>
+                  <th className="px-4 py-3">Nama</th>
                   <th className="px-4 py-3 text-right">Gaji Pokok</th>
                   <th className="px-4 py-3 text-right">Hari Hadir</th>
-                  <th className="px-4 py-3 text-right">Lembur (jam)</th>
-                  <th className="px-4 py-3 text-right" title="Total menit terlambat > 4 jam (auto dari mesin finger, otomatis dikonversi ke potongan gaji)">Menit Telat (&gt;4h)</th>
-                  <th className="px-4 py-3 text-right">Bonus</th>
-                  <th className="px-4 py-3 text-right">Potongan Lain</th>
+                  <th className="px-4 py-3 text-right">Lembur (Jam)</th>
+                  <th className="px-4 py-3 text-right text-[#002FA7]">Lembur (Rp)</th>
+                  <th className="px-4 py-3 text-right" title="Total jam terlambat > 4 jam per hari (auto dari mesin finger). Input dalam jam; disimpan sebagai menit di backend.">Terlambat (Jam)</th>
+                  <th className="px-4 py-3 text-right text-[#E81123]">Terlambat (Rp)</th>
                 </tr>
               </thead>
               <tbody>
                 {employees.map((emp) => {
                   const a = attendance[emp.id] || {};
+                  const basic = Number(emp.basic_salary || 0);
+                  // Formula pro-rata: ((Gaji Pokok / 26) / 7) / 60
+                  const wagePerMin = basic > 0 ? ((basic / 26) / 7) / 60 : 0;
+                  const wagePerHour = wagePerMin * 60;
+                  const otHours = Number(a.overtime_hours || 0);
+                  const lateMin = Number(a.late_penalty_minutes || 0);
+                  const lembRp = otHours * wagePerHour;
+                  const lateHours = lateMin / 60;
+                  const lateRp = lateMin * wagePerMin;
                   return (
                     <tr key={emp.id} className="border-b border-zinc-100 hover:bg-zinc-50/80">
                       <td className="px-4 py-2.5 font-mono text-xs text-zinc-700">{emp.nik}</td>
@@ -493,7 +502,7 @@ export default function Payroll() {
                         <div className="font-medium text-zinc-900">{emp.name}</div>
                         <div className="text-xs text-zinc-500">{emp.position} · {emp.ptkp_status}</div>
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-right text-zinc-700">{formatIDR(emp.basic_salary)}</td>
+                      <td className="px-4 py-2.5 font-mono text-right text-zinc-700">{formatIDR(basic)}</td>
                       <td className="px-4 py-2.5">
                         <input data-testid={`att-days-${emp.id}`} type="number" min="0" max="31" value={a.days_worked || 0}
                           onChange={(e) => updateAtt(emp.id, "days_worked", e.target.value)}
@@ -504,27 +513,26 @@ export default function Payroll() {
                           onChange={(e) => updateAtt(emp.id, "overtime_hours", e.target.value)}
                           className="w-20 rounded-none border border-zinc-300 px-2 py-1 text-sm font-mono text-right focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none ml-auto block" />
                       </td>
-                      <td className="px-4 py-2.5">
-                        <input data-testid={`att-late-${emp.id}`} type="number" min="0" step="1" value={a.late_penalty_minutes || 0}
-                          onChange={(e) => updateAtt(emp.id, "late_penalty_minutes", e.target.value)}
-                          title="Total menit terlambat > 4 jam. Otomatis diisi dari import absensi mesin finger. Bila > 0, memicu potongan otomatis = menit × ((Gaji Pokok/26)/7)/60."
-                          className={`w-24 rounded-none border px-2 py-1 text-sm font-mono text-right focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none ml-auto block ${Number(a.late_penalty_minutes || 0) > 0 ? "border-red-400 bg-red-50 text-red-700" : "border-zinc-300"}`} />
+                      <td data-testid={`att-ot-rp-${emp.id}`} className={`px-4 py-2.5 font-mono text-right text-xs ${lembRp > 0 ? "text-[#002FA7] font-bold" : "text-zinc-400"}`}>
+                        {formatIDR(Math.round(lembRp))}
                       </td>
                       <td className="px-4 py-2.5">
-                        <input data-testid={`att-bonus-${emp.id}`} type="number" min="0" step="10000" value={a.bonus || 0}
-                          onChange={(e) => updateAtt(emp.id, "bonus", e.target.value)}
-                          className="w-28 rounded-none border border-zinc-300 px-2 py-1 text-sm font-mono text-right focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none ml-auto block" />
+                        <input data-testid={`att-late-hours-${emp.id}`} type="number" min="0" step="0.5" value={lateHours ? Number(lateHours.toFixed(2)) : 0}
+                          onChange={(e) => updateAtt(emp.id, "late_penalty_minutes", (Number(e.target.value) || 0) * 60)}
+                          title="Total jam terlambat > 4 jam. Otomatis dari import absensi. Bila > 0, memicu potongan otomatis."
+                          className={`w-24 rounded-none border px-2 py-1 text-sm font-mono text-right focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none ml-auto block ${lateMin > 0 ? "border-red-400 bg-red-50 text-red-700" : "border-zinc-300"}`} />
                       </td>
-                      <td className="px-4 py-2.5">
-                        <input data-testid={`att-deduct-${emp.id}`} type="number" min="0" step="10000" value={a.deduction || 0}
-                          onChange={(e) => updateAtt(emp.id, "deduction", e.target.value)}
-                          className="w-28 rounded-none border border-zinc-300 px-2 py-1 text-sm font-mono text-right focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none ml-auto block" />
+                      <td data-testid={`att-late-rp-${emp.id}`} className={`px-4 py-2.5 font-mono text-right text-xs ${lateRp > 0 ? "text-[#E81123] font-bold" : "text-zinc-400"}`}>
+                        {formatIDR(Math.round(lateRp))}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+          </div>
+          <div className="px-1 mt-2 text-[11px] text-zinc-500 font-mono">
+            Kolom Rp otomatis dihitung dgn rumus pro-rata: <span className="font-bold">Upah/menit = ((Gaji Pokok / 26) / 7) / 60</span>. Lembur (Rp) = Jam × 60 × Upah/menit · Terlambat (Rp) = Jam × 60 × Upah/menit.
           </div>
         </div>
       )}
