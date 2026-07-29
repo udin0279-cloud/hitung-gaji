@@ -61,15 +61,20 @@ export default function CashBook() {
 
   useEffect(() => { loadAll(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [month]);
 
-  // Filter hanya untuk akun 101 (Kas Utama) — meski kolom Kode disembunyikan, data tetap difilter
-  const filtered = txData.transactions.filter((t) => {
-    if (t.account_code !== "101") return false;
+  // Search helper reused across tabs
+  const matchesSearch = (t) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return (t.description || "").toLowerCase().includes(q)
       || (t.account_name || "").toLowerCase().includes(q)
+      || (t.account_code || "").toLowerCase().includes(q)
       || (t.reference || "").toLowerCase().includes(q);
-  });
+  };
+
+  // BukuKas: SEMUA akun KECUALI 101 Kas (per request user)
+  const filteredBook = txData.transactions.filter((t) => t.account_code !== "101" && matchesSearch(t));
+  // Jurnal Akuntansi: hanya Kas 101 (arus kas utama)
+  const filteredJournal = txData.transactions.filter((t) => t.account_code === "101" && matchesSearch(t));
 
   const removeTx = async (t) => {
     if (t.auto) {
@@ -167,7 +172,7 @@ export default function CashBook() {
         {tab === "book" && (
           <BookTab
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
-            txData={txData} filtered={filtered} loading={loading}
+            txData={txData} filtered={filteredBook} loading={loading}
             showAccountCode={showAccountCode}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
@@ -176,7 +181,7 @@ export default function CashBook() {
         {tab === "journal" && (
           <JournalTab
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
-            txData={txData} filtered={filtered} loading={loading}
+            txData={txData} filtered={filteredJournal} loading={loading}
             showAccountCode={showAccountCode}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
@@ -242,7 +247,7 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big }) {
 }
 
 /* ---------- Buku Kas Tab ---------- */
-function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, showAccountCode }) {
+function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove }) {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -263,7 +268,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
           </div>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
-          {filtered.length} transaksi {showAccountCode ? "Kas 101" : "Kas Utama"} · Saldo Awal <b className="text-zinc-900">{formatIDR(txData.opening_balance)}</b> → Akhir <b className="text-zinc-900">{formatIDR(txData.closing_balance)}</b>
+          {filtered.length} transaksi Non-Kas · <span className="text-zinc-400">(akun 101 Kas ditampilkan di tab Jurnal Akuntansi)</span>
         </div>
       </div>
 
@@ -271,60 +276,47 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
         <table className="w-full text-left text-sm table-fixed">
           <colgroup>
             <col className="w-[110px]" />
-            {showAccountCode && <col className="w-[180px]" />}
+            <col className="w-[90px]" />
+            <col className="w-[180px]" />
             <col />
             <col className="w-[140px]" />
             <col className="w-[140px]" />
-            <col className="w-[150px]" />
             <col className="w-[90px]" />
           </colgroup>
           <thead>
             <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
               <th className="px-4 py-3">Tanggal</th>
-              {showAccountCode && <th className="px-4 py-3">Nama Akun</th>}
+              <th className="px-4 py-3">Kode Akun</th>
+              <th className="px-4 py-3">Nama Akun</th>
               <th className="px-4 py-3">Keterangan</th>
               <th className="px-4 py-3 text-right">Pemasukan</th>
               <th className="px-4 py-3 text-right">Pengeluaran</th>
-              <th className="px-4 py-3 text-right">Saldo</th>
               <th className="px-4 py-3 text-right">Aksi</th>
             </tr>
           </thead>
           <tbody>
-            <tr className="border-b border-zinc-200 bg-[#002FA7]/5">
-              <td className="px-4 py-2.5 font-mono text-xs text-zinc-500">—</td>
-              <td className="px-4 py-2.5" colSpan={showAccountCode ? 2 : 1}>
-                <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">SALDO AWAL {monthLabel(month).toUpperCase()}</span>
-              </td>
-              <td className="px-4 py-2.5"></td>
-              <td className="px-4 py-2.5"></td>
-              <td className="px-4 py-2.5 text-right font-mono font-bold text-[#002FA7]">{formatIDR(txData.opening_balance)}</td>
-              <td className="px-4 py-2.5"></td>
-            </tr>
-            {loading && <tr><td colSpan={showAccountCode ? 7 : 6} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={showAccountCode ? 7 : 6} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi {showAccountCode ? "Kas 101" : "Kas Utama"} bulan ini.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi non-Kas bulan ini.</td></tr>
             )}
             {filtered.map((t) => (
               <tr key={t.id} data-testid="cash-tx-row" className={`border-b border-zinc-100 hover:bg-zinc-50/80 ${t.auto ? "bg-amber-50/30" : ""}`}>
                 <td className="px-4 py-2.5 font-mono text-xs whitespace-nowrap">
                   {t.date}
-                  {t.auto && !showAccountCode && (
+                  {t.auto && (
                     <span className="ml-1 text-[9px] uppercase tracking-widest font-bold text-amber-700 inline-flex items-center gap-1 align-middle" title="Transaksi otomatis dari modul sumbernya"><Lock className="w-2.5 h-2.5" /></span>
                   )}
                 </td>
-                {showAccountCode && (
-                  <td className="px-4 py-2.5">
-                    <div className="text-xs font-medium truncate" title={t.account_name}>{t.account_name}</div>
-                    {t.auto && <div className="text-[9px] uppercase tracking-widest font-bold text-amber-700 mt-0.5 inline-flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Auto</div>}
-                  </td>
-                )}
+                <td className="px-4 py-2.5 font-mono text-xs font-bold text-zinc-700 whitespace-nowrap">{t.account_code}</td>
+                <td className="px-4 py-2.5">
+                  <div className="text-xs font-medium truncate" title={t.account_name}>{t.account_name}</div>
+                </td>
                 <td className="px-4 py-2.5 text-xs">
                   <div className="break-words">{t.description}</div>
                   {t.reference && <div className="text-[10px] font-mono text-zinc-400 mt-0.5">ref: {t.reference}</div>}
                 </td>
                 <td className="px-4 py-2.5 text-right font-mono text-xs">{t.type === "in" ? <span className="text-[#008A00] font-bold">{formatIDR(t.amount)}</span> : ""}</td>
                 <td className="px-4 py-2.5 text-right font-mono text-xs">{t.type === "out" ? <span className="text-[#E81123] font-bold">{formatIDR(t.amount)}</span> : ""}</td>
-                <td className="px-4 py-2.5 text-right font-mono text-xs font-bold text-zinc-900">{formatIDR(t.balance)}</td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center justify-end gap-1">
                     <button data-testid="edit-tx-button" onClick={() => onEdit(t)} disabled={t.auto} className="p-1.5 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed" title={t.auto ? "Transaksi otomatis — edit di modul sumbernya" : "Edit"}><Pencil className="w-3.5 h-3.5" /></button>
@@ -335,12 +327,11 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             ))}
             {!loading && filtered.length > 0 && (
               <tr className="border-t-2 border-zinc-900 bg-zinc-50">
-                <td className="px-4 py-3" colSpan={showAccountCode ? 3 : 2}>
-                  <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">SALDO AKHIR</span>
+                <td className="px-4 py-3" colSpan={4}>
+                  <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">TOTAL NON-KAS</span>
                 </td>
-                <td className="px-4 py-3"></td>
-                <td className="px-4 py-3"></td>
-                <td className="px-4 py-3 text-right font-mono font-bold text-lg text-zinc-900">{formatIDR(txData.closing_balance)}</td>
+                <td className="px-4 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(filtered.filter(t => t.type === "in").reduce((s, t) => s + Number(t.amount || 0), 0))}</td>
+                <td className="px-4 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(filtered.filter(t => t.type === "out").reduce((s, t) => s + Number(t.amount || 0), 0))}</td>
                 <td className="px-4 py-3"></td>
               </tr>
             )}

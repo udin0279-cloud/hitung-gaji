@@ -1587,3 +1587,53 @@ Filter data internal tetap `t.account_code === "101"` — hanya visibility UI ya
 
 ### Files Changed
 - `frontend/src/pages/CashBook.jsx`: BookTab colgroup + header + rows + saldo awal/akhir + empty state
+
+---
+
+## Update: 2026-07-29 (session 9) — Ubah Filter Buku Kas: Exclude 101 Kas
+
+### Feature (URGENT UI FIX #3)
+User request: BookTab kini menampilkan **semua transaksi dari akun apapun KECUALI akun 101 Kas**. Kolom Kode Akun tetap muncul.
+
+### Rasional
+Sebelumnya:
+- BookTab = akun 101 saja
+- JournalTab = akun 101 saja
+
+Sekarang:
+- **BookTab** = semua akun **kecuali** 101 (Non-Kas) — arus kas ke/dari akun bank/utang/piutang/dsb
+- **JournalTab** = tetap akun 101 Kas (arus kas utama)
+
+### Changes (frontend/src/pages/CashBook.jsx)
+- Ekstrak `matchesSearch` helper (search description/account_name/account_code/reference)
+- Dua filter dipisah:
+  - `filteredBook` = tx.filter(code !== "101" && search)
+  - `filteredJournal` = tx.filter(code === "101" && search)
+- Prop `filtered` di BookTab dipanggil dgn `filteredBook`, JournalTab dgn `filteredJournal`
+- Legacy alias `filtered` yang shared dihapus
+
+### BookTab table restructure
+- Kolom baru **7 fixed**: `TANGGAL · KODE AKUN · NAMA AKUN · KETERANGAN · PEMASUKAN · PENGELUARAN · AKSI`
+- **Kode Akun & Nama Akun selalu tampil** (tidak mengikuti toggle karena wajib utk identifikasi akun non-101)
+- Kolom **SALDO dihapus** (running balance tidak berarti untuk multi-account view)
+- SALDO AWAL / SALDO AKHIR rows dihapus (khusus untuk akun tunggal)
+- Diganti footer row **TOTAL NON-KAS** dgn subtotal Pemasukan + Pengeluaran (bukan running balance)
+- Label footer: "N transaksi Non-Kas · (akun 101 Kas ditampilkan di tab Jurnal Akuntansi)"
+- Empty state: "Belum ada transaksi non-Kas bulan ini"
+- Auto badge (lock icon) tetap muncul di kolom Tanggal
+
+### Toggle "Tampilkan Kode Akun"
+- Tetap ada, hanya mempengaruhi JournalTab
+- BookTab tidak lagi dipengaruhi toggle (kolom Kode Akun selalu tampil)
+
+### Testing (Playwright + seed data)
+- Screenshot verified: 5 rows dari akun 201 & 301 muncul, TIDAK ada 101 di rows
+- Header `TANGGAL · KODE AKUN · NAMA AKUN · KETERANGAN · PEMASUKAN · PENGELUARAN · AKSI` ✓
+- TOTAL NON-KAS row menjumlah masuk (Rp 1.000.000) & keluar (Rp 115.500) ✓
+- Auto badge (lock) muncul di transaksi PO ✓
+
+### Files Changed
+- `frontend/src/pages/CashBook.jsx`:
+  - `matchesSearch` helper + `filteredBook`/`filteredJournal` split
+  - Props update ke BookTab & JournalTab
+  - BookTab rewrite: kolom baru, hapus Saldo, ubah label, TOTAL NON-KAS row
