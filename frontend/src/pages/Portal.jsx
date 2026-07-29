@@ -245,7 +245,6 @@ export function PortalPayslip() {
 
   const e = slip.earnings;
   const d = slip.deductions;
-  const t = slip.tax_detail;
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -347,25 +346,7 @@ export function PortalPayslip() {
           <div className="font-mono text-3xl lg:text-4xl font-semibold tracking-tight">{formatIDR(slip.net_salary)}</div>
         </div>
 
-        <details className="mt-6">
-          <summary className="cursor-pointer text-[11px] uppercase tracking-widest font-semibold text-zinc-500 hover:text-zinc-900">Rincian Perhitungan PPh 21</summary>
-          <div className="mt-3 p-4 border border-zinc-200 bg-zinc-50">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-              <span className="text-zinc-600">Bruto Setahun</span>
-              <span className="font-mono text-right">{formatIDR(t.bruto_yearly)}</span>
-              <span className="text-zinc-600">Biaya Jabatan</span>
-              <span className="font-mono text-right">- {formatIDR(t.biaya_jabatan_yearly)}</span>
-              <span className="text-zinc-600">Netto Setahun</span>
-              <span className="font-mono text-right">{formatIDR(t.netto_yearly)}</span>
-              <span className="text-zinc-600">PTKP ({slip.ptkp_status})</span>
-              <span className="font-mono text-right">- {formatIDR(t.ptkp)}</span>
-              <span className="text-zinc-600">PKP</span>
-              <span className="font-mono text-right">{formatIDR(t.pkp)}</span>
-              <span className="text-zinc-600">PPh 21 Setahun</span>
-              <span className="font-mono text-right font-semibold">{formatIDR(t.pph21_yearly)}</span>
-            </div>
-          </div>
-        </details>
+        {/* Rincian PPh 21 disembunyikan atas permintaan user */}
       </div>
     </div>
   );

@@ -1469,3 +1469,34 @@ Seed 5 records (2026-07) → hasil match exact:
 - `frontend/src/pages/Payslip.jsx`: rename `Tj. WFH` → `Insentif WFH`
 - `frontend/src/pages/Portal.jsx`: rename `Tj. WFH` → `Insentif WFH`
 - `backend/server.py`: rename PDF label `Tj. WFH` → `Insentif WFH`
+
+---
+
+## Update: 2026-07-29 (session 5) — Status Kontrak 2 Tahun + Sembunyikan Rincian PPh 21
+
+### Changes
+1. **Status Kontrak "Kontrak 2 Tahun"** (value `kontrak_24`):
+   - Ditambahkan ke `EMPLOYMENT_STATUS_OPTIONS` (Employees.jsx) — 5 opsi total
+   - Auto-calc end date: mulai + 24 bulan (H-1)
+   - Backend `_find_expiring_contracts` include `kontrak_24` di filter
+   - Backend model comment updated
+   - Dashboard `STATUS_LABEL` include "Kontrak 2 Thn"
+
+2. **Sembunyikan Rincian Perhitungan PPh 21** dari Slip Gaji:
+   - Payslip.jsx: `<details>Rincian Perhitungan PPh 21</details>` dihapus
+   - Portal.jsx: `<details>Rincian Perhitungan PPh 21</details>` dihapus
+   - PDF slip (`_build_payslip_pdf`): section "RINCIAN PERHITUNGAN PPH 21" + tabel dihapus
+   - Baris `PPh 21` di kolom Potongan (nominal saja) TETAP ada — hanya rincian detail (Bruto Setahun/Biaya Jabatan/PTKP/PKP dsb) yang dihapus
+   - Cleanup: unused `const t = slip.tax_detail` dihapus dari Payslip.jsx & Portal.jsx
+
+### Testing (E2E via Playwright + curl)
+- Dropdown Status Karyawan: `['OJT', 'Kontrak 6 Bulan', 'Kontrak 1 Tahun', 'Kontrak 2 Tahun', 'Tetap']` ✓
+- Slip UI: "Rincian Perhitungan PPh 21" **HILANG**, "Iuran Ditanggung Perusahaan" masih ada, baris "PPh 21" tetap render di Potongan ✓
+- PDF slip endpoint: HTTP 200 (2872 bytes) — tidak error setelah section dihapus ✓
+
+### Files Changed
+- `backend/server.py`: EmployeeIn comment, `_find_expiring_contracts` filter, `_build_payslip_pdf` (hapus tax detail section)
+- `frontend/src/pages/Employees.jsx`: EMPLOYMENT_STATUS_OPTIONS + kontrak_24, calcEndDate + isKontrak helper
+- `frontend/src/pages/Dashboard.jsx`: STATUS_LABEL + kontrak_24
+- `frontend/src/pages/Payslip.jsx`: hapus tax detail `<details>` + unused var
+- `frontend/src/pages/Portal.jsx`: hapus tax detail `<details>` + unused var

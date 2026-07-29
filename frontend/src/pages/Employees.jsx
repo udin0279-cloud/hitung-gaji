@@ -47,6 +47,7 @@ const EMPLOYMENT_STATUS_OPTIONS = [
   { value: "ojt", label: "OJT" },
   { value: "kontrak_6", label: "Kontrak 6 Bulan" },
   { value: "kontrak_12", label: "Kontrak 1 Tahun" },
+  { value: "kontrak_24", label: "Kontrak 2 Tahun" },
   { value: "tetap", label: "Tetap" },
 ];
 const EMPLOYMENT_STATUS_LABEL = Object.fromEntries(EMPLOYMENT_STATUS_OPTIONS.map((o) => [o.value, o.label]));
@@ -406,8 +407,9 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
   // Auto-calc tanggal berakhir berdasarkan status + tanggal mulai
   const calcEndDate = (start, status) => {
     if (!start) return "";
-    if (status !== "kontrak_6" && status !== "kontrak_12") return "";
-    const months = status === "kontrak_6" ? 6 : 12;
+    const monthsMap = { kontrak_6: 6, kontrak_12: 12, kontrak_24: 24 };
+    const months = monthsMap[status];
+    if (!months) return "";
     const d = new Date(start);
     if (isNaN(d.getTime())) return "";
     d.setMonth(d.getMonth() + months);
@@ -415,13 +417,15 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
     return d.toISOString().slice(0, 10);
   };
 
+  const isKontrak = (s) => s === "kontrak_6" || s === "kontrak_12" || s === "kontrak_24";
+
   const onStatusChange = (e) => {
     const newStatus = e.target.value;
     setForm((f) => {
       const next = { ...f, employment_status: newStatus };
       if (newStatus === "tetap") {
         next.status_end_date = "";
-      } else if ((newStatus === "kontrak_6" || newStatus === "kontrak_12") && f.status_start_date) {
+      } else if (isKontrak(newStatus) && f.status_start_date) {
         next.status_end_date = calcEndDate(f.status_start_date, newStatus);
       }
       return next;
@@ -432,7 +436,7 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
     const newStart = e.target.value;
     setForm((f) => {
       const next = { ...f, status_start_date: newStart };
-      if (f.employment_status === "kontrak_6" || f.employment_status === "kontrak_12") {
+      if (isKontrak(f.employment_status)) {
         next.status_end_date = calcEndDate(newStart, f.employment_status);
       }
       return next;

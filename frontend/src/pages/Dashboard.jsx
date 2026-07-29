@@ -302,7 +302,7 @@ function InventoryWidget({ inv }) {
 
 function ContractReminder({ items, total }) {
   const list = items || [];
-  const STATUS_LABEL = { ojt: "OJT", kontrak_6: "Kontrak 6 Bln", kontrak_12: "Kontrak 1 Thn" };
+  const STATUS_LABEL = { ojt: "OJT", kontrak_6: "Kontrak 6 Bln", kontrak_12: "Kontrak 1 Thn", kontrak_24: "Kontrak 2 Thn" };
   return (
     <div data-testid="contract-reminder-widget" className="mt-6 border border-zinc-200 bg-white p-6">
       <div className="flex items-center justify-between mb-4">

@@ -283,7 +283,7 @@ class EmployeeIn(BaseModel):
     bank_name: Optional[str] = None
     bank_account: Optional[str] = None
     bank_account_holder: Optional[str] = None
-    employment_status: str = "tetap"  # ojt | kontrak_6 | kontrak_12 | tetap
+    employment_status: str = "tetap"  # ojt | kontrak_6 | kontrak_12 | kontrak_24 | tetap
     status_start_date: Optional[str] = None  # ISO YYYY-MM-DD — tanggal mulai OJT/Kontrak
     status_end_date: Optional[str] = None    # ISO YYYY-MM-DD — tanggal berakhir
     active: bool = True
@@ -1427,28 +1427,7 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
     story.append(th)
     story.append(Spacer(1, 12))
 
-    # Tax detail
-    t = slip["tax_detail"]
-    tax_rows = [
-        ["Bruto Setahun", _format_idr(t["bruto_yearly"])],
-        ["Biaya Jabatan", "- " + _format_idr(t["biaya_jabatan_yearly"])],
-        ["Netto Setahun", _format_idr(t["netto_yearly"])],
-        [f"PTKP ({slip['ptkp_status']})", "- " + _format_idr(t["ptkp"])],
-        ["PKP", _format_idr(t["pkp"])],
-        ["PPh 21 Setahun", _format_idr(t["pph21_yearly"])],
-    ]
-    story.append(Paragraph("RINCIAN PERHITUNGAN PPH 21", section_style))
-    tt = Table(tax_rows, colWidths=[100 * mm, 80 * mm])
-    tt.setStyle(TableStyle([
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("FONTNAME", (1, 0), (1, -1), "Courier"),
-        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#52525b")),
-        ("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#f4f4f5")),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-    ]))
-    story.append(tt)
+    # Rincian PPh 21 disembunyikan atas permintaan user
 
     doc.build(story)
     pdf_bytes = buf.getvalue()
@@ -2363,7 +2342,7 @@ async def _find_expiring_contracts(days_ahead: int = 60) -> List[Dict[str, Any]]
     cutoff = today + timedelta(days=days_ahead)
     cursor = db.employees.find({
         "active": True,
-        "employment_status": {"$in": ["ojt", "kontrak_6", "kontrak_12"]},
+        "employment_status": {"$in": ["ojt", "kontrak_6", "kontrak_12", "kontrak_24"]},
         "status_end_date": {"$ne": None, "$exists": True},
     }, {"_id": 0}).sort("status_end_date", 1)
     items = await cursor.to_list(length=500)
