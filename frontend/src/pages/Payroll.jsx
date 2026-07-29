@@ -176,16 +176,14 @@ export default function Payroll() {
   };
 
   const runFinal = async () => {
-    // Preflight check — validasi sebelum kirim
+    // Warning ringan (tidak memblokir) — user tetap bisa lanjut
     if (employees.length === 0) {
-      toast.error("Tidak ada karyawan aktif — silakan tambahkan karyawan di menu Karyawan dulu");
-      return;
-    }
-    const totalDays = Object.values(attendance).reduce((s, a) => s + Number(a?.days_worked || 0), 0);
-    const totalOT = Object.values(attendance).reduce((s, a) => s + Number(a?.overtime_hours || 0), 0);
-    if (totalDays === 0 && totalOT === 0) {
-      if (!window.confirm("⚠️ Semua karyawan Hari Hadir = 0 dan Lembur = 0. Slip akan bernilai kosong.\n\nLanjutkan Generate Slip tetap? (Klik 'Batal' untuk mengisi absen dulu)")) {
-        return;
+      toast.warning("⚠️ Tidak ada karyawan aktif — proses tetap dilanjutkan, tapi slip mungkin kosong");
+    } else {
+      const totalDays = Object.values(attendance).reduce((s, a) => s + Number(a?.days_worked || 0), 0);
+      const totalOT = Object.values(attendance).reduce((s, a) => s + Number(a?.overtime_hours || 0), 0);
+      if (totalDays === 0 && totalOT === 0) {
+        toast.warning("⚠️ Semua Hari Hadir & Lembur = 0 — slip akan bernilai kosong. Proses tetap dilanjutkan.");
       }
     }
     if (!window.confirm(`Jalankan payroll untuk periode ${period}? Ini akan menggantikan data lama jika ada.`)) return;
@@ -274,22 +272,16 @@ export default function Payroll() {
           <button
             data-testid="preview-payroll-button"
             onClick={runPreview}
-            disabled={employees.length === 0}
-            title={employees.length === 0 ? "Belum ada karyawan aktif — tambahkan di menu Karyawan" : "Hitung pratinjau tanpa menyimpan"}
-            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-5 py-2.5 text-sm font-semibold hover:bg-zinc-50 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Hitung pratinjau tanpa menyimpan"
+            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-5 py-2.5 text-sm font-semibold hover:bg-zinc-50 inline-flex items-center gap-2"
           >
             <Calculator className="w-4 h-4" /> Hitung Pratinjau
           </button>
           <button
             data-testid="generate-payroll-button"
             onClick={runFinal}
-            disabled={running || employees.length === 0}
-            title={
-              running ? "Sedang memproses…"
-              : employees.length === 0 ? "Belum ada karyawan aktif — tambahkan di menu Karyawan"
-              : "Simpan payroll & generate slip gaji untuk semua karyawan"
-            }
-            className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            title="Simpan payroll & generate slip gaji untuk semua karyawan"
+            className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 inline-flex items-center gap-2 cursor-pointer"
           >
             {running ? "Memproses…" : (<>Generate Slip <ArrowRight className="w-4 h-4" /></>)}
           </button>
