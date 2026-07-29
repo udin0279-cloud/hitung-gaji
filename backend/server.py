@@ -1334,7 +1334,7 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
     if e.get("tunjangan_tidak_tetap", 0):
         earn_rows.append(["Tj. Tidak Tetap", _format_idr(e["tunjangan_tidak_tetap"])])
     if e.get("tunjangan_wfh", 0):
-        earn_rows.append(["Tj. WFH", _format_idr(e["tunjangan_wfh"])])
+        earn_rows.append(["Insentif WFH", _format_idr(e["tunjangan_wfh"])])
     if e.get("insentif_individu", 0):
         earn_rows.append(["Insentif Individu", _format_idr(e["insentif_individu"])])
     if e.get("insentif_kolektif", 0):

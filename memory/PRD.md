@@ -1440,3 +1440,32 @@ Seed 5 records (2026-07) → hasil match exact:
 - `att-ot-rp-{id}` — Lembur (Rp) cell
 - `att-late-hours-{id}` — Terlambat (Jam) input (replaces `att-late-{id}`)
 - `att-late-rp-{id}` — Terlambat (Rp) cell
+
+---
+
+## Update: 2026-07-29 (session 4) — Rapikan Field Master Karyawan
+
+### Changes
+- **Hapus dari form**: Field `Tunjangan Tetap (Rp)` (fixed_allowance) & `Tunjangan Tidak Tetap (Rp)` (tunjangan_tidak_tetap). Save payload paksa 0 utk kedua field.
+- **Hapus kolom** "Tunjangan" dari tabel listing karyawan (kolom ini menampilkan fixed_allowance yang akan selalu 0)
+- **Rename label**: `Tunjangan WFH` → `Insentif WFH` di:
+  - Form Master Karyawan (Employees.jsx)
+  - Slip Gaji UI (Payslip.jsx)
+  - Portal Karyawan (Portal.jsx)
+  - Slip PDF (server.py `earn_rows`)
+
+### Behavior Backward Compat
+- Backend model `EmployeeIn` masih punya field `fixed_allowance` & `tunjangan_tidak_tetap` — tidak dihapus utk backward compat + tetap dipakai perhitungan THR (`Gaji + Tunjangan Tetap`)
+- Data lama tetap punya nilai; hanya tidak bisa diedit lagi dari form (efektif read-only 0 setelah save berikutnya)
+- Slip PDF & UI: baris `Tunjangan Tetap` / `Tj. Tidak Tetap` masih render bila nilai > 0 (legacy)
+
+### Testing
+- Screenshot form: `Insentif WFH` muncul, `Tunjangan Tetap` & `Tunjangan Tidak Tetap` hilang ✓
+- Screenshot slip: label "Insentif WFH — Rp 500.000" render sesuai ✓
+- Backend text scan: "Tj. WFH" tidak ada lagi, "Insentif WFH" ada ✓
+
+### Files Changed
+- `frontend/src/pages/Employees.jsx`: hapus 2 field form + kolom tabel; payload force 0
+- `frontend/src/pages/Payslip.jsx`: rename `Tj. WFH` → `Insentif WFH`
+- `frontend/src/pages/Portal.jsx`: rename `Tj. WFH` → `Insentif WFH`
+- `backend/server.py`: rename PDF label `Tj. WFH` → `Insentif WFH`

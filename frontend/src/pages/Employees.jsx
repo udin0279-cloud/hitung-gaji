@@ -107,12 +107,12 @@ export default function Employees() {
         status_start_date: form.status_start_date || null,
         status_end_date: form.status_end_date || null,
         basic_salary: Number(form.basic_salary) || 0,
-        fixed_allowance: Number(form.fixed_allowance) || 0,
+        fixed_allowance: 0,
         tunjangan_jabatan: Number(form.tunjangan_jabatan) || 0,
         tunjangan_transport: Number(form.tunjangan_transport) || 0,
         tunjangan_lainnya: Number(form.tunjangan_lainnya) || 0,
         insentif_individu: Number(form.insentif_individu) || 0,
-        tunjangan_tidak_tetap: Number(form.tunjangan_tidak_tetap) || 0,
+        tunjangan_tidak_tetap: 0,
         tunjangan_wfh: Number(form.tunjangan_wfh) || 0,
         insentif_kolektif: Number(form.insentif_kolektif) || 0,
         insentif_lain: Number(form.insentif_lain) || 0,
@@ -272,7 +272,6 @@ export default function Employees() {
               <th className="px-4 py-3">Berakhir</th>
               <th className="px-4 py-3">PTKP</th>
               <th className="px-4 py-3 text-right">Gaji Pokok</th>
-              <th className="px-4 py-3 text-right">Tunjangan</th>
               <th className="px-4 py-3">1721-A1</th>
               <th className="px-4 py-3 text-right">Aksi</th>
             </tr>
@@ -347,7 +346,6 @@ export default function Employees() {
                   <span className="inline-flex items-center px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider border border-zinc-300 text-zinc-700 bg-zinc-50">{emp.ptkp_status}</span>
                 </td>
                 <td className="px-4 py-3 font-mono text-right text-zinc-900">{formatIDR(emp.basic_salary)}</td>
-                <td className="px-4 py-3 font-mono text-right text-zinc-700">{formatIDR(emp.fixed_allowance)}</td>
                 <td className="px-4 py-3">
                   <a
                     data-testid={`bp-${emp.id}`}
@@ -504,9 +502,6 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
             <Field label="Gaji Pokok (Rp)">
               <CurrencyInput testId="emp-basic-salary" value={form.basic_salary} onChange={(v) => setForm({ ...form, basic_salary: v })} />
             </Field>
-            <Field label="Tunjangan Tetap (Rp)" hint="Legacy — dianggap taxable">
-              <CurrencyInput testId="emp-allowance" value={form.fixed_allowance} onChange={(v) => setForm({ ...form, fixed_allowance: v })} />
-            </Field>
             <Field label="Tunjangan Jabatan (Rp)" hint="Masuk base BPJS & PPh21">
               <CurrencyInput testId="emp-tj-jabatan" value={form.tunjangan_jabatan} onChange={(v) => setForm({ ...form, tunjangan_jabatan: v })} />
             </Field>
@@ -519,10 +514,7 @@ function EmployeeFormModal({ editing, form, setForm, onClose, onSubmit, saving }
             <Field label="Insentif Individu (Rp)" hint="Taxable PPh21, tidak masuk base BPJS">
               <CurrencyInput testId="emp-insentif-individu" value={form.insentif_individu} onChange={(v) => setForm({ ...form, insentif_individu: v })} />
             </Field>
-            <Field label="Tunjangan Tidak Tetap (Rp)" hint="Taxable PPh21, tidak masuk base BPJS">
-              <CurrencyInput testId="emp-tj-tidak-tetap" value={form.tunjangan_tidak_tetap} onChange={(v) => setForm({ ...form, tunjangan_tidak_tetap: v })} />
-            </Field>
-            <Field label="Tunjangan WFH (Rp)" hint="Non-taxable benefit">
+            <Field label="Insentif WFH (Rp)" hint="Non-taxable benefit">
               <CurrencyInput testId="emp-tj-wfh" value={form.tunjangan_wfh} onChange={(v) => setForm({ ...form, tunjangan_wfh: v })} />
             </Field>
             <Field label="Insentif Kolektif (Rp)" hint="Taxable PPh21, tidak masuk base BPJS">

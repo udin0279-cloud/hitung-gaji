@@ -164,7 +164,7 @@ export default function Payslip() {
             {e.tunjangan_transport > 0 && <Row label="Tj. Transport" value={e.tunjangan_transport} />}
             {e.tunjangan_lainnya > 0 && <Row label="Tj. Lain-lain" value={e.tunjangan_lainnya} />}
             {e.tunjangan_tidak_tetap > 0 && <Row label="Tj. Tidak Tetap" value={e.tunjangan_tidak_tetap} />}
-            {e.tunjangan_wfh > 0 && <Row label="Tj. WFH" value={e.tunjangan_wfh} />}
+            {e.tunjangan_wfh > 0 && <Row label="Insentif WFH" value={e.tunjangan_wfh} />}
             {e.insentif_individu > 0 && <Row label="Insentif Individu" value={e.insentif_individu} />}
             {e.insentif_kolektif > 0 && <Row label="Insentif Kolektif" value={e.insentif_kolektif} />}
             {e.insentif_lain > 0 && <Row label="Insentif Lain-lain" value={e.insentif_lain} />}
