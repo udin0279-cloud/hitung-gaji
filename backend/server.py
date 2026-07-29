@@ -11,7 +11,7 @@ import uuid
 import asyncio
 import bcrypt
 import jwt
-from datetime import datetime, timezone, timedelta, time as dtime
+from datetime import datetime, timezone, timedelta, time as dtime, date
 from typing import List, Optional, Dict, Any, Tuple
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Form, Body
@@ -2252,7 +2252,109 @@ async def dashboard_stats(user: dict = Depends(require_super_admin)):
         "contract_expiring": expiring[:5],  # top 5 untuk widget
         "contract_expiring_count": len(expiring),
         "inventory": inv_summary,
+        "late_offenders": await _top_late_offenders(month=None, limit=5),
     }
+
+
+async def _top_late_offenders(month: Optional[str] = None, limit: int = 5) -> Dict[str, Any]:
+    """Top N karyawan dengan total menit telat > 4 jam TERBANYAK.
+
+    Args:
+      month: filter "YYYY-MM" (default: bulan berjalan)
+      limit: berapa top karyawan (default 5)
+
+    Return: {month, items:[{employee_id, nik, name, total_late_minutes, occurrences, estimated_penalty}], total_offenders, no_data}
+    """
+    if not month:
+        today = datetime.now(timezone.utc).date()
+        month = today.strftime("%Y-%m")
+    # Rentang tanggal
+    start = f"{month}-01"
+    # akhir bulan
+    try:
+        y, m = int(month[:4]), int(month[5:7])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+    if m == 12:
+        next_first = date(y + 1, 1, 1)
+    else:
+        next_first = date(y, m + 1, 1)
+    end = (next_first - timedelta(days=1)).isoformat()
+
+    items = await db.attendance_daily.find(
+        {"date": {"$gte": start, "$lte": end}, "late_penalty_minutes": {"$gt": 0}},
+        {"_id": 0},
+    ).to_list(length=50000)
+
+    if not items:
+        return {"month": month, "items": [], "total_offenders": 0, "no_data": True}
+
+    # Aggregate per employee_id
+    agg: Dict[str, Dict[str, Any]] = {}
+    unmatched: Dict[str, Dict[str, Any]] = {}
+    for it in items:
+        emp_id = it.get("employee_id")
+        lpm = float(it.get("late_penalty_minutes") or 0)
+        if emp_id:
+            entry = agg.setdefault(emp_id, {
+                "employee_id": emp_id,
+                "nik": it.get("employee_nik"),
+                "name": it.get("employee_name"),
+                "total_late_minutes": 0.0,
+                "occurrences": 0,
+            })
+            entry["total_late_minutes"] += lpm
+            entry["occurrences"] += 1
+        else:
+            pin = it.get("pin") or "-"
+            entry = unmatched.setdefault(pin, {
+                "employee_id": None,
+                "nik": None,
+                "pin": pin,
+                "name": it.get("employee_name") or f"PIN {pin}",
+                "total_late_minutes": 0.0,
+                "occurrences": 0,
+            })
+            entry["total_late_minutes"] += lpm
+            entry["occurrences"] += 1
+
+    # Fetch employee basic_salary utk estimasi penalty nominal
+    all_entries = list(agg.values()) + list(unmatched.values())
+    emp_ids = [e["employee_id"] for e in all_entries if e.get("employee_id")]
+    emp_map: Dict[str, Dict[str, Any]] = {}
+    if emp_ids:
+        cursor = db.employees.find({"id": {"$in": emp_ids}}, {"_id": 0, "id": 1, "basic_salary": 1, "position": 1, "department": 1})
+        for e in await cursor.to_list(length=len(emp_ids)):
+            emp_map[e["id"]] = e
+
+    standard_days = float(CONFIG.get("standard_workdays") or 26.0) or 26.0
+    for e in all_entries:
+        basic = float((emp_map.get(e.get("employee_id"), {}) or {}).get("basic_salary") or 0)
+        wpm = ((basic / standard_days) / 7.0) / 60.0 if basic > 0 else 0.0
+        e["total_late_minutes"] = round(e["total_late_minutes"], 2)
+        e["estimated_penalty"] = round(e["total_late_minutes"] * wpm, 2)
+        e["position"] = (emp_map.get(e.get("employee_id"), {}) or {}).get("position")
+        e["department"] = (emp_map.get(e.get("employee_id"), {}) or {}).get("department")
+
+    all_entries.sort(key=lambda x: (x["total_late_minutes"], x["occurrences"]), reverse=True)
+    return {
+        "month": month,
+        "items": all_entries[:limit],
+        "total_offenders": len(all_entries),
+        "no_data": False,
+    }
+
+
+@api_router.get("/dashboard/late-offenders")
+async def dashboard_late_offenders(
+    user: dict = Depends(require_super_admin),
+    month: Optional[str] = None,
+    limit: int = 5,
+):
+    """Top N karyawan dengan total menit telat > 4 jam terbanyak dalam sebulan."""
+    if limit < 1 or limit > 50:
+        limit = 5
+    return await _top_late_offenders(month=month, limit=limit)
 
 
 async def _find_expiring_contracts(days_ahead: int = 60) -> List[Dict[str, Any]]:

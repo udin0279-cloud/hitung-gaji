@@ -1371,3 +1371,34 @@ Slip UI verified via screenshot: label "Potongan Terlambat (>4 Jam · 300 menit)
 - 🟢 P1: Auto-add lembur approved ke perhitungan Payroll
 - 🟡 P2: Halaman Daftar Pinjaman Aktif, Notif WA izin/cuti
 - 🟡 P3: Audit Log HR, Rekap lembur PDF, Notif PO tertunda
+
+---
+
+## Update: 2026-07-29 (session 2) — Dashboard Widget: Top Karyawan Telat > 4 Jam
+
+### Feature
+Widget baru di halaman Dashboard yang menampilkan **Top N karyawan dengan total menit telat > 4 jam terbanyak** dalam bulan berjalan. Membantu HR mengidentifikasi kandidat yang butuh coaching disiplin lebih cepat.
+
+### Backend
+- **Endpoint baru**: `GET /api/dashboard/late-offenders?month=YYYY-MM&limit=5` — default month = bulan berjalan, limit 1-50 (default 5)
+- Response: `{month, items:[{employee_id, nik, name, position, department, total_late_minutes, occurrences, estimated_penalty}], total_offenders, no_data}`
+- **Auto-attached ke `/api/dashboard/stats`** sebagai field `late_offenders` (limit 5) → satu round-trip
+- Aggregasi via `attendance_daily.late_penalty_minutes > 0` per employee, sorted desc by total menit
+- Estimated penalty dihitung real-time dgn `basic_salary / 26 / 7 / 60 × menit` (mirror `calculate_payslip`)
+- Unmatched PIN (tanpa employee_id) juga muncul dgn badge "Unmatched" (estimasi penalty tidak dihitung)
+
+### Frontend
+- **`Dashboard.jsx`**: komponen `LateOffendersWidget` di antara `ContractReminder` & `InventoryWidget`
+- Icon `Clock` warna merah, header `TOP KARYAWAN TELAT > 4 JAM`
+- Kolom: #, Karyawan (nama + NIK/PIN + posisi/dept), Kejadian (Nx), Total Menit (merah bold), Est. Potongan
+- Empty state: "Belum ada data absensi bulan ini, atau semua karyawan tepat waktu."
+- Footnote rumus pro-rata di bawah tabel
+- data-testid: `late-offenders-widget`, `late-offender-row`, `late-offenders-empty`
+
+### Testing
+- E2E backend: seed 5 records (Siti 2× 950 min, Daffa 3× 830 min) → ranking benar, estimasi penalty match (Siti: 950 × 1373.63 = Rp 1.304.945; Daffa: 830 × 183.15 = Rp 152.015)
+- Dashboard screenshot: widget render benar dgn 2 baris, kolom, footnote, empty-state fallback
+
+### Files Changed
+- `backend/server.py`: `_top_late_offenders` helper + `/dashboard/late-offenders` endpoint + `late_offenders` field di dashboard_stats + import `date` from datetime
+- `frontend/src/pages/Dashboard.jsx`: import `Clock` icon, `LateOffendersWidget` component, mounted setelah ContractReminder

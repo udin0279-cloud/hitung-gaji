@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatIDR } from "../lib/api";
 import { Link } from "react-router-dom";
-import { TrendingUp, Users, FileText, Receipt, ArrowUpRight, AlertTriangle, Package, TrendingDown } from "lucide-react";
+import { TrendingUp, Users, FileText, Receipt, ArrowUpRight, AlertTriangle, Package, TrendingDown, Clock } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Bar, ComposedChart, Legend } from "recharts";
 
 export default function Dashboard() {
@@ -126,6 +126,9 @@ export default function Dashboard() {
 
       {/* Reminder Kontrak/OJT */}
       <ContractReminder items={stats?.contract_expiring} total={stats?.contract_expiring_count} />
+
+      {/* Top Late Offenders (Telat > 4 Jam) */}
+      <LateOffendersWidget data={stats?.late_offenders} />
 
       {/* Inventory Widget */}
       <InventoryWidget inv={stats?.inventory} />
@@ -359,6 +362,92 @@ function ContractReminder({ items, total }) {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LateOffendersWidget({ data }) {
+  if (!data) return null;
+  const items = data.items || [];
+  const monthLabel = (() => {
+    if (!data.month) return "";
+    try {
+      const [y, m] = data.month.split("-");
+      const mnames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
+      return `${mnames[parseInt(m, 10) - 1]} ${y}`;
+    } catch { return data.month; }
+  })();
+  const isEmpty = items.length === 0 || data.no_data;
+  return (
+    <div data-testid="late-offenders-widget" className="mt-6 border border-zinc-200 bg-white p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold flex items-center gap-2">
+            <Clock className="w-3.5 h-3.5 text-[#E81123]" /> Top Karyawan Telat &gt; 4 Jam
+          </div>
+          <div className="font-heading text-lg font-bold text-zinc-900 mt-1">
+            {isEmpty
+              ? `Tidak ada keterlambatan ekstrem pada ${monthLabel}`
+              : `${data.total_offenders} karyawan terlambat > 4 jam · ${monthLabel}`}
+          </div>
+        </div>
+        {data.total_offenders > 5 && (
+          <Link to="/payroll" className="text-xs text-[#002FA7] font-semibold hover:underline">
+            Lihat detail →
+          </Link>
+        )}
+      </div>
+      {isEmpty ? (
+        <div data-testid="late-offenders-empty" className="text-sm text-zinc-400 font-mono py-4">
+          Belum ada data absensi bulan ini, atau semua karyawan tepat waktu.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest border-b border-zinc-200">
+                <th className="py-2 pr-4 w-8">#</th>
+                <th className="py-2 pr-4">Karyawan</th>
+                <th className="py-2 pr-4 text-right">Kejadian</th>
+                <th className="py-2 pr-4 text-right">Total Menit</th>
+                <th className="py-2 pr-4 text-right">Est. Potongan</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it, idx) => (
+                <tr key={it.employee_id || it.pin || idx} data-testid="late-offender-row" className="border-b border-zinc-100 hover:bg-zinc-50/60">
+                  <td className="py-2.5 pr-4 font-mono text-xs text-zinc-500">{idx + 1}</td>
+                  <td className="py-2.5 pr-4">
+                    <div className="font-medium text-zinc-900">
+                      {it.name}
+                      {!it.employee_id && (
+                        <span className="ml-2 inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider border border-amber-500 text-amber-700 bg-amber-50">
+                          Unmatched
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-zinc-500">
+                      {it.nik ? `NIK ${it.nik}` : `PIN ${it.pin || "-"}`}
+                      {it.position ? ` · ${it.position}` : ""}
+                      {it.department ? ` · ${it.department}` : ""}
+                    </div>
+                  </td>
+                  <td className="py-2.5 pr-4 text-right font-mono text-zinc-700">{it.occurrences}×</td>
+                  <td className="py-2.5 pr-4 text-right font-mono font-bold text-[#E81123]">
+                    {Math.round(Number(it.total_late_minutes || 0))} <span className="text-[10px] text-zinc-500 font-normal">menit</span>
+                  </td>
+                  <td className="py-2.5 pr-4 text-right font-mono text-zinc-900">
+                    {it.employee_id ? formatIDR(it.estimated_penalty) : <span className="text-zinc-400">-</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-3 text-[11px] text-zinc-500 font-mono">
+            Estimasi potongan dihitung dari rumus pro-rata: menit telat × ((Gaji Pokok / 26) / 7) / 60.
+          </div>
         </div>
       )}
     </div>
