@@ -110,14 +110,27 @@ export default function Payroll() {
   };
 
   const runFinal = async () => {
+    // Preflight check — validasi sebelum kirim
+    if (employees.length === 0) {
+      toast.error("Tidak ada karyawan aktif — silakan tambahkan karyawan di menu Karyawan dulu");
+      return;
+    }
+    const totalDays = Object.values(attendance).reduce((s, a) => s + Number(a?.days_worked || 0), 0);
+    const totalOT = Object.values(attendance).reduce((s, a) => s + Number(a?.overtime_hours || 0), 0);
+    if (totalDays === 0 && totalOT === 0) {
+      if (!window.confirm("⚠️ Semua karyawan Hari Hadir = 0 dan Lembur = 0. Slip akan bernilai kosong.\n\nLanjutkan Generate Slip tetap? (Klik 'Batal' untuk mengisi absen dulu)")) {
+        return;
+      }
+    }
     if (!window.confirm(`Jalankan payroll untuk periode ${period}? Ini akan menggantikan data lama jika ada.`)) return;
     setRunning(true);
     try {
-      await api.post("/payroll/run", { period, attendance });
-      toast.success(`Payroll ${period} berhasil dijalankan`);
+      const { data } = await api.post("/payroll/run", { period, attendance });
+      toast.success(`✅ Payroll ${period} berhasil dijalankan — ${data.employee_count} slip generated (Total Net Rp ${Number(data.total_net || 0).toLocaleString("id-ID")})`);
       navigate(`/payroll/${period}`);
     } catch (err) {
-      toast.error(formatApiError(err.response?.data?.detail) || "Gagal menjalankan payroll");
+      const detail = err.response?.data?.detail || err.message || "Kesalahan tidak diketahui";
+      toast.error(`❌ Gagal menjalankan payroll: ${detail}`);
     } finally {
       setRunning(false);
     }
@@ -195,7 +208,8 @@ export default function Payroll() {
             data-testid="preview-payroll-button"
             onClick={runPreview}
             disabled={employees.length === 0}
-            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-5 py-2.5 text-sm font-semibold hover:bg-zinc-50 inline-flex items-center gap-2 disabled:opacity-50"
+            title={employees.length === 0 ? "Belum ada karyawan aktif — tambahkan di menu Karyawan" : "Hitung pratinjau tanpa menyimpan"}
+            className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-5 py-2.5 text-sm font-semibold hover:bg-zinc-50 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Calculator className="w-4 h-4" /> Hitung Pratinjau
           </button>
@@ -203,12 +217,39 @@ export default function Payroll() {
             data-testid="generate-payroll-button"
             onClick={runFinal}
             disabled={running || employees.length === 0}
-            className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 disabled:opacity-60 inline-flex items-center gap-2"
+            title={
+              running ? "Sedang memproses…"
+              : employees.length === 0 ? "Belum ada karyawan aktif — tambahkan di menu Karyawan"
+              : "Simpan payroll & generate slip gaji untuk semua karyawan"
+            }
+            className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#002FA7]/90 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
           >
             {running ? "Memproses…" : (<>Generate Slip <ArrowRight className="w-4 h-4" /></>)}
           </button>
         </div>
       </div>
+
+      {/* Helper hint saat tombol disabled atau kondisi tertentu */}
+      {(() => {
+        if (loading) return null;
+        if (employees.length === 0) {
+          return (
+            <div data-testid="generate-hint-no-employees" className="mt-3 p-3 border-l-4 border-yellow-400 bg-yellow-50 text-sm">
+              <b>Belum bisa Generate Slip:</b> Belum ada karyawan aktif. Silakan tambah karyawan di menu <Link to="/employees" className="text-[#002FA7] underline font-bold">Karyawan</Link>.
+            </div>
+          );
+        }
+        const totalDays = Object.values(attendance).reduce((s, a) => s + Number(a?.days_worked || 0), 0);
+        const totalOT = Object.values(attendance).reduce((s, a) => s + Number(a?.overtime_hours || 0), 0);
+        if (totalDays === 0 && totalOT === 0) {
+          return (
+            <div data-testid="generate-hint-no-attendance" className="mt-3 p-3 border-l-4 border-orange-400 bg-orange-50 text-sm">
+              <b>⚠️ Absen belum diinput.</b> Semua karyawan memiliki Hari Hadir = 0 dan Lembur = 0. Silakan isi tabel kehadiran di bawah, atau import file finger, atau klik <b>Terapkan Rentang</b> untuk mengambil data absen dari periode terpilih.
+            </div>
+          );
+        }
+        return null;
+      })()}
 
       {/* Range Absensi (Cross-Month Support) */}
       {employees.length > 0 && (
