@@ -271,7 +271,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
         <table className="w-full text-left text-sm table-fixed">
           <colgroup>
             <col className="w-[110px]" />
-            <col className="w-[180px]" />
+            {showAccountCode && <col className="w-[180px]" />}
             <col />
             <col className="w-[140px]" />
             <col className="w-[140px]" />
@@ -281,7 +281,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
           <thead>
             <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
               <th className="px-4 py-3">Tanggal</th>
-              <th className="px-4 py-3">Nama Akun</th>
+              {showAccountCode && <th className="px-4 py-3">Nama Akun</th>}
               <th className="px-4 py-3">Keterangan</th>
               <th className="px-4 py-3 text-right">Pemasukan</th>
               <th className="px-4 py-3 text-right">Pengeluaran</th>
@@ -292,7 +292,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
           <tbody>
             <tr className="border-b border-zinc-200 bg-[#002FA7]/5">
               <td className="px-4 py-2.5 font-mono text-xs text-zinc-500">—</td>
-              <td className="px-4 py-2.5" colSpan={2}>
+              <td className="px-4 py-2.5" colSpan={showAccountCode ? 2 : 1}>
                 <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">SALDO AWAL {monthLabel(month).toUpperCase()}</span>
               </td>
               <td className="px-4 py-2.5"></td>
@@ -300,17 +300,24 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
               <td className="px-4 py-2.5 text-right font-mono font-bold text-[#002FA7]">{formatIDR(txData.opening_balance)}</td>
               <td className="px-4 py-2.5"></td>
             </tr>
-            {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {loading && <tr><td colSpan={showAccountCode ? 7 : 6} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi {showAccountCode ? "Kas 101" : "Kas Utama"} bulan ini.</td></tr>
+              <tr><td colSpan={showAccountCode ? 7 : 6} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi {showAccountCode ? "Kas 101" : "Kas Utama"} bulan ini.</td></tr>
             )}
             {filtered.map((t) => (
               <tr key={t.id} data-testid="cash-tx-row" className={`border-b border-zinc-100 hover:bg-zinc-50/80 ${t.auto ? "bg-amber-50/30" : ""}`}>
-                <td className="px-4 py-2.5 font-mono text-xs whitespace-nowrap">{t.date}</td>
-                <td className="px-4 py-2.5">
-                  <div className="text-xs font-medium truncate" title={t.account_name}>{t.account_name}</div>
-                  {t.auto && <div className="text-[9px] uppercase tracking-widest font-bold text-amber-700 mt-0.5 inline-flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Auto</div>}
+                <td className="px-4 py-2.5 font-mono text-xs whitespace-nowrap">
+                  {t.date}
+                  {t.auto && !showAccountCode && (
+                    <span className="ml-1 text-[9px] uppercase tracking-widest font-bold text-amber-700 inline-flex items-center gap-1 align-middle" title="Transaksi otomatis dari modul sumbernya"><Lock className="w-2.5 h-2.5" /></span>
+                  )}
                 </td>
+                {showAccountCode && (
+                  <td className="px-4 py-2.5">
+                    <div className="text-xs font-medium truncate" title={t.account_name}>{t.account_name}</div>
+                    {t.auto && <div className="text-[9px] uppercase tracking-widest font-bold text-amber-700 mt-0.5 inline-flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Auto</div>}
+                  </td>
+                )}
                 <td className="px-4 py-2.5 text-xs">
                   <div className="break-words">{t.description}</div>
                   {t.reference && <div className="text-[10px] font-mono text-zinc-400 mt-0.5">ref: {t.reference}</div>}
@@ -328,7 +335,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             ))}
             {!loading && filtered.length > 0 && (
               <tr className="border-t-2 border-zinc-900 bg-zinc-50">
-                <td className="px-4 py-3" colSpan={3}>
+                <td className="px-4 py-3" colSpan={showAccountCode ? 3 : 2}>
                   <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">SALDO AKHIR</span>
                 </td>
                 <td className="px-4 py-3"></td>

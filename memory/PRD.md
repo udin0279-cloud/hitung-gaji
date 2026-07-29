@@ -1561,3 +1561,29 @@ Filter data internal tetap `t.account_code === "101"` — toggle hanya mempengar
 - Default state OFF: `Kode Akun` in body = **FALSE**, `101` in body = **FALSE** ✓
 - Toggle ON: header `KODE AKUN · NAMA AKUN · TANGGAL · KETERANGAN · DEBET · KREDIT · SALDO · AKSI`, chip "HANYA 101 KAS", footnote "301 Penjualan Tunai" muncul, `101` in body = TRUE ✓
 - Persistence: uncheck → reload page → state tetap unchecked ✓
+
+---
+
+## Update: 2026-07-29 (session 8) — Sembunyikan Kolom "Nama Akun" di Buku Kas
+
+### Feature (URGENT UI FIX #2)
+User feedback: kolom "Nama Akun" di tab Buku Kas selalu bernilai "Kas" (karena filter internal hanya menampilkan akun 101) — redundan & memakan tempat. User request: sembunyikan kolom "Nama Akun" juga dari BookTab (mengikuti aturan toggle).
+
+### Changes (frontend/src/pages/CashBook.jsx BookTab)
+- Kolom `Nama Akun` di BookTab kini **conditional** pada `showAccountCode`:
+  - **OFF (default)**: 6 kolom `TANGGAL · KETERANGAN · PEMASUKAN · PENGELUARAN · SALDO · AKSI`
+  - **ON**: 7 kolom `TANGGAL · NAMA AKUN · KETERANGAN · PEMASUKAN · PENGELUARAN · SALDO · AKSI`
+- colGroup, header, cell rendering, SALDO AWAL row colSpan (2→1), SALDO AKHIR row colSpan (3→2), empty state colSpan (7→6), loading colSpan — semuanya adjust otomatis
+- Auto badge (transaksi otomatis) di-inline kecil di kolom Tanggal saat kolom Nama Akun hidden — sebelumnya berada di Nama Akun
+
+### Filter Behavior (unchanged)
+Filter data internal tetap `t.account_code === "101"` — hanya visibility UI yang berubah.
+
+### Testing (Playwright screenshot)
+- Buku Kas default: header `TANGGAL · KETERANGAN · PEMASUKAN · PENGELUARAN · SALDO · AKSI` ✓
+- Label footer: "transaksi Kas Utama" (bukan Kas 101) ✓
+- Text scan: `NAMA AKUN` = FALSE ✓
+- Toggle ON: header kembali menampilkan `NAMA AKUN` ✓
+
+### Files Changed
+- `frontend/src/pages/CashBook.jsx`: BookTab colgroup + header + rows + saldo awal/akhir + empty state
