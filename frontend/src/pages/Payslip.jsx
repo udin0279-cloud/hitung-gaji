@@ -168,7 +168,12 @@ export default function Payslip() {
             {e.insentif_individu > 0 && <Row label="Insentif Individu" value={e.insentif_individu} />}
             {e.insentif_kolektif > 0 && <Row label="Insentif Kolektif" value={e.insentif_kolektif} />}
             {e.insentif_lain > 0 && <Row label="Insentif Lain-lain" value={e.insentif_lain} />}
-            {e.overtime > 0 && <Row label="Lembur" value={e.overtime} />}
+            {e.overtime > 0 && (
+              <Row
+                label={`Lembur (${slip.attendance.overtime_hours} jam × Rp ${Number(slip.attendance.overtime_rate_per_hour || 0).toLocaleString("id-ID")}/jam)`}
+                value={e.overtime}
+              />
+            )}
             {e.bonus > 0 && <Row label="Bonus" value={e.bonus} />}
             <Row label="Total Bruto" value={e.gross} bold border />
           </div>

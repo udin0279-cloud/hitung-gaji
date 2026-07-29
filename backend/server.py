@@ -335,6 +335,9 @@ CONFIG: Dict[str, Any] = {
     "biaya_jabatan_max_year": 6_000_000,
     "standard_workdays": 22,
     "overtime_multiplier": 1.5,
+    # Tarif lembur per jam (Rp). Jika > 0, pakai nilai ini secara langsung (tanpa formula 1/173).
+    # Jika 0 (default), pakai formula standar: (basic / 173) * overtime_multiplier
+    "overtime_hourly_rate": 0,
 }
 
 
@@ -387,9 +390,18 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     standard_days = float(CONFIG["standard_workdays"]) or 22.0
     days_worked = float(attendance.get("days_worked", standard_days) or standard_days)
 
-    # Overtime rate: 1/173 * basic salary per hour (Indonesian standard)
-    overtime_rate_per_hour = basic / 173 if basic else 0
-    overtime_pay = overtime_rate_per_hour * overtime_hours * float(CONFIG["overtime_multiplier"])
+    # Overtime pay:
+    # - Jika CONFIG["overtime_hourly_rate"] > 0 → pakai nilai flat dari konfigurasi
+    # - Jika 0 → pakai formula standar Indonesia (basic / 173) * overtime_multiplier
+    _configured_ot_rate = float(CONFIG.get("overtime_hourly_rate", 0) or 0)
+    if _configured_ot_rate > 0:
+        overtime_rate_per_hour = _configured_ot_rate
+        overtime_pay = overtime_rate_per_hour * overtime_hours
+        _ot_source = "configured"  # untuk display di slip
+    else:
+        overtime_rate_per_hour = (basic / 173) * float(CONFIG["overtime_multiplier"]) if basic else 0
+        overtime_pay = overtime_rate_per_hour * overtime_hours
+        _ot_source = "auto_1_173"
 
     # Pro-rate basic if days_worked < standard
     prorate_factor = min(days_worked / standard_days, 1.0) if standard_days > 0 else 1.0
@@ -501,6 +513,9 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
         "attendance": {
             "days_worked": days_worked,
             "overtime_hours": overtime_hours,
+            "overtime_rate_per_hour": round(overtime_rate_per_hour, 2),
+            "overtime_rate_source": _ot_source,  # "configured" atau "auto_1_173"
+            "overtime_multiplier": float(CONFIG["overtime_multiplier"]),
         },
         "net_salary": round(net_salary, 2),
     }
@@ -1305,7 +1320,10 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
     if e.get("insentif_lain", 0):
         earn_rows.append(["Insentif Lain-lain", _format_idr(e["insentif_lain"])])
     if e.get("overtime", 0):
-        earn_rows.append(["Lembur", _format_idr(e["overtime"])])
+        _ot_hours = slip.get("attendance", {}).get("overtime_hours", 0)
+        _ot_rate = slip.get("attendance", {}).get("overtime_rate_per_hour", 0)
+        _label = f"Lembur ({_ot_hours} jam × {_format_idr(_ot_rate)}/jam)" if _ot_rate else "Lembur"
+        earn_rows.append([_label, _format_idr(e["overtime"])])
     if e.get("bonus", 0):
         earn_rows.append(["Bonus", _format_idr(e["bonus"])])
     earn_rows.append(["Total Bruto", _format_idr(e["gross"])])
@@ -2229,6 +2247,7 @@ async def config_constants(user: dict = Depends(require_super_admin)):
         "biaya_jabatan_max_year": CONFIG["biaya_jabatan_max_year"],
         "standard_workdays": CONFIG["standard_workdays"],
         "overtime_multiplier": CONFIG["overtime_multiplier"],
+        "overtime_hourly_rate": CONFIG.get("overtime_hourly_rate", 0),
     }
 
 
@@ -2249,6 +2268,7 @@ class ConfigUpdateIn(BaseModel):
     biaya_jabatan_max_year: Optional[float] = None
     standard_workdays: Optional[float] = None
     overtime_multiplier: Optional[float] = None
+    overtime_hourly_rate: Optional[float] = None
 
 
 @api_router.put("/config/constants")

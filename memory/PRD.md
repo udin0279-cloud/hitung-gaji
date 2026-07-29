@@ -1241,3 +1241,37 @@ Helper `_calculate_overtime_hours` diupdate: kalkulasi OT sekarang menggunakan `
 
 ### Regression Impact
 Total OT per karyawan turun ~10-15% dibanding session sebelumnya (grace period menghilangkan micro-lembur yang terjadi antara 16:30-17:00 dan 14:00-14:30).
+
+---
+
+## Update: 2026-07-21 (session 8) — Konfigurasi Tarif Lembur per Jam
+
+### Feature
+Menambah opsi konfigurasi **"Tarif Lembur per Jam (Rp)"** di halaman Settings. Jika diisi (>0), sistem pakai nilai ini sebagai pengali langsung untuk kalkulasi lembur. Jika 0 (default), sistem fallback ke formula standar Indonesia `(basic/173) × multiplier`.
+
+### Backend
+- **CONFIG:** field baru `overtime_hourly_rate` (default 0)
+- **calculate_payslip:** decision logic
+  - `if configured > 0`: `overtime_pay = configured_rate × overtime_hours` (source: `configured`)
+  - `else`: `overtime_pay = (basic/173) × multiplier × overtime_hours` (source: `auto_1_173`)
+- **API `/config/constants`** GET+PUT include field baru
+- **Slip payload** menyertakan `attendance.overtime_rate_per_hour` dan `attendance.overtime_rate_source` untuk display
+
+### Frontend
+- **Settings.jsx:** field "Tarif Lembur per Jam (Rp)" tipe money di section "Biaya Jabatan & Kerja"
+- **Payslip.jsx:** row Lembur menampilkan format: `Lembur (X jam × Rp Y/jam)` bukan hanya "Lembur"
+- **PDF payslip (backend):** label lembur dinamis dgn breakdown jam × tarif
+
+### Testing
+**E2E via curl:**
+- Set rate=20000 → OT 5 jam × 20000 = **Rp 100.000** ✓ (source: configured)
+- Reset rate=0 → OT 5 jam × (10M/173) × 1.5 = **Rp 433.526** ✓ (source: auto_1_173)
+- Config GET include field baru ✓
+- Config PUT accept & persist ✓
+
+**Frontend visual:** field "Tarif Lembur per Jam (Rp)" muncul di section "Biaya Jabatan & Kerja" antara "Multiplier Lembur (fallback)" dan sebelum "Catatan" ✓
+
+### Files Changed
+- `backend/server.py`: CONFIG default, calculate_payslip logic, config_constants GET/PUT schema, slip payload, PDF label
+- `frontend/src/pages/Settings.jsx`: field baru di section Biaya Jabatan & Kerja, load/save handling
+- `frontend/src/pages/Payslip.jsx`: label lembur dinamis dgn breakdown

@@ -28,7 +28,8 @@ const RATE_FIELDS = [
     { key: "biaya_jabatan_rate", label: "Biaya Jabatan Rate", type: "pct" },
     { key: "biaya_jabatan_max_year", label: "Biaya Jabatan Max/Tahun", type: "money" },
     { key: "standard_workdays", label: "Hari Kerja Standar/Bulan", type: "num" },
-    { key: "overtime_multiplier", label: "Multiplier Lembur", type: "num" },
+    { key: "overtime_multiplier", label: "Multiplier Lembur (fallback)", type: "num" },
+    { key: "overtime_hourly_rate", label: "Tarif Lembur per Jam (Rp)", type: "money" },
   ]},
 ];
 
@@ -60,6 +61,7 @@ export default function Settings() {
       biaya_jabatan_max_year: data.biaya_jabatan_max_year,
       standard_workdays: data.standard_workdays,
       overtime_multiplier: data.overtime_multiplier,
+      overtime_hourly_rate: data.overtime_hourly_rate || 0,
     });
   };
 
@@ -95,6 +97,7 @@ export default function Settings() {
         biaya_jabatan_max_year: Number(draft.biaya_jabatan_max_year),
         standard_workdays: Number(draft.standard_workdays),
         overtime_multiplier: Number(draft.overtime_multiplier),
+        overtime_hourly_rate: Number(draft.overtime_hourly_rate) || 0,
       };
       await api.put("/config/constants", payload);
       toast.success("Konfigurasi tersimpan");
