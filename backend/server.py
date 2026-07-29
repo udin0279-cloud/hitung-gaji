@@ -389,6 +389,7 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     other_deduction = float(attendance.get("deduction", 0) or 0)
     standard_days = float(CONFIG["standard_workdays"]) or 22.0
     days_worked = float(attendance.get("days_worked", standard_days) or standard_days)
+    late_penalty_minutes = float(attendance.get("late_penalty_minutes", 0) or 0)
 
     # Overtime pay — RUMUS BARU (per-menit berdasarkan gaji pokok):
     #   Upah/Hari  = Gaji Pokok / Jumlah Hari Kerja per Bulan (CONFIG.standard_workdays)
@@ -405,6 +406,16 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
     overtime_rate_per_hour = round(_wage_per_hour, 2)
     overtime_pay = round(overtime_minutes * _wage_per_minute, 2)
     _ot_source = "auto_pro_rata_daily"  # source untuk display di slip
+
+    # === Potongan Otomatis Terlambat > 4 Jam ===
+    # Menit telat > 240 (4 jam) dijumlah dari attendance_daily, dikalikan wage_per_minute.
+    # AUTO OVERRIDE MANUAL: bila auto > 0, override field manual `potongan_terlambat` di master employee.
+    auto_late_penalty = round(late_penalty_minutes * _wage_per_minute, 2) if late_penalty_minutes > 0 else 0.0
+    if auto_late_penalty > 0:
+        potongan_terlambat = auto_late_penalty  # override manual master value
+        _late_penalty_source = "auto_from_attendance"
+    else:
+        _late_penalty_source = "manual_employee_master" if potongan_terlambat > 0 else "none"
 
     # Pro-rate basic if days_worked < standard
     prorate_factor = min(days_worked / standard_days, 1.0) if standard_days > 0 else 1.0
@@ -524,6 +535,9 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) ->
             "standard_workdays": standard_days,
             "overtime_rate_source": _ot_source,  # "auto_pro_rata_daily"
             "overtime_multiplier": float(CONFIG["overtime_multiplier"]),
+            "late_penalty_minutes": round(late_penalty_minutes, 2),
+            "late_penalty_amount": round(auto_late_penalty, 2),
+            "late_penalty_source": _late_penalty_source,
         },
         "net_salary": round(net_salary, 2),
     }
@@ -1347,7 +1361,15 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
     if d.get("loan", 0):
         deduct_rows.append(["Angsuran Pinjaman", _format_idr(d["loan"])])
     if d.get("potongan_terlambat", 0):
-        deduct_rows.append(["Potongan Terlambat", _format_idr(d["potongan_terlambat"])])
+        # Bila auto-penalty, tampilkan menitnya untuk transparansi
+        att_ = slip.get("attendance", {}) if isinstance(slip, dict) else {}
+        _lpm = float(att_.get("late_penalty_minutes", 0) or 0)
+        _src = att_.get("late_penalty_source")
+        if _src == "auto_from_attendance" and _lpm > 0:
+            _label_late = f"Potongan Terlambat (>4 Jam · {int(_lpm)} menit)"
+        else:
+            _label_late = "Potongan Terlambat"
+        deduct_rows.append([_label_late, _format_idr(d["potongan_terlambat"])])
     if d.get("potongan_pulang_cepat", 0):
         deduct_rows.append(["Potongan Pulang Cepat", _format_idr(d["potongan_pulang_cepat"])])
     if d.get("other_deduction", 0):
@@ -1973,9 +1995,13 @@ async def attendance_import(
     for nik, group in agg_period.groupby("_nik"):
         days_worked = int(len(group))
         overtime_hours_total = 0.0
+        late_penalty_min_total = 0.0
         for _, r in group.iterrows():
             overtime_hours_total += _calculate_overtime_hours(r["_date"], r["in_time"], r["out_time"])
+            _lm = _calculate_late_minutes(r["_date"], r["in_time"])
+            late_penalty_min_total += _lm["penalty_minutes"]
         overtime_hours = round(overtime_hours_total, 2)
+        late_penalty_minutes = round(late_penalty_min_total, 2)
 
         nik_str = str(nik)
         emp = emp_by_nik.get(nik_str)
@@ -1987,6 +2013,7 @@ async def attendance_import(
                 "name": pin_to_name.get(nik_str, ""),
                 "days_worked": days_worked,
                 "overtime_hours": overtime_hours,
+                "late_penalty_minutes": late_penalty_minutes,
             })
             continue
 
@@ -1996,6 +2023,7 @@ async def attendance_import(
             "name": emp["name"],
             "days_worked": days_worked,
             "overtime_hours": overtime_hours,
+            "late_penalty_minutes": late_penalty_minutes,
             "bonus": 0,
             "deduction": 0,
         }
@@ -2123,6 +2151,7 @@ async def attendance_range_summary(
         emp_id = it.get("employee_id")
         pin = it.get("pin")
         ot = float(it.get("overtime_hours") or 0)
+        lpm = float(it.get("late_penalty_minutes") or 0)
         if emp_id:
             entry = summary.setdefault(emp_id, {
                 "employee_id": emp_id,
@@ -2131,11 +2160,13 @@ async def attendance_range_summary(
                 "name": it.get("employee_name"),
                 "days_worked": 0,
                 "overtime_hours": 0.0,
+                "late_penalty_minutes": 0.0,
                 "bonus": 0,
                 "deduction": 0,
             })
             entry["days_worked"] += 1
             entry["overtime_hours"] = round(entry["overtime_hours"] + ot, 2)
+            entry["late_penalty_minutes"] = round(entry["late_penalty_minutes"] + lpm, 2)
         else:
             key = pin or "-"
             entry = unmatched_by_pin.setdefault(key, {
@@ -2143,9 +2174,11 @@ async def attendance_range_summary(
                 "name": it.get("employee_name") or "",
                 "days_worked": 0,
                 "overtime_hours": 0.0,
+                "late_penalty_minutes": 0.0,
             })
             entry["days_worked"] += 1
             entry["overtime_hours"] = round(entry["overtime_hours"] + ot, 2)
+            entry["late_penalty_minutes"] = round(entry["late_penalty_minutes"] + lpm, 2)
 
     return {
         "date_from": date_from,

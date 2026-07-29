@@ -73,7 +73,7 @@ export default function Payroll() {
       // Initialize default attendance
       const defaults = {};
       activeEmp.forEach((e) => {
-        defaults[e.id] = { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 };
+        defaults[e.id] = { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0, late_penalty_minutes: 0 };
       });
 
       // Merge dengan draft dari localStorage (jika ada) untuk periode saat ini
@@ -109,7 +109,7 @@ export default function Payroll() {
     if (loading || employees.length === 0) return;
     const defaults = {};
     employees.forEach((e) => {
-      defaults[e.id] = { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 };
+      defaults[e.id] = { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0, late_penalty_minutes: 0 };
     });
     const draft = loadDraft(period);
     if (draft && draft.attendance) {
@@ -143,9 +143,10 @@ export default function Payroll() {
         const next = { ...curr };
         Object.entries(data.summary || {}).forEach(([empId, v]) => {
           next[empId] = {
-            ...(next[empId] || { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 }),
+            ...(next[empId] || { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0, late_penalty_minutes: 0 }),
             days_worked: v.days_worked,
             overtime_hours: v.overtime_hours,
+            late_penalty_minutes: Number(v.late_penalty_minutes || 0),
           };
         });
         return next;
@@ -229,9 +230,10 @@ export default function Payroll() {
         const next = { ...curr };
         Object.entries(data.summary).forEach(([empId, v]) => {
           next[empId] = {
-            ...(next[empId] || { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0 }),
+            ...(next[empId] || { days_worked: 22, overtime_hours: 0, bonus: 0, deduction: 0, late_penalty_minutes: 0 }),
             days_worked: v.days_worked,
             overtime_hours: v.overtime_hours,
+            late_penalty_minutes: Number(v.late_penalty_minutes || 0),
           };
         });
         return next;
@@ -476,6 +478,7 @@ export default function Payroll() {
                   <th className="px-4 py-3 text-right">Gaji Pokok</th>
                   <th className="px-4 py-3 text-right">Hari Hadir</th>
                   <th className="px-4 py-3 text-right">Lembur (jam)</th>
+                  <th className="px-4 py-3 text-right" title="Total menit terlambat > 4 jam (auto dari mesin finger, otomatis dikonversi ke potongan gaji)">Menit Telat (&gt;4h)</th>
                   <th className="px-4 py-3 text-right">Bonus</th>
                   <th className="px-4 py-3 text-right">Potongan Lain</th>
                 </tr>
@@ -500,6 +503,12 @@ export default function Payroll() {
                         <input data-testid={`att-ot-${emp.id}`} type="number" min="0" step="0.5" value={a.overtime_hours || 0}
                           onChange={(e) => updateAtt(emp.id, "overtime_hours", e.target.value)}
                           className="w-20 rounded-none border border-zinc-300 px-2 py-1 text-sm font-mono text-right focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none ml-auto block" />
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <input data-testid={`att-late-${emp.id}`} type="number" min="0" step="1" value={a.late_penalty_minutes || 0}
+                          onChange={(e) => updateAtt(emp.id, "late_penalty_minutes", e.target.value)}
+                          title="Total menit terlambat > 4 jam. Otomatis diisi dari import absensi mesin finger. Bila > 0, memicu potongan otomatis = menit × ((Gaji Pokok/26)/7)/60."
+                          className={`w-24 rounded-none border px-2 py-1 text-sm font-mono text-right focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none ml-auto block ${Number(a.late_penalty_minutes || 0) > 0 ? "border-red-400 bg-red-50 text-red-700" : "border-zinc-300"}`} />
                       </td>
                       <td className="px-4 py-2.5">
                         <input data-testid={`att-bonus-${emp.id}`} type="number" min="0" step="10000" value={a.bonus || 0}

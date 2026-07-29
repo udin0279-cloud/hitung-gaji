@@ -323,7 +323,16 @@ export function PortalPayslip() {
             <Row label="JP" value={d.jp_employee} />
             <Row label="PPh 21" value={d.pph21} />
             {d.loan > 0 && <Row label="Angsuran Pinjaman" value={d.loan} />}
-            {d.potongan_terlambat > 0 && <Row label="Potongan Terlambat" value={d.potongan_terlambat} />}
+            {d.potongan_terlambat > 0 && (
+              <Row
+                label={
+                  slip.attendance?.late_penalty_source === "auto_from_attendance" && Number(slip.attendance?.late_penalty_minutes || 0) > 0
+                    ? `Potongan Terlambat (>4 Jam · ${Math.round(Number(slip.attendance.late_penalty_minutes))} menit)`
+                    : "Potongan Terlambat"
+                }
+                value={d.potongan_terlambat}
+              />
+            )}
             {d.potongan_pulang_cepat > 0 && <Row label="Potongan Pulang Cepat" value={d.potongan_pulang_cepat} />}
             {d.other_deduction > 0 && <Row label="Potongan Lain" value={d.other_deduction} />}
             <Row label="Total Potongan" value={d.total} bold border />

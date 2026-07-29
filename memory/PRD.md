@@ -1326,3 +1326,48 @@ Set standard_workdays = 26, employee basic = 10jt, OT = 5 jam:
 ### Note
 - CONFIG field `overtime_hourly_rate` & `overtime_multiplier` masih ada di DB (backward-compat) tapi TIDAK dipakai
 - Grace period 30 menit (dari session 7) tetap aktif — nilai `overtime_hours` sudah accounted for grace period saat import
+
+---
+
+## Update: 2026-07-29 — Potongan Otomatis Terlambat > 4 Jam
+
+### Feature
+Auto-penalti keterlambatan ekstrem untuk disiplin absensi. Jika karyawan terlambat masuk **> 4 jam** (setelah 08:30 → melewati 12:30), sistem otomatis memotong gaji dengan rumus pro-rata per menit:
+
+**Rumus**: `Potongan = Total Menit Telat × ((Gaji Pokok / 26) / 7) / 60`
+
+Menit telat < 4 jam tidak dikenakan penalti (grace). Hari Minggu libur (tidak dihitung).
+
+### Behavior
+- **Import Absensi Finger** → parser (`_calculate_late_minutes`) menghitung `penalty_minutes` per hari, disimpan di `attendance_daily.late_penalty_minutes`.
+- **Endpoint `/attendance/import` & `/attendance/range/summary`**: mengagregasi `late_penalty_minutes` per karyawan dalam periode. Response `summary` sekarang include field ini.
+- **Frontend Payroll.jsx**: kolom baru **"MENIT TELAT (>4H)"** di tabel Input Kehadiran (highlight merah jika > 0). Auto-terisi setelah Terapkan Rentang / Import Fingerprint.
+- **`calculate_payslip`**: baca `late_penalty_minutes` dari attendance payload → hitung `auto_late_penalty = menit × wage_per_minute`. **AUTO OVERRIDE MANUAL**: bila auto > 0, override field `potongan_terlambat` di employee master.
+- **Slip Gaji (`Payslip.jsx`, `Portal.jsx`, PDF)**: label dinamis
+  - Auto: `Potongan Terlambat (>4 Jam · N menit)` + nominal
+  - Manual: `Potongan Terlambat` (label lama)
+- **`slip.attendance` extra fields**: `late_penalty_minutes`, `late_penalty_amount`, `late_penalty_source` (auto_from_attendance | manual_employee_master | none)
+
+### Testing (E2E via requests)
+Employee basic 2.000.000, standard_workdays 26:
+- wage_per_min = ((2.000.000 / 26) / 7) / 60 = 183.15
+- Case1 [no late]: potongan=0, source=none ✓
+- Case2 [300 min late]: potongan = 300 × 183.15 = **Rp 54.945**, source=auto_from_attendance ✓
+- Case3 [manual=100k + auto=300min]: AUTO override → 54.945 (bukan 100.000) ✓
+- Case4 [manual=100k, auto=0]: manual applies → 100.000, source=manual_employee_master ✓
+
+Slip UI verified via screenshot: label "Potongan Terlambat (>4 Jam · 300 menit) — Rp 54.945" render benar.
+
+### Files Changed
+- `backend/server.py`: `calculate_payslip` (~15 lines), `/attendance/import` aggregation (~10 lines), `/attendance/range/summary` (~10 lines), PDF renderer label
+- `frontend/src/pages/Payroll.jsx`: kolom "Menit Telat (>4H)" + merge `late_penalty_minutes` di fetchRangeSummary & onFingerprintImport, default `late_penalty_minutes: 0`
+- `frontend/src/pages/Payslip.jsx`: dynamic label dengan menit
+- `frontend/src/pages/Portal.jsx`: dynamic label dengan menit
+
+### Backlog Setelah Ini
+- 🔴 CRITICAL: Refactor `server.py` (>8200 baris) → pecah ke `/app/backend/routers/*.py`
+- 🟢 P1: Scheduled Auto-Send Payslip (APScheduler)
+- 🟢 P1: Cuti Tahunan Kuota per Karyawan
+- 🟢 P1: Auto-add lembur approved ke perhitungan Payroll
+- 🟡 P2: Halaman Daftar Pinjaman Aktif, Notif WA izin/cuti
+- 🟡 P3: Audit Log HR, Rekap lembur PDF, Notif PO tertunda
