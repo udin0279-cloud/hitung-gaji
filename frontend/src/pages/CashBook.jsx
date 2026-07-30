@@ -31,13 +31,6 @@ export default function CashBook() {
   const [editingTx, setEditingTx] = useState(null);
   const [openSetting, setOpenSetting] = useState(false);
   const [openAccounts, setOpenAccounts] = useState(false);
-  // Toggle: sembunyikan kolom Kode Akun & teks angka akun di UI (default: tersembunyi)
-  const [showAccountCode, setShowAccountCode] = useState(() => {
-    try { return localStorage.getItem("cashbook.showAccountCode") === "1"; } catch { return false; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem("cashbook.showAccountCode", showAccountCode ? "1" : "0"); } catch { /* ignore */ }
-  }, [showAccountCode]);
 
   const loadAll = async () => {
     setLoading(true);
@@ -73,9 +66,8 @@ export default function CashBook() {
 
   // BukuKas: SEMUA akun KECUALI 101 Kas (per request user)
   const filteredBook = txData.transactions.filter((t) => t.account_code !== "101" && matchesSearch(t));
-  // Jurnal Akuntansi: SEMUA arus kas dari berbagai akun (masuk & keluar)
-  // Pengeluaran (type=out) apapun kodenya → DEBET · Pemasukan (type=in) apapun kodenya → KREDIT
-  const filteredJournal = txData.transactions.filter(matchesSearch);
+  // Buku Kas (tab === "journal" · JournalTab): HANYA akun 101 Kas Utama (hard filter permanen).
+  const filteredJournal = txData.transactions.filter((t) => t.account_code === "101" && matchesSearch(t));
 
   const removeTx = async (t) => {
     if (t.auto) {
@@ -190,18 +182,6 @@ export default function CashBook() {
         <TabBtn active={tab === "journal"} onClick={() => setTab("journal")} testId="tab-journal"><BookOpen className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Buku Kas</TabBtn>
         <TabBtn active={tab === "kasbon"} onClick={() => setTab("kasbon")} testId="tab-kasbon"><Users className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Kasbon Sementara</TabBtn>
         <TabBtn active={tab === "summary"} onClick={() => setTab("summary")} testId="tab-summary">Ringkasan Kategori</TabBtn>
-        <div className="ml-auto">
-          <label className="inline-flex items-center gap-2 text-[11px] uppercase tracking-widest font-semibold text-zinc-500 hover:text-zinc-900 cursor-pointer select-none pb-2" title="Tampilkan kolom Kode Akun & referensi angka akun (untuk finance/audit)">
-            <input
-              type="checkbox"
-              data-testid="toggle-account-code"
-              checked={showAccountCode}
-              onChange={(e) => setShowAccountCode(e.target.checked)}
-              className="rounded-none border border-zinc-400 w-3.5 h-3.5 accent-[#002FA7]"
-            />
-            Tampilkan Kode Akun
-          </label>
-        </div>
       </div>
 
       <div className="mt-5">
@@ -209,7 +189,6 @@ export default function CashBook() {
           <BookTab
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
             txData={txData} filtered={filteredBook} loading={loading}
-            showAccountCode={showAccountCode}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
           />
@@ -218,7 +197,6 @@ export default function CashBook() {
           <JournalTab
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
             txData={txData} filtered={filteredJournal} loading={loading}
-            showAccountCode={showAccountCode}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
           />
@@ -728,8 +706,8 @@ function Field({ label, hint, children }) {
    - Saldo berjalan = saldo sebelumnya + Kredit − Debet
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
-function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, showAccountCode }) {
-  // Jurnal Akuntansi (Kas): DEBET = semua type=out, KREDIT = semua type=in (termasuk 301-SPP/SPK Shopee netto)
+function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove }) {
+  // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
   const kasTx = filtered;
   // Recompute running balance: Saldo Awal + Kredit − Debet (per baris)
   const jurnal = (() => {
@@ -760,7 +738,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Debet & Kredit: Semua Akun (Shopee NETTO)</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Akun 101 · Kas Utama</span>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
           {jurnal.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
@@ -771,7 +749,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="bg-zinc-900 text-white text-[11px] font-bold uppercase tracking-widest">
-              {showAccountCode && <th className="px-3 py-3 border-r border-zinc-700">Kode Akun</th>}
+              <th className="px-3 py-3 border-r border-zinc-700">Kode Akun</th>
               <th className="px-3 py-3 border-r border-zinc-700">Nama Akun</th>
               <th className="px-3 py-3 border-r border-zinc-700 whitespace-nowrap">Tanggal</th>
               <th className="px-3 py-3 border-r border-zinc-700">Keterangan</th>
@@ -783,7 +761,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
           </thead>
           <tbody>
             <tr className="border-b border-zinc-200 bg-[#002FA7]/5">
-              <td colSpan={showAccountCode ? 4 : 3} className="px-3 py-2.5">
+              <td colSpan={4} className="px-3 py-2.5">
                 <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Saldo Awal {monthLabel(month)}</span>
               </td>
               <td className="px-3 py-2.5"></td>
@@ -791,15 +769,13 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]">{formatIDR(txData.opening_balance)}</td>
               <td className="px-3 py-2.5"></td>
             </tr>
-            {loading && <tr><td colSpan={showAccountCode ? 8 : 7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && jurnal.length === 0 && (
-              <tr><td colSpan={showAccountCode ? 8 : 7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada arus kas bulan ini.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada arus kas bulan ini.</td></tr>
             )}
             {jurnal.map((t) => (
               <tr key={t.id} data-testid="journal-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${t.auto ? "bg-amber-50/40" : ""}`}>
-                {showAccountCode && (
-                  <td className="px-3 py-2.5 font-mono text-xs font-bold text-zinc-700 whitespace-nowrap">{t.account_code}</td>
-                )}
+                <td className="px-3 py-2.5 font-mono text-xs font-bold text-zinc-700 whitespace-nowrap">{t.account_code}</td>
                 <td className="px-3 py-2.5 text-xs">
                   {t.account_name}
                   {t.auto && <span className="ml-2 text-[9px] uppercase tracking-widest font-bold text-amber-700 inline-flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Auto</span>}
@@ -840,7 +816,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             ))}
             {!loading && jurnal.length > 0 && (
               <tr className="border-t-2 border-zinc-900 bg-zinc-50">
-                <td colSpan={showAccountCode ? 4 : 3} className="px-3 py-3">
+                <td colSpan={4} className="px-3 py-3">
                   <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total Debet / Kredit</span>
                 </td>
                 <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebet)}</td>
