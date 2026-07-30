@@ -117,16 +117,26 @@ export default function CashBook() {
   const [resyncing, setResyncing] = useState(false);
   const resyncSales = async () => {
     if (!window.confirm(
-      "Sinkron Ulang Kas Penjualan?\n\nAksi ini akan:\n• Scan semua transaksi Penjualan (DP + LUNAS + pelunasan)\n• Insert baris kas yang belum tercatat di Buku Kas\n• Data yang sudah ada akan di-skip (dedup by sale_no + amount + date + akun)\n\nLanjutkan?"
+      "Sinkron Ulang Kas dari Penjualan + Pembelian?\n\nAksi ini akan:\n• Scan semua transaksi Penjualan (DP + LUNAS + pelunasan)\n• Scan semua PO Pembelian (bandingkan amount_paid vs cash tx tercatat)\n• Insert baris kas yang belum tercatat di Buku Kas\n• Data yang sudah ada akan di-skip (idempotent)\n\nLanjutkan?"
     )) return;
     setResyncing(true);
     try {
-      const res = await api.post("/cashbook/resync-sales");
-      const d = res.data;
-      if (d.missing_inserted === 0) {
-        toast.success(`Sudah sinkron. ${d.sales_scanned} penjualan · ${d.payments_scanned} pembayaran diperiksa. Tidak ada data hilang.`);
+      const [salesRes, poRes] = await Promise.all([
+        api.post("/cashbook/resync-sales"),
+        api.post("/cashbook/resync-purchases"),
+      ]);
+      const sd = salesRes.data;
+      const pd = poRes.data;
+      const totalInserted = sd.missing_inserted + pd.missing_inserted;
+      const totalAmount = Number(sd.total_inserted_amount) + Number(pd.total_inserted_amount);
+      if (totalInserted === 0) {
+        toast.success(
+          `Sudah sinkron. Penjualan: ${sd.sales_scanned} sales · ${sd.payments_scanned} bayar · PO: ${pd.po_scanned} PO. Tidak ada data hilang.`
+        );
       } else {
-        toast.success(`Berhasil sinkron ${d.missing_inserted} pembayaran (total Rp ${Number(d.total_inserted_amount).toLocaleString("id-ID")}) dari ${d.sales_scanned} penjualan.`);
+        toast.success(
+          `Berhasil sinkron ${totalInserted} baris (total Rp ${Number(totalAmount).toLocaleString("id-ID")}). Penjualan: ${sd.missing_inserted} · Pembelian: ${pd.missing_inserted}.`
+        );
       }
       await loadAll();
     } catch (err) {
@@ -154,7 +164,7 @@ export default function CashBook() {
           <button data-testid="cash-export-button" onClick={exportExcel} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-4 py-2.5 text-sm hover:bg-zinc-50 inline-flex items-center gap-2">
             <Download className="w-3.5 h-3.5" /> Export
           </button>
-          <button data-testid="cash-resync-button" onClick={resyncSales} disabled={resyncing} className="rounded-none bg-white text-[#002FA7] border border-[#002FA7] px-4 py-2.5 text-sm hover:bg-[#002FA7]/5 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2" title="Backfill pembayaran dari Penjualan (DP/LUNAS) ke Buku Kas untuk data lama yang belum tercatat">
+          <button data-testid="cash-resync-button" onClick={resyncSales} disabled={resyncing} className="rounded-none bg-white text-[#002FA7] border border-[#002FA7] px-4 py-2.5 text-sm hover:bg-[#002FA7]/5 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2" title="Backfill pembayaran dari Penjualan (DP/LUNAS) & Pembelian (PO) ke Buku Kas untuk data lama yang belum tercatat">
             <RefreshCw className={`w-3.5 h-3.5 ${resyncing ? "animate-spin" : ""}`} /> {resyncing ? "Menyinkron…" : "Sinkron Ulang Kas"}
           </button>
           <button data-testid="cash-tx-in-button" onClick={() => { setEditingTx({ type: "in" }); setOpenTx(true); }} className="rounded-none bg-[#008A00] text-white px-4 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-[#006D00] inline-flex items-center gap-2">

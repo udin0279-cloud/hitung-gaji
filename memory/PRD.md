@@ -1756,3 +1756,42 @@ Hasil:
 ### Files Changed
 - `backend/server.py`: endpoint baru `POST /api/cashbook/resync-sales` (~100 baris)
 - `frontend/src/pages/CashBook.jsx`: import `RefreshCw`, state `resyncing`, fungsi `resyncSales`, tombol UI
+
+---
+
+## Update: 2026-07-30 (session 13) — Extend Re-sync ke Pembelian (PO)
+
+### Feature
+Extend endpoint resync sebelumnya untuk juga cover Pembelian (PO) — biar Kas benar-benar sinkron 100% dengan seluruh histori transaksi masuk & keluar.
+
+### Backend
+New endpoint **`POST /api/cashbook/resync-purchases`**:
+- Iterate `db.purchase_orders.find({amount_paid > 0})`
+- Untuk tiap PO, bandingkan `amount_paid` cumulative vs sum(cash_transactions where reference=po_no, account_code=201)
+- Bila delta > 0.01 → insert 1 row untuk delta amount dgn tag `[RESYNC]`
+- Date resolution: `last_payment_at` → `date` PO → today
+- Description include status: LUNAS bila remaining ≤ 0.01, else "sisa Rp X"
+- Support `dry_run=true`
+- Response: `{po_scanned, missing_inserted, total_inserted_amount, details:[...]}`
+
+Note: PO tidak menyimpan `payments[]` per-transaksi (hanya cumulative), jadi resync ini menggunakan delta approach — insert selisih antara amount_paid dan cash_tx yang sudah tercatat.
+
+### Frontend
+Tombol "Sinkron Ulang Kas" sekarang trigger **KEDUANYA** dalam paralel:
+- `POST /api/cashbook/resync-sales`
+- `POST /api/cashbook/resync-purchases`
+Toast feedback menampilkan breakdown per modul (Penjualan / Pembelian).
+
+### Testing (E2E)
+Seed scenario:
+- TEST01: PO fully paid Rp 1.5M, no cash tx → insert Rp 1.5M ✓
+- TEST02: PO partial paid Rp 300K, no cash tx → insert Rp 300K ✓
+- TEST03: PO amount_paid Rp 1M, existing cash tx Rp 400K → insert delta Rp 600K ✓
+- Existing PO-202607-0001 amount_paid Rp 500K, no cash tx → insert Rp 500K ✓
+- 2nd run: 0 inserts (idempotent) ✓
+
+Total: 4 rows inserted, Rp 2.9M ✓
+
+### Files Changed
+- `backend/server.py`: endpoint `POST /api/cashbook/resync-purchases` (~90 baris)
+- `frontend/src/pages/CashBook.jsx`: `resyncSales()` sekarang panggil 2 endpoint via Promise.all, konfirmasi dialog + toast update

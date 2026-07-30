@@ -8190,6 +8190,103 @@ async def cashbook_resync_sales(
     }
 
 
+@api_router.post("/cashbook/resync-purchases")
+async def cashbook_resync_purchases(
+    user: dict = Depends(require_super_admin),
+    dry_run: bool = False,
+):
+    """Re-sync pembayaran PO (Pembelian) ke Buku Kas.
+
+    PO tidak menyimpan history pembayaran per-transaksi, hanya cumulative `amount_paid`.
+    Logika: untuk tiap PO, bandingkan `amount_paid` dgn total cash_tx yang sudah tercatat
+    (reference=po_no, account_code=201). Bila `amount_paid` > existing_sum, insert delta.
+
+    Response: {po_scanned, po_with_payment, missing_inserted, total_inserted_amount, details:[]}
+    """
+    pos = await db.purchase_orders.find(
+        {"amount_paid": {"$gt": 0}},
+        {"_id": 0, "id": 1, "po_no": 1, "supplier_name": 1, "amount_paid": 1, "total": 1, "date": 1, "last_payment_at": 1},
+    ).to_list(length=100000)
+    # Preload existing cash_tx dengan ref PO
+    po_nos = [p.get("po_no") for p in pos if p.get("po_no")]
+    existing = await db.cash_transactions.find(
+        {"reference": {"$in": po_nos}, "account_code": "201"},
+        {"_id": 0, "reference": 1, "amount": 1},
+    ).to_list(length=200000)
+    from collections import defaultdict
+    existing_sum: Dict[str, float] = defaultdict(float)
+    for e in existing:
+        existing_sum[e.get("reference")] += float(e.get("amount") or 0)
+
+    inserted_details: List[Dict[str, Any]] = []
+    missing_inserted = 0
+    total_inserted_amount = 0.0
+
+    for p in pos:
+        po_no = p.get("po_no")
+        if not po_no:
+            continue
+        paid = round(float(p.get("amount_paid") or 0), 2)
+        recorded = round(existing_sum.get(po_no, 0.0), 2)
+        delta = round(paid - recorded, 2)
+        if delta <= 0.01:  # tolerance floating point
+            continue
+        # Tanggal: pakai last_payment_at bila ada, else PO date, else today
+        pdate = p.get("last_payment_at") or p.get("date") or ""
+        if pdate:
+            pdate = pdate[:10]
+        else:
+            pdate = datetime.now(timezone.utc).date().isoformat()
+
+        supplier = p.get("supplier_name") or "-"
+        total = round(float(p.get("total") or 0), 2)
+        remaining = round(total - paid, 2)
+        if remaining <= 0.01:
+            tag = "LUNAS"
+        else:
+            tag = f"sisa Rp {remaining:,.0f}"
+        desc = f"Bayar PO {po_no} — {supplier} · {tag} [RESYNC]"
+
+        if dry_run:
+            inserted_details.append({
+                "po_no": po_no, "supplier": supplier, "date": pdate,
+                "amount_paid_recorded": recorded, "amount_paid_actual": paid,
+                "delta_to_insert": delta, "would_insert": True,
+            })
+        else:
+            try:
+                await _insert_cash_transaction(
+                    account_code="201",
+                    description=desc,
+                    amount=delta,
+                    reference=po_no,
+                    date_iso=pdate,
+                    auto=True,
+                    created_by=user.get("email"),
+                )
+                inserted_details.append({
+                    "po_no": po_no, "supplier": supplier, "date": pdate,
+                    "amount_paid_recorded": recorded, "amount_paid_actual": paid,
+                    "delta_to_insert": delta,
+                })
+            except Exception as ex:
+                logger.warning(f"Resync PO {po_no} delta {delta} failed: {ex}")
+                continue
+        missing_inserted += 1
+        total_inserted_amount += delta
+
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "po_scanned": len(pos),
+        "po_with_missing_payment": missing_inserted,
+        "missing_inserted": missing_inserted,
+        "total_inserted_amount": round(total_inserted_amount, 2),
+        "details": inserted_details[:100],
+        "details_total": len(inserted_details),
+    }
+
+
 @api_router.get("/cashbook/kasbon")
 async def kasbon_list(
     user: dict = Depends(require_super_admin),
