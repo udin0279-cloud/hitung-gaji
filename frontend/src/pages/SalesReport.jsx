@@ -141,7 +141,9 @@ export default function SalesReport() {
       uniqueSaleStatus.set(r.sale_no, r.sale_status || (Number(r.sale_sisa_tagihan || 0) > 0.01 ? "dp" : "paid"));
     }
   });
-  const totalRowsAmount = Array.from(uniqueSaleTotals.values()).reduce((s, v) => s + v, 0);
+  // Total lain (Diskon, Sisa, DP count) tetap dari rows-dedup.
+  // NB: totalRowsAmount (invoice total per sale) sengaja TIDAK dipakai lagi untuk chip/footer
+  // agar Omzet konsisten dengan kartu ringkasan (Uang Diterima) dan Buku Kas.
   const totalRowsDisc = Array.from(uniqueSaleDiscounts.values()).reduce((s, v) => s + v, 0);
   const totalRowsSisa = Array.from(uniqueSaleSisa.values()).reduce((s, v) => s + v, 0);
   const dpCount = Array.from(uniqueSaleStatus.values()).filter((v) => v === "dp").length;
@@ -347,7 +349,7 @@ export default function SalesReport() {
               <FileSpreadsheet className="w-3.5 h-3.5" />
               {exporting ? "Memproses…" : "Export Excel"}
             </button>
-            <div className="text-xs font-mono text-zinc-500">{rows.length} item · Total <b className="text-[#002FA7]">{formatIDR(totalRowsAmount)}</b></div>
+            <div className="text-xs font-mono text-zinc-500">{rows.length} item · Total <b className="text-[#002FA7]" data-testid="chip-total-omzet">{formatIDR(data.summary?.period_total || 0)}</b></div>
           </div>
         </div>
         {/* Toolbar: Sembunyikan Kolom Pembayaran */}
@@ -535,7 +537,7 @@ export default function SalesReport() {
                   <td className="px-2 py-3 border-r border-zinc-200"></td>
                   <td className="px-2 py-3 text-right font-mono font-bold text-[#E81123] border-r border-zinc-200">{formatIDR(totalRowsDisc)}</td>
                   <td className="px-2 py-3 text-right font-mono font-bold text-zinc-700 border-r border-zinc-200">{formatIDR(totalRowsItemsSubtotal)}</td>
-                  <td className="px-2 py-3 text-right font-mono font-bold text-lg text-[#002FA7] border-r border-zinc-200">{formatIDR(totalRowsAmount)}</td>
+                  <td className="px-2 py-3 text-right font-mono font-bold text-lg text-[#002FA7] border-r border-zinc-200" data-testid="footer-total-omzet">{formatIDR(data.summary?.period_total || 0)}</td>
                   <td data-testid="footer-total-sisa" className="px-2 py-3 text-right font-mono font-bold text-[#E81123] bg-yellow-50 border-r border-zinc-200">{formatIDR(totalRowsSisa)}</td>
                   <td className="px-2 py-3 text-center text-[10px] font-bold text-zinc-500 border-r border-zinc-200">
                     {totalRowsSisa > 0.01 ? `${dpCount} DP` : "—"}
