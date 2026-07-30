@@ -1708,3 +1708,51 @@ Seed data (Jul 2026):
 ### Files Changed
 - `backend/server.py`: `/cashbook/balance`, `/cashbook/summary`, `/cashbook/transactions` — Kas 101 flow semantic
 - `frontend/src/pages/CashBook.jsx`: JournalTab `kasTx` filter + chip badge + footnote
+
+---
+
+## Update: 2026-07-30 (session 12) — Re-sync Kas Otomatis dari Penjualan (URGENT FIX)
+
+### Feature (URGENT UI FIX #6)
+User request: Pastikan SETIAP pembayaran di Kasir (DP + LUNAS + pelunasan lanjutan) otomatis membuat baris pemasukan di Buku Kas. Re-sync historical sales untuk backfill data yang belum tercatat.
+
+### Analysis
+- `saveSale` (POST /api/sales) SUDAH memanggil `_insert_cash_transaction` untuk DP + LUNAS (line 6116-6135) ✓
+- `pay-remaining` (pelunasan) SUDAH memanggil `_insert_cash_transaction` ✓
+- **Root cause data lama**: sales historical dari sebelum feature ini di-implementasi tidak punya baris kas — perlu backfill
+
+### Backend Changes (server.py)
+Endpoint baru: **`POST /api/cashbook/resync-sales?dry_run=false`**
+- Iterasi semua `sales.find({})`
+- Untuk setiap sale, ambil `payments[]` array (atau fallback ke legacy `cash_paid + payment_method + date` bila array kosong/absent)
+- Untuk tiap pembayaran, hitung `account_code` via `_resolve_payment_account`
+- Dedup dengan key `(reference=sale_no, account_code, amount, date)` terhadap `cash_transactions` yang sudah ada
+- Bila missing → `_insert_cash_transaction` dgn deskripsi bertag `[RESYNC]`
+- Support `dry_run=true` untuk preview tanpa insert
+- Response: `{sales_scanned, payments_scanned, missing_inserted, total_inserted_amount, details:[...]}`
+
+### Frontend Changes (CashBook.jsx)
+- Tombol baru **"Sinkron Ulang Kas"** di header Kas Operasional (icon `RefreshCw` biru outline)
+- State `resyncing` + fungsi `resyncSales()` dengan window.confirm + toast feedback
+- Icon spinner saat proses berjalan
+- data-testid: `cash-resync-button`
+
+### Idempotency
+Endpoint aman dijalankan berulang kali — key dedup `(sale_no, account_code, amount, date)` mencegah duplikasi. Test menunjukkan 2× run = 3 baris inserted pertama, 0 pada run kedua.
+
+### Testing (E2E)
+Seed 3 historical sales tanpa cash_tx:
+- TEST01 DP Rp 100k (cash) · 2026-06-01
+- TEST02 LUNAS Rp 500k (transfer BCA) · 2026-06-02
+- TEST03 LEGACY DP Rp 300k (cash, tanpa payments array) · 2026-06-03
+
+Hasil:
+- Dry-run detect 3 missing (total Rp 900k) ✓
+- Actual resync insert 3 rows dgn tag `[RESYNC]` ✓
+- Screenshot Buku Kas Jun 2026 menampilkan 3 baris + TOTAL NON-KAS Rp 900.000 ✓
+- 2nd run: 0 inserts (idempotent) ✓
+- Legacy sale (tanpa `payments` array) berhasil backfill via fallback ke `cash_paid` ✓
+
+### Files Changed
+- `backend/server.py`: endpoint baru `POST /api/cashbook/resync-sales` (~100 baris)
+- `frontend/src/pages/CashBook.jsx`: import `RefreshCw`, state `resyncing`, fungsi `resyncSales`, tombol UI

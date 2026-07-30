@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   Plus, Trash2, X, Search, Wallet, TrendingUp, TrendingDown, Download,
   Pencil, ArrowUpCircle, ArrowDownCircle, Settings, ChevronRight, Lock,
-  BookOpen, Users, CheckCircle2, RotateCcw,
+  BookOpen, Users, CheckCircle2, RotateCcw, RefreshCw,
 } from "lucide-react";
 
 const inputCls = "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none";
@@ -114,6 +114,28 @@ export default function CashBook() {
     } catch { toast.error("Gagal export"); }
   };
 
+  const [resyncing, setResyncing] = useState(false);
+  const resyncSales = async () => {
+    if (!window.confirm(
+      "Sinkron Ulang Kas Penjualan?\n\nAksi ini akan:\n• Scan semua transaksi Penjualan (DP + LUNAS + pelunasan)\n• Insert baris kas yang belum tercatat di Buku Kas\n• Data yang sudah ada akan di-skip (dedup by sale_no + amount + date + akun)\n\nLanjutkan?"
+    )) return;
+    setResyncing(true);
+    try {
+      const res = await api.post("/cashbook/resync-sales");
+      const d = res.data;
+      if (d.missing_inserted === 0) {
+        toast.success(`Sudah sinkron. ${d.sales_scanned} penjualan · ${d.payments_scanned} pembayaran diperiksa. Tidak ada data hilang.`);
+      } else {
+        toast.success(`Berhasil sinkron ${d.missing_inserted} pembayaran (total Rp ${Number(d.total_inserted_amount).toLocaleString("id-ID")}) dari ${d.sales_scanned} penjualan.`);
+      }
+      await loadAll();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal sinkron");
+    } finally {
+      setResyncing(false);
+    }
+  };
+
   return (
     <div className="px-4 sm:px-6 lg:px-10 py-6 sm:py-8 max-w-7xl">
       <div className="flex flex-wrap items-end justify-between gap-4 pb-6 border-b border-zinc-200">
@@ -131,6 +153,9 @@ export default function CashBook() {
           </button>
           <button data-testid="cash-export-button" onClick={exportExcel} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-4 py-2.5 text-sm hover:bg-zinc-50 inline-flex items-center gap-2">
             <Download className="w-3.5 h-3.5" /> Export
+          </button>
+          <button data-testid="cash-resync-button" onClick={resyncSales} disabled={resyncing} className="rounded-none bg-white text-[#002FA7] border border-[#002FA7] px-4 py-2.5 text-sm hover:bg-[#002FA7]/5 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2" title="Backfill pembayaran dari Penjualan (DP/LUNAS) ke Buku Kas untuk data lama yang belum tercatat">
+            <RefreshCw className={`w-3.5 h-3.5 ${resyncing ? "animate-spin" : ""}`} /> {resyncing ? "Menyinkron…" : "Sinkron Ulang Kas"}
           </button>
           <button data-testid="cash-tx-in-button" onClick={() => { setEditingTx({ type: "in" }); setOpenTx(true); }} className="rounded-none bg-[#008A00] text-white px-4 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-[#006D00] inline-flex items-center gap-2">
             <ArrowUpCircle className="w-4 h-4" /> Pemasukan

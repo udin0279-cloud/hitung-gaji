@@ -8067,6 +8067,129 @@ class KasbonIn(BaseModel):
     amount: float
 
 
+@api_router.post("/cashbook/resync-sales")
+async def cashbook_resync_sales(
+    user: dict = Depends(require_super_admin),
+    dry_run: bool = False,
+):
+    """Re-sync semua pembayaran (DP + pelunasan) dari transaksi Penjualan ke Buku Kas.
+
+    Backfill baris cash_transactions yang belum tercatat untuk historical sales.
+    Match kriteria: (reference=sale_no, account_code, amount, date). Bila tidak ada match, insert.
+
+    Response: {sales_scanned, payments_scanned, existing_matched, missing_inserted, total_inserted_amount, details:[]}
+    """
+    sales = await db.sales.find({}, {"_id": 0}).to_list(length=100000)
+    # Preload semua existing auto cash tx dgn reference (untuk speed)
+    existing = await db.cash_transactions.find(
+        {"reference": {"$in": [s.get("sale_no") for s in sales if s.get("sale_no")]}},
+        {"_id": 0, "reference": 1, "account_code": 1, "amount": 1, "date": 1},
+    ).to_list(length=200000)
+    # Key: (reference, account_code, round(amount,2), date)  → count occurrences
+    from collections import Counter
+    existing_key = Counter()
+    for e in existing:
+        k = (e.get("reference"), e.get("account_code"), round(float(e.get("amount") or 0), 2), e.get("date"))
+        existing_key[k] += 1
+
+    inserted_details: List[Dict[str, Any]] = []
+    payments_scanned = 0
+    missing_inserted = 0
+    total_inserted_amount = 0.0
+
+    for s in sales:
+        sale_no = s.get("sale_no")
+        if not sale_no:
+            continue
+        # Ambil daftar pembayaran; fallback ke legacy field (cash_paid, payment_method, date)
+        payments = s.get("payments") or []
+        if not payments and float(s.get("cash_paid") or 0) > 0:
+            payments = [{
+                "amount": min(float(s.get("cash_paid") or 0), float(s.get("total") or 0)),
+                "payment_method": s.get("payment_method") or "cash",
+                "payment_bank": s.get("payment_bank"),
+                "date": s.get("date"),
+                "notes": s.get("payment_notes"),
+                "is_initial": True,
+            }]
+        for p in payments:
+            amt = round(float(p.get("amount") or 0), 2)
+            if amt <= 0:
+                continue
+            payments_scanned += 1
+            pm = p.get("payment_method") or "cash"
+            bank = p.get("payment_bank")
+            acc_code, acc_label = _resolve_payment_account(pm, bank)
+            p_date = (p.get("date") or s.get("date") or "")[:10]
+            key = (sale_no, acc_code, amt, p_date)
+            if existing_key.get(key, 0) > 0:
+                existing_key[key] -= 1  # consumed one match; leftover checked for duplicates
+                continue
+            # Missing — insert
+            is_initial = bool(p.get("is_initial"))
+            sisa = round(float(s.get("sisa_tagihan") or 0), 2)
+            status_at_time = s.get("status") or ("paid" if sisa <= 0.01 else "dp")
+            if is_initial:
+                if status_at_time == "dp":
+                    tag = f"DP (sisa Rp {sisa:,.0f})"
+                else:
+                    tag = "LUNAS"
+            else:
+                # Pelunasan lanjutan
+                if status_at_time == "paid":
+                    tag = "Pelunasan · LUNAS"
+                else:
+                    tag = f"Pelunasan · sisa Rp {sisa:,.0f}"
+            desc = f"Penjualan {sale_no} — {s.get('customer_name') or 'Umum'} · {acc_label} · {tag} [RESYNC]"
+            if p.get("notes"):
+                desc += f" ({p['notes']})"
+            if dry_run:
+                inserted_details.append({
+                    "sale_no": sale_no,
+                    "customer": s.get("customer_name"),
+                    "date": p_date,
+                    "account_code": acc_code,
+                    "account_label": acc_label,
+                    "amount": amt,
+                    "would_insert": True,
+                })
+            else:
+                try:
+                    await _insert_cash_transaction(
+                        account_code=acc_code,
+                        description=desc,
+                        amount=amt,
+                        reference=sale_no,
+                        date_iso=p_date,
+                        auto=True,
+                        created_by=user.get("email"),
+                    )
+                    inserted_details.append({
+                        "sale_no": sale_no,
+                        "customer": s.get("customer_name"),
+                        "date": p_date,
+                        "account_code": acc_code,
+                        "account_label": acc_label,
+                        "amount": amt,
+                    })
+                except Exception as ex:
+                    logger.warning(f"Resync sale {sale_no} amount {amt} failed: {ex}")
+                    continue
+            missing_inserted += 1
+            total_inserted_amount += amt
+
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "sales_scanned": len(sales),
+        "payments_scanned": payments_scanned,
+        "missing_inserted": missing_inserted,
+        "total_inserted_amount": round(total_inserted_amount, 2),
+        "details": inserted_details[:100],  # cap 100 utk response size
+        "details_total": len(inserted_details),
+    }
+
+
 @api_router.get("/cashbook/kasbon")
 async def kasbon_list(
     user: dict = Depends(require_super_admin),
