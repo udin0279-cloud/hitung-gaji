@@ -25,6 +25,16 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 8. Overtime calculation (basic/173 * 1.5 per hour)
 9. Printable A4 payslip
 
+
+## Update 2026-07-30 — Omzet = Uang Diterima (Sinkron Buku Kas)
+- `GET /api/sales/report/analytics` now computes **`period_total` (Omzet)** ONLY from received payments (initial DP + pelunasan) where **`payment.date` is within the filter period**.
+- Query is broadened: sales are included if `sale.date` OR `payments.date` falls in period (so pelunasan of an older sale still contributes to that month's Omzet).
+- Hutang / sisa tagihan pelanggan EXCLUDED from Omzet Utama.
+- Shopee tetap NETTO: admin fee dikurangi dari initial payment.
+- `weekly_total`, `daily_series`, `method_breakdown` juga mengikuti logika baru (payment-date based).
+- Frontend card `summary-period-total` diberi label "(Uang Diterima)" + tooltip penjelasan.
+- Validasi (July 2026 preview): Omzet **Rp 1.000.000** = Cashbook `total_in` **Rp 1.000.000** (SAMA PERSIS).
+
 ## What's Been Implemented (2026-02)
 ### Backend (`/app/backend/server.py`)
 - JWT auth: register, login, logout, /me (httpOnly cookies, 12h access + 7d refresh)
@@ -1846,3 +1856,72 @@ Seed 3 Shopee sales Jul 2026 (2× Plaza Rp 500K+750K, 1× Kastem Rp 1M):
   - Endpoint `POST /api/sales/shopee/bulk-set-admin-fee` + helper `_apply_shopee_admin_fee_update`
 - `frontend/src/pages/Sales.jsx`: state + form input untuk Shopee admin fee
 - `frontend/src/pages/SalesReport.jsx`: NETTO display + `<ShopeeAdminFeeControl>` component
+
+---
+
+## Update: 2026-07-30 (session 15) — Shopee Single-Entry NETTO Model
+
+### Feature (URGENT UI FIX #8)
+User request perubahan fundamental: pindah dari **double-entry model** (gross 301-SPP/SPK + separate 502-SHP expense) ke **single-entry netto model** (langsung 301-SPP/SPK netto). Total Pemasukan Buku Kas mencakup 301-SPP/SPK + semua akun type=in.
+
+### Model Comparison
+**OLD (session 14)**:
+- Cash tx pemasukan Shopee: 301-SPP amount = gross (Rp 1M)
+- Cash tx pengeluaran fee: 502-SHP amount = fee (Rp 50K)
+- Total Pemasukan Kas (session-11 filter): hanya 101 (mis-match)
+
+**NEW (session 15)**:
+- Cash tx pemasukan Shopee: 301-SPP amount = **NETTO** (gross - fee = Rp 950K)
+- **Tidak ada** row 502-SHP
+- Total Pemasukan Kas: **semua type=in** (termasuk 301-SPP, 301-Tunai, 101, dsb)
+- Laporan `period_total` = **sum netto** = **match Kas total_in** ✓
+
+### Backend Changes (server.py)
+1. **`_apply_shopee_admin_fee_update`**: 
+   - Delete both existing 301-SPP/SPK and 502-SHP tx for sale_no
+   - Re-insert 1 row netto (301-SPP/SPK) dgn amount = gross_recorded − new_fee
+   - Fee tag di description: "· − Admin Rp X [NETTO RESYNC]"
+2. **POST /api/sales**: 
+   - Bila Shopee + admin_fee > 0 → 1 baris netto (bukan 2 baris)
+   - Non-Shopee: 1 baris cash tx gross as before
+3. **`/cashbook/balance`**: `total_in = sum(all type=in)` (was: only code=101)
+4. **`/cashbook/summary`**: `total_in` + `prev_net` semua type=in (revert session-11 restriction)
+5. **`/cashbook/transactions`**: `_kas_delta` = `+amount for in`, `-amount for out` (semua akun)
+
+### Frontend Changes (CashBook.jsx JournalTab)
+- `kasTx = filtered` (no filter — semua type=in muncul di KREDIT)
+- Chip badge: `Debet & Kredit: Semua Akun (Shopee NETTO)`
+- Footnote: mention "Pemasukan Shopee sudah dipotong biaya admin (single-entry netto model)"
+
+### Sales.jsx form
+- Update hint: "Buku Kas otomatis catat pemasukan Shopee sebesar Netto (Gross − Fee). Omzet Laporan juga otomatis netto."
+
+### Testing (E2E)
+Seed sale OLD model: total 1M, fee 50K, 2 cash tx (301-SPP 1M in + 502-SHP 50K out).
+
+**BEFORE bulk-set**:
+- Kas total_in = 2M, total_out = 165.5K, Laporan = 1.95M → MISMATCH
+
+**AFTER bulk-set flat 50K**:
+- Cash tx untuk sale ini: 1 row saja (301-SPP netto Rp 950K)
+- Kas total_in = **1.95M**, total_out = **115.5K** (502-SHP dihapus)
+- Laporan period_total = **1.95M**
+- **Match Kas vs Laporan: TRUE** ✓
+
+### Files Changed
+- `backend/server.py`:
+  - `_apply_shopee_admin_fee_update` — delete both 301-SPP + 502-SHP, insert 1 netto row
+  - POST /sales — Shopee single-entry netto
+  - `/cashbook/balance`, `/summary`, `/transactions` — all type=in (revert session-11 restrict)
+- `frontend/src/pages/CashBook.jsx`:
+  - JournalTab: `kasTx = filtered` + chip badge + footnote
+- `frontend/src/pages/Sales.jsx`:
+  - Hint text update
+
+### Migration Path
+User perlu klik **"SET / HITUNG ULANG FEE"** di Laporan Penjualan → filter Jul 2026 → apply rate (percent/flat). Endpoint akan:
+1. Delete existing 301-SPP/SPK + 502-SHP tx per sale
+2. Re-insert 1 baris netto per sale
+3. Update `sale.shopee_admin_fee`
+
+Result: 54 sales Jul 2026 di production akan tersinkron ke model netto dgn 1 klik.

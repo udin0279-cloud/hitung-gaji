@@ -211,8 +211,8 @@ export default function SalesReport() {
         <div className="bg-white p-4">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Omzet Periode Ini</div>
-              <div data-testid="summary-period-total" className="font-mono text-2xl font-bold mt-1 text-[#002FA7]" title="NETTO (Gross − Biaya Admin Shopee)">{formatIDR(data.summary?.period_total || 0)}</div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Omzet Periode Ini <span className="text-[9px] normal-case tracking-normal text-[#008A00]">(Uang Diterima)</span></div>
+              <div data-testid="summary-period-total" className="font-mono text-2xl font-bold mt-1 text-[#002FA7]" title="OMZET = Uang yang sudah diterima (DP + Pelunasan) berdasarkan tanggal pembayaran. Piutang/sisa tagihan tidak dihitung. Untuk Shopee dipakai NETTO (Gross − Admin fee).">{formatIDR(data.summary?.period_total || 0)}</div>
               <div className="text-[10px] text-zinc-500 mt-1 font-mono">{data.summary?.transaction_count || 0} transaksi · {data.summary?.item_count || 0} item</div>
               {Number(data.summary?.shopee_admin_fee || 0) > 0 && (
                 <div className="text-[10px] font-mono text-[#EE4D2D] mt-1 leading-tight">

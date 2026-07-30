@@ -6123,32 +6123,32 @@ async def _build_and_persist_sale(
             desc += f" · DP (sisa Rp {sisa_tagihan:,.0f})"
         if doc.get("payment_notes"):
             desc += f" ({doc['payment_notes']})"
-        if cash_recorded > 0:
-            await _insert_cash_transaction(
-                account_code=acc_code,
-                description=desc,
-                amount=cash_recorded,
-                reference=final_sale_no,
-                date_iso=doc["date"],
-                auto=True,
-                created_by=user.get("email"),
-            )
-        # Auto-insert biaya admin Shopee sbg pengeluaran terpisah (kode 502-SHP)
+        # Untuk Shopee, cash tx pemasukan dicatat NETTO (gross - admin fee)
         shopee_admin_fee = float(doc.get("shopee_admin_fee") or 0)
-        if shopee_admin_fee > 0 and payload.payment_method in ("shopee_plaza", "shopee_kastem"):
-            try:
-                await _ensure_shopee_admin_fee_account()
+        is_shopee = payload.payment_method in ("shopee_plaza", "shopee_kastem")
+        if is_shopee and shopee_admin_fee > 0:
+            netto_recorded = max(0.0, round(cash_recorded - shopee_admin_fee, 2))
+            if netto_recorded > 0:
                 await _insert_cash_transaction(
-                    account_code="502-SHP",
-                    description=f"Biaya Admin Shopee — {final_sale_no} ({acc_label})",
-                    amount=shopee_admin_fee,
+                    account_code=acc_code,
+                    description=desc + f" · − Admin Rp {shopee_admin_fee:,.0f}",
+                    amount=netto_recorded,
                     reference=final_sale_no,
                     date_iso=doc["date"],
                     auto=True,
                     created_by=user.get("email"),
                 )
-            except Exception as ex:
-                logger.warning(f"Cashbook auto-insert (shopee admin fee) failed: {ex}")
+        else:
+            if cash_recorded > 0:
+                await _insert_cash_transaction(
+                    account_code=acc_code,
+                    description=desc,
+                    amount=cash_recorded,
+                    reference=final_sale_no,
+                    date_iso=doc["date"],
+                    auto=True,
+                    created_by=user.get("email"),
+                )
     except Exception as ex:
         logger.warning(f"Cashbook auto-insert (sale) failed: {ex}")
     # Apply stock deduction (net dari state saat ini)
@@ -7308,18 +7308,39 @@ async def sales_analytics(
     date_to: Optional[str] = None,
     customer: Optional[str] = None,
 ):
-    """Analytics untuk Laporan Penjualan (rows flatten per-item + summary + charts data)."""
+    """Analytics untuk Laporan Penjualan.
+
+    OMZET = UANG DITERIMA (DP + Pelunasan) yang tanggal PEMBAYARAN-nya berada
+    dalam periode filter. Bukan total invoice. Hutang / sisa tagihan pelanggan
+    DIKELUARKAN dari angka Omzet Utama sehingga sinkron dengan Buku Kas.
+    Untuk Shopee, dipakai NETTO (payment amount − biaya admin Shopee).
+    """
     q: Dict[str, Any] = {"status": {"$nin": ["cancelled", "void", "voided", "canceled"]}}
+    # Broaden query: include sale bila sale.date ATAU payments.date ada di dalam periode.
     if date_from or date_to:
-        q["date"] = {}
+        date_conds: Dict[str, Any] = {}
         if date_from:
-            q["date"]["$gte"] = date_from
+            date_conds["$gte"] = date_from
         if date_to:
-            q["date"]["$lte"] = date_to
+            date_conds["$lte"] = date_to
+        q["$or"] = [
+            {"date": date_conds},
+            {"payments.date": date_conds},
+        ]
     if customer:
         safe = re.escape(customer.strip())
         q["customer_name"] = {"$regex": safe, "$options": "i"}
     sales = await db.sales.find(q, {"_id": 0}).sort("created_at", 1).to_list(length=20000)
+
+    def _in_period(d: Optional[str]) -> bool:
+        d10 = (d or "")[:10]
+        if not d10:
+            return False
+        if date_from and d10 < date_from:
+            return False
+        if date_to and d10 > date_to:
+            return False
+        return True
 
     # Preload customer address map (by name, case-insensitive) & product length_meter map (by name)
     customers = await db.customers.find({}, {"_id": 0, "name": 1, "address": 1}).to_list(length=5000)
@@ -7343,6 +7364,7 @@ async def sales_analytics(
 
     for s in sales:
         s_date = s.get("date") or ""
+        sale_in_period = _in_period(s_date)
         s_customer = s.get("customer_name") or "Umum"
         s_method = s.get("payment_method") or "cash"
         s_bank = s.get("payment_bank") or ""
@@ -7369,61 +7391,67 @@ async def sales_analytics(
         # Alamat: prefer customer master lookup by name (case-insensitive)
         s_alamat = cust_addr_map.get(s_customer.strip().lower(), "")
         s_items = s.get("items") or []
-        first_item = True
-        for it in s_items:
-            name = it.get("product_name") or it.get("material_name") or "-"
-            qty = int(it.get("quantity") or 0)
-            unit_price = float(it.get("unit_price") or 0)
-            subtotal_item = float(it.get("subtotal") or (unit_price * qty))
-            size = it.get("size") or "-"
-            length_m = prod_length_map.get(name.strip().lower(), 0.0)
-            meter = round(qty * length_m, 4) if length_m > 0 else 0.0
-            rows.append({
-                "date": s_date,
-                "customer_name": s_customer,
-                "alamat": s_alamat,
-                "sale_no": s.get("sale_no"),
-                "product_name": name,
-                "size": size,
-                "pcs": qty,
-                "meter": meter,
-                "quantity": qty,  # legacy alias
-                "unit_price": unit_price,
-                "total": subtotal_item,
-                "sale_total": s_total_after_disc,
-                "sale_subtotal": s_subtotal,
-                "sale_discount": s_discount,
-                "sale_cash_paid": s_cash_paid,
-                "sale_sisa_tagihan": s_sisa,
-                "sale_status": s_status,  # "paid" (LUNAS) atau "dp"
-                "keterangan": s_pnotes or s_notes or "",
-                "branch": s_branch,
-                "payment_method": s_method,
-                "payment_bank": s_bank,
-                "payment_notes": s_pnotes,
-                "payment_column": pay_col,  # e.g., "cash_plaza" / "bca_kastem" / None
-                # Payment nominal appears on FIRST row of a sale only. Sekarang = cash_paid (aktual diterima), bukan total.
-                "payment_nominal_on_row": s_paid_amount if first_item else 0,
-                "payment_date_on_row": s_date if first_item else "",
-                "is_first_item_of_sale": first_item,
-            })
-            first_item = False
-            pk = name
-            if pk not in product_totals:
-                product_totals[pk] = {"qty": 0, "total": 0.0}
-            product_totals[pk]["qty"] += qty
-            product_totals[pk]["total"] += subtotal_item
+        # -------- Product rows: hanya jika sale.date berada di periode --------
+        if sale_in_period:
+            first_item = True
+            for it in s_items:
+                name = it.get("product_name") or it.get("material_name") or "-"
+                qty = int(it.get("quantity") or 0)
+                unit_price = float(it.get("unit_price") or 0)
+                subtotal_item = float(it.get("subtotal") or (unit_price * qty))
+                size = it.get("size") or "-"
+                length_m = prod_length_map.get(name.strip().lower(), 0.0)
+                meter = round(qty * length_m, 4) if length_m > 0 else 0.0
+                # payment nominal awal (initial DP) hanya muncul di baris pertama
+                # DAN hanya jika tanggal DP initial berada di periode (agar tidak menghitung DP
+                # di luar periode saat sale.date OoP tapi ada pelunasan in-period).
+                _init_date = ((_initial_p or {}).get("date") or s_date)[:10]
+                _pay_nominal_row = s_paid_amount if (first_item and _in_period(_init_date)) else 0
+                _pay_date_row = _init_date if (first_item and _in_period(_init_date)) else ""
+                rows.append({
+                    "date": s_date,
+                    "customer_name": s_customer,
+                    "alamat": s_alamat,
+                    "sale_no": s.get("sale_no"),
+                    "product_name": name,
+                    "size": size,
+                    "pcs": qty,
+                    "meter": meter,
+                    "quantity": qty,  # legacy alias
+                    "unit_price": unit_price,
+                    "total": subtotal_item,
+                    "sale_total": s_total_after_disc,
+                    "sale_subtotal": s_subtotal,
+                    "sale_discount": s_discount,
+                    "sale_cash_paid": s_cash_paid,
+                    "sale_sisa_tagihan": s_sisa,
+                    "sale_status": s_status,  # "paid" (LUNAS) atau "dp"
+                    "keterangan": s_pnotes or s_notes or "",
+                    "branch": s_branch,
+                    "payment_method": s_method,
+                    "payment_bank": s_bank,
+                    "payment_notes": s_pnotes,
+                    "payment_column": pay_col,
+                    "payment_nominal_on_row": _pay_nominal_row,
+                    "payment_date_on_row": _pay_date_row,
+                    "is_first_item_of_sale": first_item,
+                })
+                first_item = False
+                pk = name
+                if pk not in product_totals:
+                    product_totals[pk] = {"qty": 0, "total": 0.0}
+                product_totals[pk]["qty"] += qty
+                product_totals[pk]["total"] += subtotal_item
         # --- Pelunasan rows (per-payment entries selain initial DP) ---
-        # Setiap pelunasan tampil sebagai baris terpisah dengan:
-        #  - date = tanggal pelunasan (bukan sale.date)
-        #  - payment_column & nominal sesuai metode pelunasan
-        # Total periode & product_totals TIDAK ditambah (agar tidak double-count omzet)
+        # Tampilkan HANYA jika tanggal pelunasan berada dalam periode filter
         pelunasan_entries = [p for p in _all_payments if not p.get("is_initial")]
         for p_ in pelunasan_entries:
+            p_date = (p_.get("date") or s_date)[:10]
+            if not _in_period(p_date):
+                continue
             p_method = p_.get("payment_method") or "cash"
             p_bank = p_.get("payment_bank")
             p_amount = float(p_.get("amount") or 0)
-            p_date = p_.get("date") or s_date
             p_col = _resolve_report_payment_col(p_method, p_bank, s_branch)
             p_label = _payment_label(p_method, p_bank)
             rows.append({
@@ -7456,27 +7484,31 @@ async def sales_analytics(
                 "is_pelunasan_row": True,
                 "pelunasan_id": p_.get("id"),
             })
-            # Also update method_totals to reflect actual money received via that method
-            m_key = p_method
-            if p_method == "transfer" and p_bank:
-                m_key = f"transfer_{str(p_bank).lower()}"
-            method_totals[m_key] = method_totals.get(m_key, 0) + p_amount
-        period_total += s_total_after_disc
-        # Netto Shopee: kurangi admin fee dari period total (agar Omzet Laporan sinkron dgn kas netto)
+        # -------- OMZET AKUMULASI: hanya uang diterima (payment.date in period) --------
         _shopee_fee = float(s.get("shopee_admin_fee") or 0)
-        if _shopee_fee > 0 and s_method in ("shopee_plaza", "shopee_kastem"):
-            period_total -= _shopee_fee
-            total_shopee_fees += _shopee_fee
-            total_shopee_gross += s_total_after_disc
-        daily_series[s_date] = daily_series.get(s_date, 0) + s_total_after_disc
-        mkey = s_method
-        if s_method == "transfer" and s_bank:
-            mkey = f"transfer_{s_bank.lower()}"
-        method_totals[mkey] = method_totals.get(mkey, 0) + s_total_after_disc
-        if s_date >= week_start_iso:
-            weekly_total += s_total_after_disc
-            if _shopee_fee > 0 and s_method in ("shopee_plaza", "shopee_kastem"):
-                weekly_total -= _shopee_fee
+        _is_shopee = s_method in ("shopee_plaza", "shopee_kastem")
+        for p_ in _all_payments:
+            p_date = (p_.get("date") or s_date)[:10]
+            if not _in_period(p_date):
+                continue
+            p_amount = float(p_.get("amount") or 0)
+            if p_amount <= 0:
+                continue
+            # Shopee: potong admin fee dari pembayaran initial (model NETTO)
+            netto_amount = p_amount
+            if _is_shopee and p_.get("is_initial") and _shopee_fee > 0:
+                netto_amount = max(0.0, p_amount - _shopee_fee)
+                total_shopee_fees += _shopee_fee
+                total_shopee_gross += p_amount
+            period_total += netto_amount
+            daily_series[p_date] = daily_series.get(p_date, 0) + netto_amount
+            if p_date >= week_start_iso:
+                weekly_total += netto_amount
+            # method breakdown
+            m_key = p_.get("payment_method") or "cash"
+            if m_key == "transfer" and p_.get("payment_bank"):
+                m_key = f"transfer_{str(p_.get('payment_bank')).lower()}"
+            method_totals[m_key] = method_totals.get(m_key, 0) + netto_amount
 
     top_products = sorted(
         [{"name": k, "qty": int(v["qty"]), "total": round(v["total"], 2)} for k, v in product_totals.items()],
@@ -7495,7 +7527,7 @@ async def sales_analytics(
             "shopee_netto": round(total_shopee_gross - total_shopee_fees, 2),
             "weekly_total": round(weekly_total, 2),
             "week_start": week_start_iso,
-            "transaction_count": len(sales),
+            "transaction_count": sum(1 for s in sales if _in_period(s.get("date") or "")),
             "item_count": len(rows),
             "top_product": top_product,
         },
@@ -7798,13 +7830,13 @@ async def cash_transactions_list(
     if account_code:
         q["account_code"] = account_code
     items = await db.cash_transactions.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(length=20000)
-    # Compute running balance — Kas 101 flow: KREDIT (in) hanya code=101, DEBET (out) semua akun
+    # Compute running balance — Kas flow: SEMUA type=in menambah, SEMUA type=out mengurangi
     setting = await _cash_setting()
     opening_balance = float(setting.get("opening_balance", 0))
     opening_date = setting.get("opening_date")
 
     def _kas_delta(t):
-        if t["type"] == "in" and t.get("account_code") == "101":
+        if t["type"] == "in":
             return float(t["amount"])
         elif t["type"] == "out":
             return -float(t["amount"])
@@ -7815,7 +7847,7 @@ async def cash_transactions_list(
         first_of_month = q["date"]["$gte"]
         last_of_month = q["date"]["$lte"]
         prev = await db.cash_transactions.find(
-            {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
+            {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1},
         ).to_list(length=100000)
         # Include opening_balance selama opening_date jatuh <= akhir periode
         if opening_date and opening_date > last_of_month:
@@ -7952,9 +7984,9 @@ async def cash_transaction_orphan_check(tx_id: str, user: dict = Depends(require
 @api_router.get("/cashbook/balance")
 async def cash_balance(user: dict = Depends(require_super_admin)):
     setting = await _cash_setting()
-    txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1}).to_list(length=200000)
-    # KREDIT (in) hanya untuk akun 101 Kas; DEBET (out) semua akun
-    total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
+    txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1}).to_list(length=200000)
+    # Total pemasukan Kas = SEMUA type=in (termasuk 301-SPP/SPK Shopee netto, 301 Tunai, dsb)
+    total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in")
     total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
     balance = float(setting.get("opening_balance", 0)) + total_in - total_out
     return {
@@ -7988,13 +8020,13 @@ async def cash_summary(
     opening_date = setting.get("opening_date") or ""
 
     # Opening balance per bulan = opening_balance + net transaksi sebelum first
-    # NB: KREDIT (in) hanya untuk akun 101 Kas; DEBET (out) semua akun
+    # Total pemasukan Kas mencakup SEMUA type=in (termasuk 301-SPP/SPK Shopee)
     prev = await db.cash_transactions.find(
-        {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
+        {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1},
     ).to_list(length=200000)
     prev_net = 0.0
     for p in prev:
-        if p["type"] == "in" and p.get("account_code") == "101":
+        if p["type"] == "in":
             prev_net += float(p["amount"])
         elif p["type"] == "out":
             prev_net -= float(p["amount"])
@@ -8006,8 +8038,8 @@ async def cash_summary(
 
     # Transaksi bulan ini
     month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
-    # Total Pemasukan (KREDIT) — hanya akun 101 Kas
-    total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
+    # Total Pemasukan (KREDIT) — SEMUA type=in
+    total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
     # Total Pengeluaran (DEBET) — semua akun
     total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
     closing = opening_of_period + total_in - total_out
@@ -8310,12 +8342,13 @@ async def sales_bulk_set_shopee_fee(
 
 
 async def _apply_shopee_admin_fee_update(sale: Dict[str, Any], new_fee: float, user: dict):
-    """Update field shopee_admin_fee di sale + rekonsiliasi baris kas 502-SHP.
+    """Update field shopee_admin_fee di sale + rekonsiliasi baris kas 301-SPP/SPK (model NETTO).
 
-    Strategi:
+    Strategi (single-entry NETTO):
     - Update sale.shopee_admin_fee = new_fee
-    - Delete existing cash_tx dgn account_code=502-SHP & reference=sale_no
-    - Insert baru bila new_fee > 0
+    - Delete SEMUA cash_tx untuk sale ini (301-SPP / 301-SPK / legacy 502-SHP)
+    - Re-insert 1 baris cash tx pemasukan dgn amount = gross_paid − new_fee (NETTO)
+    - Amount pemasukan Shopee di Buku Kas otomatis netto, tidak ada baris pengeluaran fee terpisah
     """
     sale_no = sale.get("sale_no")
     if not sale_no:
@@ -8324,24 +8357,36 @@ async def _apply_shopee_admin_fee_update(sale: Dict[str, Any], new_fee: float, u
         {"id": sale["id"]},
         {"$set": {"shopee_admin_fee": round(new_fee, 2), "updated_at": datetime.now(timezone.utc).isoformat(), "updated_by": user.get("email")}},
     )
-    # Clear existing 502-SHP tx for this sale
-    await db.cash_transactions.delete_many({"account_code": "502-SHP", "reference": sale_no})
-    if new_fee > 0:
-        await _ensure_shopee_admin_fee_account()
-        method = sale.get("payment_method") or "shopee_plaza"
-        acc_label = "Shopee Plaza" if method == "shopee_plaza" else "Shopee Kastem"
-        try:
-            await _insert_cash_transaction(
-                account_code="502-SHP",
-                description=f"Biaya Admin Shopee — {sale_no} ({acc_label}) [RESYNC]",
-                amount=new_fee,
-                reference=sale_no,
-                date_iso=sale.get("date"),
-                auto=True,
-                created_by=user.get("email"),
-            )
-        except Exception as ex:
-            logger.warning(f"Insert cash tx 502-SHP for {sale_no} failed: {ex}")
+    # Clear existing cash tx untuk sale ini di akun terkait Shopee (rekonsiliasi netto)
+    method = sale.get("payment_method") or "shopee_plaza"
+    acc_code, acc_label = _resolve_payment_account(method, None)
+    await db.cash_transactions.delete_many({"reference": sale_no, "account_code": {"$in": [acc_code, "502-SHP"]}})
+    # Hitung netto: gross_paid - fee
+    total = float(sale.get("total") or 0)
+    cash_paid = float(sale.get("cash_paid") or 0)
+    gross_recorded = min(cash_paid, total)  # sama dgn POST /sales logic
+    if gross_recorded <= 0:
+        return
+    netto = round(gross_recorded - float(new_fee or 0), 2)
+    if netto <= 0.01:
+        return  # netto 0 atau negatif → tidak insert baris
+    # Determine status label
+    sisa = round(float(sale.get("sisa_tagihan") or 0), 2)
+    status_tag = "LUNAS" if sisa <= 0.01 else f"DP (sisa Rp {sisa:,.0f})"
+    fee_tag = f" · − Admin Rp {new_fee:,.0f}" if new_fee > 0 else ""
+    desc = f"Penjualan {sale_no} — {sale.get('customer_name') or 'Umum'} · {acc_label} · {status_tag}{fee_tag} [NETTO RESYNC]"
+    try:
+        await _insert_cash_transaction(
+            account_code=acc_code,
+            description=desc,
+            amount=netto,
+            reference=sale_no,
+            date_iso=sale.get("date"),
+            auto=True,
+            created_by=user.get("email"),
+        )
+    except Exception as ex:
+        logger.warning(f"Insert netto cash tx for {sale_no} failed: {ex}")
 
 
 @api_router.post("/cashbook/resync-purchases")

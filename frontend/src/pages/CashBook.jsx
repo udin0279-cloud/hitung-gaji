@@ -729,13 +729,8 @@ function Field({ label, hint, children }) {
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
 function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, showAccountCode }) {
-  // Jurnal Akuntansi (arus kas 101):
-  // - DEBET column: type === "out" apapun kode akunnya (semua pengeluaran uang)
-  // - KREDIT column: type === "in" HANYA untuk account_code === "101" Kas
-  //   (pemasukan yang tercatat langsung ke Kas — pemasukan ke akun lain seperti Bank BCA tidak menaikkan Kas)
-  const kasTx = filtered.filter((t) =>
-    t.type === "out" || (t.type === "in" && t.account_code === "101")
-  );
+  // Jurnal Akuntansi (Kas): DEBET = semua type=out, KREDIT = semua type=in (termasuk 301-SPP/SPK Shopee netto)
+  const kasTx = filtered;
   // Recompute running balance: Saldo Awal + Kredit − Debet (per baris)
   const jurnal = (() => {
     let running = Number(txData.opening_balance || 0);
@@ -765,7 +760,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Debet: Semua Akun · Kredit: Hanya {showAccountCode ? "101 Kas" : "Kas Utama"}</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Debet & Kredit: Semua Akun (Shopee NETTO)</span>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
           {jurnal.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
@@ -858,8 +853,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         </table>
       </div>
       <div className="mt-3 text-[11px] text-zinc-500">
-        <b>Konvensi:</b> Debet = semua pengeluaran uang (dari Pembelian / Kas Op / manual — apapun kode akun tujuannya) · Kredit = pemasukan yang tercatat langsung ke <b>{showAccountCode ? "Akun 101 Kas" : "Kas Utama"}</b> (pemasukan ke akun lain seperti Bank tidak menaikkan Saldo Kas) · Saldo = Saldo Awal + Kredit − Debet.
-        Data auto-sync dari modul <b>Pembelian</b> dan <b>Kas Operasional</b>. Untuk transaksi manual, gunakan tombol <b>Pemasukan</b> / <b>Pengeluaran</b> di atas.
+        <b>Konvensi:</b> Debet = semua pengeluaran uang (Pembelian / Kas Op / manual) · Kredit = semua pemasukan uang (Penjualan / Shopee NETTO / manual). Pemasukan Shopee sudah dipotong biaya admin (single-entry netto model). Saldo = Saldo Awal + Kredit − Debet.
+        Data auto-sync dari modul <b>Pembelian</b>, <b>Penjualan/Kasir</b>, dan <b>Kas Operasional</b>.
       </div>
     </div>
   );

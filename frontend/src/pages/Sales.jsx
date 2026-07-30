@@ -1328,7 +1328,7 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
               )}
               {(paymentMethod === "shopee_plaza" || paymentMethod === "shopee_kastem") && (
                 <div className="border border-[#EE4D2D]/30 bg-[#EE4D2D]/5 p-3 space-y-2">
-                  <Field label="Biaya Admin Shopee (Rp)" hint="Otomatis dicatat sbg pengeluaran '502-SHP Biaya Admin Shopee'. Omzet Laporan = Gross − Fee (netto).">
+                  <Field label="Biaya Admin Shopee (Rp)" hint="Buku Kas otomatis catat pemasukan Shopee sebesar Netto (Gross − Fee). Omzet Laporan juga otomatis netto.">
                     <input
                       data-testid="sale-shopee-admin-fee"
                       type="number" step="0.01" min="0"
