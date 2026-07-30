@@ -33,6 +33,7 @@ export default function SalesReport() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [exporting, setExporting] = useState(false);
+  const [piutangOpen, setPiutangOpen] = useState(false);
   const [hiddenPayCols, setHiddenPayCols] = useState(() => {
     try {
       const raw = localStorage.getItem(HIDDEN_PAY_STORAGE_KEY);
@@ -226,15 +227,15 @@ export default function SalesReport() {
             <TrendingUp className="w-5 h-5 text-[#002FA7]/50" />
           </div>
         </div>
-        <div className="bg-white p-4" data-testid="summary-piutang-card">
+        <div className="bg-white p-4 cursor-pointer hover:bg-[#E81123]/[0.03] transition-colors" data-testid="summary-piutang-card" onClick={() => totalRowsSisa > 0.01 && setPiutangOpen(true)} title={totalRowsSisa > 0.01 ? "Klik untuk melihat daftar piutang & catat pelunasan" : "Belum ada piutang"}>
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Piutang Aktif <span className="text-[9px] normal-case tracking-normal text-[#E81123]">(Belum Tertagih)</span></div>
-              <div data-testid="summary-piutang-total" className={`font-mono text-2xl font-bold mt-1 ${totalRowsSisa > 0.01 ? "text-[#E81123]" : "text-zinc-400"}`} title="Total sisa tagihan pelanggan yang belum masuk kas. Angka ini SUDAH DIKELUARKAN dari Omzet.">
+              <div data-testid="summary-piutang-total" className={`font-mono text-2xl font-bold mt-1 ${totalRowsSisa > 0.01 ? "text-[#E81123]" : "text-zinc-400"}`}>
                 {formatIDR(totalRowsSisa)}
               </div>
               <div className="text-[10px] text-zinc-500 mt-1 font-mono">
-                {dpCount > 0 ? `${dpCount} transaksi DP` : "Semua transaksi LUNAS"}
+                {dpCount > 0 ? <><span className="text-[#E81123] font-bold">{dpCount} transaksi DP</span> · klik untuk detail</> : "Semua transaksi LUNAS"}
               </div>
             </div>
             <AlertCircle className={`w-5 h-5 ${totalRowsSisa > 0.01 ? "text-[#E81123]/60" : "text-zinc-300"}`} />
@@ -660,6 +661,13 @@ export default function SalesReport() {
           </div>
         )}
       </div>
+      {piutangOpen && (
+        <PiutangModal
+          rows={data.rows || []}
+          onClose={() => setPiutangOpen(false)}
+          onPaid={() => { setPiutangOpen(false); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -744,6 +752,224 @@ function ShopeeAdminFeeControl({ dateFrom, dateTo, onDone, summary }) {
       </div>
       <div className="mt-3 text-[10px] font-mono text-zinc-500">
         {mode === "percent" ? `Fee per tx = Gross × ${value || 0}%. Estimasi total fee (gross Rp ${shopeeGross.toLocaleString("id-ID")}) ≈ Rp ${Math.round(shopeeGross * Number(value || 0) / 100).toLocaleString("id-ID")}` : `Fee per tx = Rp ${Number(value || 0).toLocaleString("id-ID")} flat`}
+      </div>
+    </div>
+  );
+}
+
+
+/* ================================================================
+   ============= PIUTANG AKTIF MODAL ==============================
+   Menampilkan daftar transaksi DP (sisa tagihan > 0) & memfasilitasi
+   pencatatan pelunasan langsung dari Laporan Penjualan.
+   ================================================================ */
+function PiutangModal({ rows, onClose, onPaid }) {
+  // Dedupe per sale_no (ambil baris pertama transaksi DP)
+  const piutangList = (() => {
+    const seen = new Map();
+    for (const r of rows) {
+      const sisa = Number(r.sale_sisa_tagihan || 0);
+      if (sisa < 0.01) continue;
+      if ((r.sale_status || "") !== "dp") continue;
+      if (seen.has(r.sale_no)) continue;
+      seen.set(r.sale_no, {
+        sale_no: r.sale_no,
+        date: r.date,
+        customer_name: r.customer_name,
+        alamat: r.alamat,
+        sale_total: Number(r.sale_total || 0),
+        sale_cash_paid: Number(r.sale_cash_paid || 0),
+        sale_sisa_tagihan: sisa,
+      });
+    }
+    return Array.from(seen.values()).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  })();
+  const totalPiutang = piutangList.reduce((s, r) => s + r.sale_sisa_tagihan, 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const ageDays = (iso) => {
+    if (!iso) return 0;
+    const d = new Date(iso);
+    return Math.max(0, Math.floor((Date.now() - d.getTime()) / (24 * 3600 * 1000)));
+  };
+  const [activeSaleNo, setActiveSaleNo] = useState(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [payMethod, setPayMethod] = useState("cash");
+  const [payBank, setPayBank] = useState("");
+  const [payDate, setPayDate] = useState(today);
+  const [payNotes, setPayNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const openForm = async (sale_no) => {
+    // Cari sale_id via API list; sale_no unik.
+    setActiveSaleNo(sale_no);
+    setPayAmount("");
+    setPayMethod("cash");
+    setPayBank("");
+    setPayDate(today);
+    setPayNotes("");
+  };
+  const submitPay = async (row) => {
+    const amt = Number(payAmount);
+    if (!amt || amt <= 0) { toast.error("Nominal pelunasan harus > 0"); return; }
+    if (amt > row.sale_sisa_tagihan + 0.01) { toast.error(`Nominal melebihi sisa tagihan (${formatIDR(row.sale_sisa_tagihan)})`); return; }
+    setSaving(true);
+    try {
+      // Fetch sale by sale_no untuk dapat id
+      const list = await api.get("/sales", { params: { search: row.sale_no } });
+      const items = Array.isArray(list.data) ? list.data : (list.data?.items || []);
+      const sale = items.find((s) => s.sale_no === row.sale_no);
+      if (!sale) throw new Error("Transaksi tidak ditemukan");
+      const body = {
+        amount: amt,
+        payment_method: payMethod,
+        payment_bank: payMethod === "transfer" ? payBank : null,
+        date: payDate,
+        notes: payNotes || undefined,
+      };
+      await api.post(`/sales/${sale.id}/pay-remaining`, body);
+      toast.success(`Pelunasan ${formatIDR(amt)} tercatat untuk ${row.sale_no}`);
+      setActiveSaleNo(null);
+      onPaid && onPaid();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || err.message || "Gagal catat pelunasan");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose} data-testid="piutang-modal">
+      <div className="bg-white max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest font-bold text-[#E81123]">Modul · Piutang</div>
+            <h2 className="font-heading text-xl font-bold text-zinc-900 mt-0.5">Daftar Piutang Aktif</h2>
+            <div className="text-xs text-zinc-500 mt-0.5 font-mono">{piutangList.length} transaksi · Total sisa <b className="text-[#E81123]">{formatIDR(totalPiutang)}</b></div>
+          </div>
+          <button data-testid="piutang-close" onClick={onClose} className="p-2 hover:bg-zinc-100 text-zinc-500 hover:text-zinc-900" title="Tutup">
+            <span className="text-2xl leading-none">×</span>
+          </button>
+        </div>
+        <div className="overflow-auto flex-1">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-zinc-900 text-white">
+              <tr className="text-[10px] font-bold uppercase tracking-widest">
+                <th className="px-3 py-2.5 text-left border-r border-zinc-700">No. Nota</th>
+                <th className="px-3 py-2.5 text-left border-r border-zinc-700">Tanggal</th>
+                <th className="px-3 py-2.5 text-left border-r border-zinc-700">Pelanggan</th>
+                <th className="px-3 py-2.5 text-right border-r border-zinc-700">Total</th>
+                <th className="px-3 py-2.5 text-right border-r border-zinc-700">Terbayar</th>
+                <th className="px-3 py-2.5 text-right border-r border-zinc-700 bg-[#E81123]/90">Sisa</th>
+                <th className="px-3 py-2.5 text-center border-r border-zinc-700">Umur</th>
+                <th className="px-3 py-2.5 text-center">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {piutangList.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Tidak ada piutang aktif pada periode ini.</td></tr>
+              )}
+              {piutangList.map((r) => {
+                const age = ageDays(r.date);
+                const isActive = activeSaleNo === r.sale_no;
+                const ageColor = age > 30 ? "text-[#E81123]" : age > 14 ? "text-[#F97316]" : "text-zinc-600";
+                return (
+                  <Fragment key={r.sale_no}>
+                    <tr data-testid="piutang-row" className={`border-b border-zinc-100 ${isActive ? "bg-[#002FA7]/5" : "hover:bg-zinc-50"}`}>
+                      <td className="px-3 py-2.5 font-mono text-xs font-bold text-zinc-900 whitespace-nowrap">{r.sale_no}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{r.date}</td>
+                      <td className="px-3 py-2.5 text-xs">
+                        <div className="font-medium">{r.customer_name}</div>
+                        {r.alamat && <div className="text-[10px] text-zinc-400 truncate max-w-[240px]" title={r.alamat}>{r.alamat}</div>}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-xs">{formatIDR(r.sale_total)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-xs text-[#008A00]">{formatIDR(r.sale_cash_paid)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm font-bold text-[#E81123] bg-[#E81123]/5">{formatIDR(r.sale_sisa_tagihan)}</td>
+                      <td className={`px-3 py-2.5 text-center font-mono text-xs font-bold ${ageColor}`}>{age}h</td>
+                      <td className="px-3 py-2.5 text-center">
+                        <button
+                          data-testid={`piutang-pay-${r.sale_no}`}
+                          onClick={() => isActive ? setActiveSaleNo(null) : openForm(r.sale_no)}
+                          className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider border transition-colors ${isActive ? "bg-zinc-900 text-white border-zinc-900" : "border-[#008A00] text-[#008A00] hover:bg-[#008A00] hover:text-white"}`}
+                        >
+                          {isActive ? "Batal" : "Catat Pelunasan"}
+                        </button>
+                      </td>
+                    </tr>
+                    {isActive && (
+                      <tr data-testid={`piutang-form-${r.sale_no}`} className="border-b border-zinc-200 bg-[#002FA7]/[0.03]">
+                        <td colSpan={8} className="px-4 py-4">
+                          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+                            <div>
+                              <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Nominal</label>
+                              <input data-testid="piutang-amount" type="number" min="0" step="1000" value={payAmount} onChange={(e) => setPayAmount(e.target.value)}
+                                placeholder={`Max ${formatIDR(r.sale_sisa_tagihan)}`}
+                                className="w-full border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Metode</label>
+                              <select data-testid="piutang-method" value={payMethod} onChange={(e) => setPayMethod(e.target.value)}
+                                className="w-full border border-zinc-300 px-3 py-2 text-sm focus:border-[#002FA7] focus:outline-none">
+                                <option value="cash">Cash</option>
+                                <option value="transfer">Transfer</option>
+                                <option value="shopee_plaza">Shopee Plaza</option>
+                                <option value="shopee_kastem">Shopee Kastem</option>
+                              </select>
+                            </div>
+                            {payMethod === "transfer" && (
+                              <div>
+                                <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Bank</label>
+                                <select data-testid="piutang-bank" value={payBank} onChange={(e) => setPayBank(e.target.value)}
+                                  className="w-full border border-zinc-300 px-3 py-2 text-sm focus:border-[#002FA7] focus:outline-none">
+                                  <option value="">Pilih Bank</option>
+                                  <option value="BCA">BCA</option>
+                                  <option value="Mandiri">Mandiri</option>
+                                </select>
+                              </div>
+                            )}
+                            <div>
+                              <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Tanggal</label>
+                              <input data-testid="piutang-date" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)}
+                                className="w-full border border-zinc-300 px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1">Catatan (opsional)</label>
+                              <input data-testid="piutang-notes" value={payNotes} onChange={(e) => setPayNotes(e.target.value)}
+                                placeholder="Bayar sebagian / dll"
+                                className="w-full border border-zinc-300 px-3 py-2 text-sm focus:border-[#002FA7] focus:outline-none" />
+                            </div>
+                            <div className="md:col-span-5 flex items-center gap-2 justify-end">
+                              <button data-testid="piutang-quickfill-full" type="button" onClick={() => setPayAmount(String(r.sale_sisa_tagihan))}
+                                className="text-[10px] font-mono text-[#002FA7] hover:underline">Isi sisa penuh ({formatIDR(r.sale_sisa_tagihan)})</button>
+                              <button data-testid="piutang-submit" onClick={() => submitPay(r)} disabled={saving}
+                                className="bg-[#008A00] text-white px-5 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#006D00] disabled:opacity-40">
+                                {saving ? "Menyimpan…" : "Simpan Pelunasan"}
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+            {piutangList.length > 0 && (
+              <tfoot>
+                <tr className="bg-zinc-50 border-t-2 border-zinc-900">
+                  <td colSpan={5} className="px-3 py-3 text-right text-xs font-bold uppercase tracking-widest">Total Piutang</td>
+                  <td className="px-3 py-3 text-right font-mono font-bold text-lg text-[#E81123] bg-[#E81123]/5">{formatIDR(totalPiutang)}</td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+        <div className="px-6 py-3 border-t border-zinc-200 bg-zinc-50/50 flex items-center justify-between">
+          <div className="text-[10px] font-mono text-zinc-500">
+            Umur piutang: <span className="text-zinc-600">≤14h</span> · <span className="text-[#F97316]">15–30h</span> · <span className="text-[#E81123]">&gt;30h</span>
+          </div>
+          <button onClick={onClose} className="text-xs font-bold uppercase tracking-wider text-zinc-500 hover:text-zinc-900">Tutup</button>
+        </div>
       </div>
     </div>
   );
