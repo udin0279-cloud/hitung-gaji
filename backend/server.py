@@ -6821,6 +6821,8 @@ async def sales_report_excel(
     hidden_set = set(x.strip() for x in (hidden_pay_cols or "").split(",") if x.strip())
     hidden_set &= _all_pay_keys  # sanitize, ignore unknown keys
     is_pay_filtered = bool(hidden_set)
+    # Ringkasan per tab pembayaran: {key: {"count": int_sales, "total": Rp}}
+    pay_summary: Dict[str, Dict[str, Any]] = {k: {"count": 0, "total": 0.0, "shopee_fee": 0.0} for k, _ in PAY_COLS}
 
     # Flatten rows (mirror analytics endpoint)
     excel_rows = []
@@ -6851,6 +6853,12 @@ async def sales_report_excel(
             first_row_received = s_paid_amount
         # Skip semua product rows sale ini bila payment col-nya sedang di-hide di UI.
         skip_product_rows = bool(pay_col) and pay_col in hidden_set
+        # Kontribusi ke Ringkasan (hanya bila TIDAK di-hide)
+        if pay_col and pay_col in pay_summary and not skip_product_rows:
+            pay_summary[pay_col]["count"] += 1
+            pay_summary[pay_col]["total"] += first_row_received
+            if _is_shopee and _shopee_fee > 0 and not is_pay_filtered:
+                pay_summary[pay_col]["shopee_fee"] += _shopee_fee
         first_item = True
         for it in (s.get("items") or []):
             if skip_product_rows:
@@ -6895,6 +6903,8 @@ async def sales_report_excel(
             p_col = _resolve_report_payment_col(p_method, p_bank, s_branch)
             if p_col and p_col in hidden_set:
                 continue
+            if p_col and p_col in pay_summary:
+                pay_summary[p_col]["total"] += p_amount
             row_no += 1
             p_label = _payment_label(p_method, p_bank)
             row = {
@@ -7036,6 +7046,89 @@ async def sales_report_excel(
 
         # Freeze panes below header row 5
         ws.freeze_panes = ws["A6"]
+
+        # ============= SHEET 2: RINGKASAN PER TAB PEMBAYARAN =============
+        summary_sheet = "Ringkasan"
+        ws2 = writer.book.create_sheet(summary_sheet)
+        # Header
+        ws2["A1"] = ci["name"].upper()
+        ws2["A1"].font = Font(bold=True, size=14, color="002FA7")
+        ws2["A2"] = f"Ringkasan Penjualan · Periode: {period_label}"
+        ws2["A2"].font = Font(bold=True, size=10)
+        _filter_note = f"Filter tab aktif — hide: {', '.join(sorted(hidden_set))}" if is_pay_filtered else "Semua tab pembayaran ditampilkan"
+        ws2["A3"] = _filter_note
+        ws2["A3"].font = Font(italic=True, size=9, color=("F97316" if is_pay_filtered else "666666"))
+
+        # Table headers
+        headers2 = ["Tab Pembayaran", "Jumlah Transaksi", "Total (Uang Diterima)", "Biaya Admin", "Kontribusi %", "Status"]
+        for i, h in enumerate(headers2, start=1):
+            c2 = ws2.cell(row=5, column=i, value=h)
+            c2.font = header_font
+            c2.fill = header_fill
+            c2.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            c2.border = border
+
+        grand_total = sum(v["total"] for v in pay_summary.values())
+        r2 = 6
+        for k, label in PAY_COLS:
+            v = pay_summary[k]
+            is_hidden = k in hidden_set
+            contribution = (v["total"] / grand_total * 100) if grand_total > 0 else 0
+            cells = [
+                (1, label, False),
+                (2, v["count"] if v["count"] > 0 else 0, False),
+                (3, round(v["total"], 2), True),
+                (4, round(v["shopee_fee"], 2) if v["shopee_fee"] > 0 else 0, True),
+                (5, round(contribution, 2), False),
+                (6, "HIDDEN" if is_hidden else ("aktif" if v["total"] > 0 else "—"), False),
+            ]
+            for col, val, is_currency in cells:
+                c2 = ws2.cell(row=r2, column=col, value=val)
+                c2.border = border
+                c2.alignment = Alignment(horizontal="left" if col == 1 else ("right" if col in (2, 3, 4) else "center"), vertical="center")
+                if is_currency:
+                    c2.number_format = currency_fmt
+                elif col == 2:
+                    c2.number_format = "#,##0"
+                elif col == 5:
+                    c2.number_format = '0.00"%"'
+                if is_hidden:
+                    c2.font = Font(color="9CA3AF", italic=True)
+                    c2.fill = PatternFill("solid", fgColor="F3F4F6")
+                elif v["total"] > 0:
+                    # Highlight kolom label pakai warna tab
+                    if col == 1:
+                        c2.fill = PatternFill("solid", fgColor=pay_fills.get(k, "1F2937"))
+                        c2.font = Font(bold=True, color="FFFFFF", size=10)
+            r2 += 1
+
+        # Grand total row
+        total_row2 = r2
+        ws2.cell(row=total_row2, column=1, value="TOTAL OMZET (Uang Diterima)").font = Font(bold=True, size=11, color="002FA7")
+        ws2.cell(row=total_row2, column=2, value=sum(v["count"] for v in pay_summary.values())).font = Font(bold=True, size=11)
+        ws2.cell(row=total_row2, column=2).number_format = "#,##0"
+        tc = ws2.cell(row=total_row2, column=3, value=round(grand_total, 2))
+        tc.font = Font(bold=True, size=12, color="002FA7")
+        tc.number_format = currency_fmt
+        fc = ws2.cell(row=total_row2, column=4, value=round(sum(v["shopee_fee"] for v in pay_summary.values()), 2))
+        fc.font = Font(bold=True, size=11, color="EE4D2D")
+        fc.number_format = currency_fmt
+        pc = ws2.cell(row=total_row2, column=5, value=100.0 if grand_total > 0 else 0)
+        pc.font = Font(bold=True, size=11)
+        pc.number_format = '0.00"%"'
+        for col in range(1, 7):
+            ws2.cell(row=total_row2, column=col).border = Border(top=Side(border_style="medium", color="002FA7"), bottom=thin, left=thin, right=thin)
+            ws2.cell(row=total_row2, column=col).fill = PatternFill("solid", fgColor="EFF2FA")
+
+        # Note if filter aktif — angka harus SAMA dengan Sheet 1 SUM(K)
+        ws2.cell(row=total_row2 + 2, column=1,
+                 value="Catatan: Angka TOTAL OMZET ini sama persis dengan SUM Kolom 'Total (Uang Diterima)' di Sheet 'Penjualan …' dan dengan kartu Omzet di dashboard.").font = Font(italic=True, size=8, color="6B7280")
+
+        # Column widths for Sheet 2
+        widths2 = {1: 22, 2: 16, 3: 22, 4: 16, 5: 14, 6: 12}
+        for i in range(1, 7):
+            ws2.column_dimensions[get_column_letter(i)].width = widths2.get(i, 14)
+        ws2.freeze_panes = ws2["A6"]
 
     buf.seek(0)
     fname_period = month or (f"{date_from}_sd_{date_to}" if (date_from or date_to) else "semua")
