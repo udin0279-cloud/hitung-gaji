@@ -171,6 +171,13 @@ export default function SalesReport() {
       payTotals[r.payment_column] += Number(r.payment_nominal_on_row || 0);
     }
   });
+  // ------- Dynamic Total (mengikuti tab pembayaran yang aktif) -------
+  //  * Bila TIDAK ada kolom yg disembunyikan → pakai backend period_total (Shopee NETTO).
+  //  * Bila ADA yg disembunyikan → jumlahkan hanya payTotals kolom yang terlihat.
+  const isPayFiltered = hiddenPayCols.length > 0;
+  const visibleColsTotal = visiblePayCols.reduce((s, c) => s + (payTotals[c.key] || 0), 0);
+  const displayOmzet = isPayFiltered ? visibleColsTotal : Number(data.summary?.period_total || 0);
+  const visibleColLabels = visiblePayCols.map((c) => c.label).join(" + ") || "—";
 
   return (
     <div className="px-4 sm:px-6 lg:px-10 py-6 sm:py-8">
@@ -214,8 +221,8 @@ export default function SalesReport() {
         <div className="bg-white p-4">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Omzet Periode Ini <span className="text-[9px] normal-case tracking-normal text-[#008A00]">(Uang Diterima)</span></div>
-              <div data-testid="summary-period-total" className="font-mono text-2xl font-bold mt-1 text-[#002FA7]" title="OMZET = Uang yang sudah diterima (DP + Pelunasan) berdasarkan tanggal pembayaran. Piutang/sisa tagihan tidak dihitung. Untuk Shopee dipakai NETTO (Gross − Admin fee).">{formatIDR(data.summary?.period_total || 0)}</div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Omzet Periode Ini <span className="text-[9px] normal-case tracking-normal text-[#008A00]">(Uang Diterima)</span>{isPayFiltered && <span className="ml-1 text-[9px] normal-case tracking-normal text-[#F97316] font-bold">· FILTER AKTIF</span>}</div>
+              <div data-testid="summary-period-total" className="font-mono text-2xl font-bold mt-1 text-[#002FA7]" title={isPayFiltered ? `Total hanya menjumlahkan tab: ${visibleColLabels}` : "OMZET = Uang yang sudah diterima (DP + Pelunasan) berdasarkan tanggal pembayaran. Piutang/sisa tagihan tidak dihitung. Untuk Shopee dipakai NETTO (Gross − Admin fee)."}>{formatIDR(displayOmzet)}</div>
               <div className="text-[10px] text-zinc-500 mt-1 font-mono">{data.summary?.transaction_count || 0} transaksi · {data.summary?.item_count || 0} item</div>
               {Number(data.summary?.shopee_admin_fee || 0) > 0 && (
                 <div className="text-[10px] font-mono text-[#EE4D2D] mt-1 leading-tight">
@@ -364,7 +371,7 @@ export default function SalesReport() {
               <FileSpreadsheet className="w-3.5 h-3.5" />
               {exporting ? "Memproses…" : "Export Excel"}
             </button>
-            <div className="text-xs font-mono text-zinc-500">{rows.length} item · Total <b className="text-[#002FA7]" data-testid="chip-total-omzet">{formatIDR(data.summary?.period_total || 0)}</b></div>
+            <div className="text-xs font-mono text-zinc-500">{rows.length} item · Total <b className="text-[#002FA7]" data-testid="chip-total-omzet">{formatIDR(displayOmzet)}</b>{isPayFiltered && <span className="ml-1 text-[10px] text-[#F97316]" title={`Filter aktif: ${visibleColLabels}`}>· difilter</span>}</div>
           </div>
         </div>
         {/* Toolbar: Sembunyikan Kolom Pembayaran */}
@@ -552,7 +559,7 @@ export default function SalesReport() {
                   <td className="px-2 py-3 border-r border-zinc-200"></td>
                   <td className="px-2 py-3 text-right font-mono font-bold text-[#E81123] border-r border-zinc-200">{formatIDR(totalRowsDisc)}</td>
                   <td className="px-2 py-3 text-right font-mono font-bold text-zinc-700 border-r border-zinc-200">{formatIDR(totalRowsItemsSubtotal)}</td>
-                  <td className="px-2 py-3 text-right font-mono font-bold text-lg text-[#002FA7] border-r border-zinc-200" data-testid="footer-total-omzet">{formatIDR(data.summary?.period_total || 0)}</td>
+                  <td className="px-2 py-3 text-right font-mono font-bold text-lg text-[#002FA7] border-r border-zinc-200" data-testid="footer-total-omzet" title={isPayFiltered ? `Filter aktif: ${visibleColLabels}` : ""}>{formatIDR(displayOmzet)}</td>
                   <td data-testid="footer-total-sisa" className="px-2 py-3 text-right font-mono font-bold text-[#E81123] bg-yellow-50 border-r border-zinc-200">{formatIDR(totalRowsSisa)}</td>
                   <td className="px-2 py-3 text-center text-[10px] font-bold text-zinc-500 border-r border-zinc-200">
                     {totalRowsSisa > 0.01 ? `${dpCount} DP` : "—"}
