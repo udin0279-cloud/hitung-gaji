@@ -6759,9 +6759,19 @@ async def sales_report_excel(
     date_to: Optional[str] = None,
     customer: Optional[str] = None,
     month: Optional[str] = None,
+    hidden_pay_cols: Optional[str] = None,
 ):
     """Laporan Penjualan Excel — format persis seperti tabel Excel-style di UI.
-    12 kolom utama + 6 grup pembayaran (Cash/BCA/Mandiri × Plaza/Kastem) masing-masing Nominal + Tanggal.
+    12 kolom utama + 8 grup pembayaran (Cash/BCA/Mandiri × Plaza/Kastem + Shopee × Plaza/Kastem)
+    masing-masing Nominal + Tanggal.
+
+    Kolom "Total (Uang Diterima)" = jumlah uang aktual diterima pada baris tsb
+    (Initial DP untuk baris pertama sale, atau amount pelunasan untuk baris pelunasan).
+    SUM kolom ini otomatis SAMA dengan angka Omzet (Uang Diterima) di dashboard.
+
+    `hidden_pay_cols`: comma-separated list dari key kolom pembayaran yang di-hide di UI.
+    Baris (sale/pelunasan) yang payment_col-nya termasuk hidden AKAN DILEWATI—tidak dihitung
+    ke total apa pun, agar Excel sinkron dengan dashboard yang di-filter.
     """
     import pandas as pd
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -6807,6 +6817,10 @@ async def sales_report_excel(
         ("shopee_plaza", "Shopee Plaza"),
         ("shopee_kastem", "Shopee Kastem"),
     ]
+    _all_pay_keys = {k for k, _ in PAY_COLS}
+    hidden_set = set(x.strip() for x in (hidden_pay_cols or "").split(",") if x.strip())
+    hidden_set &= _all_pay_keys  # sanitize, ignore unknown keys
+    is_pay_filtered = bool(hidden_set)
 
     # Flatten rows (mirror analytics endpoint)
     excel_rows = []
@@ -6827,8 +6841,20 @@ async def sales_report_excel(
         _payments = _get_sale_payments(s)
         _initial_p = next((p for p in _payments if p.get("is_initial")), None)
         s_paid_amount = float(_initial_p.get("amount") or 0) if _initial_p else min(float(s.get("cash_paid") or 0), s_total_after_disc)
+        # Shopee netto adjustment: HANYA saat tidak ada filter tab pembayaran aktif
+        # (mengikuti perilaku frontend `displayOmzet` — filtered pakai gross Shopee).
+        _shopee_fee = float(s.get("shopee_admin_fee") or 0)
+        _is_shopee = s_method in ("shopee_plaza", "shopee_kastem")
+        if _is_shopee and _shopee_fee > 0 and not is_pay_filtered:
+            first_row_received = max(0.0, s_paid_amount - _shopee_fee)
+        else:
+            first_row_received = s_paid_amount
+        # Skip semua product rows sale ini bila payment col-nya sedang di-hide di UI.
+        skip_product_rows = bool(pay_col) and pay_col in hidden_set
         first_item = True
         for it in (s.get("items") or []):
+            if skip_product_rows:
+                continue
             row_no += 1
             name = it.get("product_name") or it.get("material_name") or "-"
             qty = int(it.get("quantity") or 0)
@@ -6846,7 +6872,9 @@ async def sales_report_excel(
                 "Harga": unit_price,
                 "Disc": s_discount if first_item else 0,
                 "Jumlah": round(unit_price * qty, 2),
-                "Total": s_total_after_disc if first_item else 0,
+                # Kolom "Total" sekarang = UANG DITERIMA pada baris ini (bukan invoice total)
+                # → SUM(kolom) sinkron dengan Omzet (Uang Diterima) di dashboard.
+                "Total": first_row_received if first_item else 0,
                 "Keterangan": s_pnotes or s_notes or "",
             }
             # Payment columns: 8 pairs × (Nominal + Tanggal)
@@ -6858,14 +6886,16 @@ async def sales_report_excel(
                 row[f"{pay_col}__d"] = s_date
             excel_rows.append(row)
             first_item = False
-        # Pelunasan rows — satu baris per entry non-initial
+        # Pelunasan rows — satu baris per entry non-initial (juga hormati hidden_set)
         for p_ in [p for p in _payments if not p.get("is_initial")]:
-            row_no += 1
             p_method = p_.get("payment_method") or "cash"
             p_bank = p_.get("payment_bank")
             p_amount = float(p_.get("amount") or 0)
             p_date = p_.get("date") or s_date
             p_col = _resolve_report_payment_col(p_method, p_bank, s_branch)
+            if p_col and p_col in hidden_set:
+                continue
+            row_no += 1
             p_label = _payment_label(p_method, p_bank)
             row = {
                 "No": row_no,
@@ -6878,7 +6908,8 @@ async def sales_report_excel(
                 "Harga": 0,
                 "Disc": 0,
                 "Jumlah": 0,
-                "Total": 0,
+                # Total (Uang Diterima) untuk baris pelunasan = amount pelunasan
+                "Total": p_amount,
                 "Keterangan": (p_.get("notes") or "Pelunasan sisa tagihan"),
             }
             for k, _ in PAY_COLS:
@@ -6913,13 +6944,14 @@ async def sales_report_excel(
         # Row 2: Address
         ws["A2"] = f"{ci['address']} · HP: {ci['phone']}"
         ws["A2"].font = Font(size=9, italic=True, color="666666")
-        # Row 3: Period info
+        # Row 3: Period info (+ filter status bila ada tab yg di-hide)
         period_label = f"Bulan {month}" if month else f"{date_from or '(awal)'} s/d {date_to or '(sekarang)'}"
-        ws["A3"] = f"Laporan Penjualan · Periode: {period_label} · {len(sales)} transaksi · {len(df)} item"
-        ws["A3"].font = Font(bold=True, size=10)
+        _filter_suffix = f" · FILTER TAB AKTIF (hide: {', '.join(sorted(hidden_set))})" if is_pay_filtered else ""
+        ws["A3"] = f"Laporan Penjualan · Periode: {period_label} · {len(sales)} transaksi · {len(df)} item{_filter_suffix}"
+        ws["A3"].font = Font(bold=True, size=10, color=("F97316" if is_pay_filtered else "000000"))
 
         # Row 4: Grouped headers (12 main + 6 payment groups)
-        MAIN_HEADERS = ["No", "Tanggal", "No. Nota", "Alamat", "Nama Barang", "Pcs", "Meter", "Harga", "Disc", "Jumlah", "Total", "Keterangan"]
+        MAIN_HEADERS = ["No", "Tanggal", "No. Nota", "Alamat", "Nama Barang", "Pcs", "Meter", "Harga", "Disc", "Jumlah", "Total (Uang Diterima)", "Keterangan"]
         thin = Side(border_style="thin", color="333333")
         border = Border(top=thin, bottom=thin, left=thin, right=thin)
         header_fill = PatternFill("solid", fgColor="1F2937")
@@ -7007,7 +7039,8 @@ async def sales_report_excel(
 
     buf.seek(0)
     fname_period = month or (f"{date_from}_sd_{date_to}" if (date_from or date_to) else "semua")
-    fname = f"Laporan_Penjualan_{fname_period}.xlsx"
+    _f_tag = "_filtered" if is_pay_filtered else ""
+    fname = f"Laporan_Penjualan_{fname_period}{_f_tag}.xlsx"
     return Response(
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

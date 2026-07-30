@@ -94,6 +94,7 @@ export default function SalesReport() {
           date_from: dateFrom || undefined,
           date_to: dateTo || undefined,
           customer: customer.trim() || undefined,
+          hidden_pay_cols: hiddenPayCols.length > 0 ? hiddenPayCols.join(",") : undefined,
         },
         responseType: "blob",
       });
