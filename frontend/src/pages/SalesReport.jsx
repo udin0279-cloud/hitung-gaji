@@ -5,7 +5,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from "recharts";
-import { Search, TrendingUp, Package, Calendar, Award, Users, ChevronLeft, ChevronRight, FileSpreadsheet, Eye, EyeOff } from "lucide-react";
+import { Search, TrendingUp, Package, Calendar, Award, Users, ChevronLeft, ChevronRight, FileSpreadsheet, Eye, EyeOff, AlertCircle } from "lucide-react";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 500];
 const HIDDEN_PAY_STORAGE_KEY = "salesReport.hiddenPayCols";
@@ -209,7 +209,7 @@ export default function SalesReport() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-zinc-200 border border-zinc-200 mt-6 max-w-7xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-px bg-zinc-200 border border-zinc-200 mt-6 max-w-7xl">
         <div className="bg-white p-4">
           <div className="flex items-start justify-between gap-2">
             <div>
@@ -224,6 +224,20 @@ export default function SalesReport() {
               )}
             </div>
             <TrendingUp className="w-5 h-5 text-[#002FA7]/50" />
+          </div>
+        </div>
+        <div className="bg-white p-4" data-testid="summary-piutang-card">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Piutang Aktif <span className="text-[9px] normal-case tracking-normal text-[#E81123]">(Belum Tertagih)</span></div>
+              <div data-testid="summary-piutang-total" className={`font-mono text-2xl font-bold mt-1 ${totalRowsSisa > 0.01 ? "text-[#E81123]" : "text-zinc-400"}`} title="Total sisa tagihan pelanggan yang belum masuk kas. Angka ini SUDAH DIKELUARKAN dari Omzet.">
+                {formatIDR(totalRowsSisa)}
+              </div>
+              <div className="text-[10px] text-zinc-500 mt-1 font-mono">
+                {dpCount > 0 ? `${dpCount} transaksi DP` : "Semua transaksi LUNAS"}
+              </div>
+            </div>
+            <AlertCircle className={`w-5 h-5 ${totalRowsSisa > 0.01 ? "text-[#E81123]/60" : "text-zinc-300"}`} />
           </div>
         </div>
         <div className="bg-white p-4">
