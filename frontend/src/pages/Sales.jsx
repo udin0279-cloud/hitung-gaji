@@ -867,6 +867,7 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
   const [paymentMethod, setPaymentMethod] = useState(edit?.payment_method || "cash");
   const [paymentBank, setPaymentBank] = useState(edit?.payment_bank || "BCA");
   const [paymentNotes, setPaymentNotes] = useState(edit?.payment_notes || "");
+  const [shopeeAdminFee, setShopeeAdminFee] = useState(edit?.shopee_admin_fee || 0);
   const [notes, setNotes] = useState(edit?.notes || "");
   const [saving, setSaving] = useState(false);
 
@@ -1035,6 +1036,7 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
         payment_method: paymentMethod,
         payment_bank: paymentMethod === "transfer" ? paymentBank : null,
         payment_notes: paymentMethod === "transfer" ? (paymentNotes.trim() || null) : null,
+        shopee_admin_fee: (paymentMethod === "shopee_plaza" || paymentMethod === "shopee_kastem") ? Number(shopeeAdminFee || 0) : 0,
         notes: notes.trim() || null,
         items: items.map((it) => ({
           material_id: it.material_id || null,
@@ -1322,6 +1324,25 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
                       className={inputCls}
                     />
                   </Field>
+                </div>
+              )}
+              {(paymentMethod === "shopee_plaza" || paymentMethod === "shopee_kastem") && (
+                <div className="border border-[#EE4D2D]/30 bg-[#EE4D2D]/5 p-3 space-y-2">
+                  <Field label="Biaya Admin Shopee (Rp)" hint="Otomatis dicatat sbg pengeluaran '502-SHP Biaya Admin Shopee'. Omzet Laporan = Gross − Fee (netto).">
+                    <input
+                      data-testid="sale-shopee-admin-fee"
+                      type="number" step="0.01" min="0"
+                      value={shopeeAdminFee}
+                      onChange={(e) => setShopeeAdminFee(e.target.value)}
+                      placeholder="0"
+                      className={inputCls + " font-mono"}
+                    />
+                  </Field>
+                  {Number(shopeeAdminFee) > 0 && (
+                    <div className="text-[11px] font-mono text-[#EE4D2D] px-1">
+                      Netto diterima: Rp {(Number(cashPaid || 0) - Number(shopeeAdminFee || 0)).toLocaleString("id-ID")}
+                    </div>
+                  )}
                 </div>
               )}
               <Field label={paymentMethod === "cash" ? "Tunai Diterima (Rp)" : "Nominal Diterima (Rp)"}>

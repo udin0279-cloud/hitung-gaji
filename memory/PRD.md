@@ -1795,3 +1795,54 @@ Total: 4 rows inserted, Rp 2.9M ✓
 ### Files Changed
 - `backend/server.py`: endpoint `POST /api/cashbook/resync-purchases` (~90 baris)
 - `frontend/src/pages/CashBook.jsx`: `resyncSales()` sekarang panggil 2 endpoint via Promise.all, konfirmasi dialog + toast update
+
+---
+
+## Update: 2026-07-30 (session 14) — Sync Omzet Netto Shopee ke Buku Kas
+
+### Feature (URGENT UI FIX #7)
+User request: transaksi Shopee harus pakai netto (setelah admin fee) di Laporan Penjualan, otomatis sync ke Buku Kas dgn baris pengeluaran terpisah "502-SHP Biaya Admin Shopee". Recalculate 54 data historical.
+
+### Data Model
+- Sale schema: field baru `shopee_admin_fee: float = 0` (hanya berlaku untuk `payment_method` in `shopee_plaza` / `shopee_kastem`)
+- Chart of Accounts: auto-seed `502-SHP` "Biaya Admin Shopee" (type=out) via `_ensure_shopee_admin_fee_account()`
+
+### Backend Changes
+1. **`SaleIn` model**: field `shopee_admin_fee: float = 0`
+2. **POST /api/sales**: bila `shopee_admin_fee > 0` dan payment_method Shopee → auto-insert cash tx `502-SHP` sbg pengeluaran (di samping cash tx pemasukan `301-SPP`/`301-SPK` gross)
+3. **GET /api/sales/report/analytics**: 
+   - `period_total` = **NETTO** (gross − shopee_admin_fee sum) — biar sync dgn kas netto
+   - Summary tambah field: `period_total_gross`, `shopee_gross`, `shopee_admin_fee`, `shopee_netto`
+4. **POST /api/sales/shopee/bulk-set-admin-fee** (endpoint baru untuk recalc):
+   - Body: `{date_from, date_to, mode: "percent"|"flat"|"per_sale", value, sales?:[]}`
+   - Update field `shopee_admin_fee` di semua Shopee sales dalam periode
+   - **Idempotent**: hapus cash_tx `502-SHP` untuk sale_no yg sama, insert baru bila fee > 0
+5. **Helper `_apply_shopee_admin_fee_update(sale, new_fee, user)`**: rekonsiliasi update sale + delete + insert cash tx
+
+### Frontend Changes
+1. **Sales.jsx**: 
+   - State `shopeeAdminFee`
+   - UI input "Biaya Admin Shopee (Rp)" muncul saat payment_method Shopee (kotak oranye #EE4D2D)
+   - Preview netto: "Netto diterima: Rp X" (gross − fee)
+2. **SalesReport.jsx**:
+   - Card "Omzet Periode Ini" tampilkan NETTO + detail Gross & Admin Shopee di bawah
+   - Component baru `<ShopeeAdminFeeControl>`: card + modal bulk-set (mode percent/flat) dgn confirm dialog
+
+### Testing (E2E)
+Seed 3 Shopee sales Jul 2026 (2× Plaza Rp 500K+750K, 1× Kastem Rp 1M):
+- **Bulk-set 5%**: 3 sales updated, total fee Rp 112.500 
+  - Analytics: `period_total` 3.250.000 → **3.137.500** (netto), gross 3.250.000, fee 112.500 ✓
+  - Buku Kas: 3 baris `502-SHP` (Rp 25K + 50K + 37.5K = 112.5K) ✓
+- **Idempotency test rerun 7%**: 3 baris ter-update (35K + 70K + 52.5K = 157.5K), TIDAK duplicate ✓
+- **Screenshot verified**: Card "Omzet Periode Ini Rp 3.092.500" dgn detail "Gross: Rp 3.250.000 · − Admin Shopee: Rp 157.500", card orange "Biaya Admin Shopee ... SET / HITUNG ULANG FEE" ✓
+
+### Files Changed
+- `backend/server.py`: 
+  - `SaleIn.shopee_admin_fee` field
+  - Sale doc includes `shopee_admin_fee`
+  - `_ensure_shopee_admin_fee_account` helper
+  - Auto-insert cash tx 502-SHP saat POST /sales
+  - Analytics summary include netto breakdown
+  - Endpoint `POST /api/sales/shopee/bulk-set-admin-fee` + helper `_apply_shopee_admin_fee_update`
+- `frontend/src/pages/Sales.jsx`: state + form input untuk Shopee admin fee
+- `frontend/src/pages/SalesReport.jsx`: NETTO display + `<ShopeeAdminFeeControl>` component

@@ -212,8 +212,14 @@ export default function SalesReport() {
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Omzet Periode Ini</div>
-              <div data-testid="summary-period-total" className="font-mono text-2xl font-bold mt-1 text-[#002FA7]">{formatIDR(data.summary?.period_total || 0)}</div>
+              <div data-testid="summary-period-total" className="font-mono text-2xl font-bold mt-1 text-[#002FA7]" title="NETTO (Gross − Biaya Admin Shopee)">{formatIDR(data.summary?.period_total || 0)}</div>
               <div className="text-[10px] text-zinc-500 mt-1 font-mono">{data.summary?.transaction_count || 0} transaksi · {data.summary?.item_count || 0} item</div>
+              {Number(data.summary?.shopee_admin_fee || 0) > 0 && (
+                <div className="text-[10px] font-mono text-[#EE4D2D] mt-1 leading-tight">
+                  Gross: {formatIDR(data.summary?.period_total_gross || 0)}<br/>
+                  <span className="text-zinc-500">− Admin Shopee: {formatIDR(data.summary?.shopee_admin_fee || 0)}</span>
+                </div>
+              )}
             </div>
             <TrendingUp className="w-5 h-5 text-[#002FA7]/50" />
           </div>
@@ -253,6 +259,9 @@ export default function SalesReport() {
           </div>
         </div>
       </div>
+
+      {/* Shopee Admin Fee Bulk Set */}
+      <ShopeeAdminFeeControl dateFrom={dateFrom} dateTo={dateTo} onDone={load} summary={data.summary} />
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6 max-w-7xl">
@@ -634,6 +643,91 @@ export default function SalesReport() {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+
+function ShopeeAdminFeeControl({ dateFrom, dateTo, onDone, summary }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState("percent");
+  const [value, setValue] = useState(5);
+  const [busy, setBusy] = useState(false);
+  const shopeeGross = Number(summary?.shopee_gross || 0);
+  const currentFee = Number(summary?.shopee_admin_fee || 0);
+  if (!open) {
+    return (
+      <div className="mt-4 border border-[#EE4D2D]/30 bg-[#EE4D2D]/5 p-3 max-w-7xl flex items-center justify-between gap-3">
+        <div className="text-xs text-zinc-700">
+          <span className="font-bold text-[#EE4D2D]">Biaya Admin Shopee (periode ini):</span>{" "}
+          <span className="font-mono">Rp {currentFee.toLocaleString("id-ID")}</span>{" "}
+          <span className="text-zinc-500">dari Gross Shopee Rp {shopeeGross.toLocaleString("id-ID")}</span>
+        </div>
+        <button
+          data-testid="open-shopee-fee-modal"
+          onClick={() => setOpen(true)}
+          className="rounded-none bg-[#EE4D2D] text-white px-4 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#D63C1E] whitespace-nowrap"
+        >
+          Set / Hitung Ulang Fee
+        </button>
+      </div>
+    );
+  }
+  const apply = async () => {
+    const v = Number(value);
+    if (isNaN(v) || v < 0) { toast.error("Nilai tidak valid"); return; }
+    if (!window.confirm(
+      `Terapkan biaya admin Shopee (${mode === "percent" ? v + "%" : "Rp " + v.toLocaleString("id-ID") + " flat"}) ke SEMUA transaksi Shopee di periode ${dateFrom} s/d ${dateTo}?\n\nBaris pengeluaran '502-SHP Biaya Admin Shopee' akan diperbarui otomatis di Buku Kas.\nLanjut?`
+    )) return;
+    setBusy(true);
+    try {
+      const res = await api.post("/sales/shopee/bulk-set-admin-fee", {
+        date_from: dateFrom, date_to: dateTo, mode, value: v,
+      });
+      toast.success(`Berhasil update ${res.data.updated_count} transaksi Shopee. Total fee: Rp ${Number(res.data.total_fee).toLocaleString("id-ID")}`);
+      setOpen(false);
+      onDone?.();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal terapkan biaya admin");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-4 border border-[#EE4D2D] bg-[#EE4D2D]/5 p-4 max-w-7xl">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-widest font-bold text-[#EE4D2D]">Set Biaya Admin Shopee</div>
+          <div className="text-xs text-zinc-600 mt-0.5">Periode: {dateFrom} → {dateTo}</div>
+        </div>
+        <button onClick={() => setOpen(false)} className="text-xs text-zinc-500 hover:text-zinc-900">Tutup ✕</button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        <div>
+          <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1.5">Mode Perhitungan</label>
+          <select data-testid="shopee-fee-mode" value={mode} onChange={(e) => setMode(e.target.value)}
+            className="w-full rounded-none border border-zinc-300 px-3 py-2 text-sm">
+            <option value="percent">Persentase (% dari Gross)</option>
+            <option value="flat">Nominal Flat (Rp per transaksi)</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 block mb-1.5">
+            {mode === "percent" ? "Persentase (%)" : "Nominal (Rp)"}
+          </label>
+          <input data-testid="shopee-fee-value" type="number" min="0" step={mode === "percent" ? "0.1" : "100"} value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={mode === "percent" ? "5" : "5000"}
+            className="w-full rounded-none border border-zinc-300 px-3 py-2 text-sm font-mono" />
+        </div>
+        <div>
+          <button data-testid="apply-shopee-fee" onClick={apply} disabled={busy}
+            className="w-full rounded-none bg-[#EE4D2D] text-white px-4 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-[#D63C1E] disabled:opacity-40">
+            {busy ? "Menerapkan…" : "Terapkan ke Semua Shopee"}
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 text-[10px] font-mono text-zinc-500">
+        {mode === "percent" ? `Fee per tx = Gross × ${value || 0}%. Estimasi total fee (gross Rp ${shopeeGross.toLocaleString("id-ID")}) ≈ Rp ${Math.round(shopeeGross * Number(value || 0) / 100).toLocaleString("id-ID")}` : `Fee per tx = Rp ${Number(value || 0).toLocaleString("id-ID")} flat`}
       </div>
     </div>
   );

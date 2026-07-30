@@ -5808,6 +5808,7 @@ class SaleIn(BaseModel):
     payment_method: str = "cash"  # cash | transfer | shopee_plaza | shopee_kastem
     payment_bank: Optional[str] = None  # BCA | Mandiri (khusus transfer)
     payment_notes: Optional[str] = None  # keterangan tambahan (khusus transfer)
+    shopee_admin_fee: float = 0  # biaya admin Shopee — dicatat sebagai pengeluaran terpisah, mengurangi netto omzet
     notes: Optional[str] = None
 
 
@@ -6100,6 +6101,7 @@ async def _build_and_persist_sale(
         "payment_method": payload.payment_method or "cash",
         "payment_bank": (payload.payment_bank or "").strip() or None,
         "payment_notes": (payload.payment_notes or "").strip() or None,
+        "shopee_admin_fee": round(float(payload.shopee_admin_fee or 0), 2) if payload.payment_method in ("shopee_plaza", "shopee_kastem") else 0.0,
         "notes": payload.notes,
         "status": payment_status,  # "paid" (LUNAS) atau "dp"
         "payments": [initial_payment],  # unified payment history (DP + pelunasan)
@@ -6131,6 +6133,22 @@ async def _build_and_persist_sale(
                 auto=True,
                 created_by=user.get("email"),
             )
+        # Auto-insert biaya admin Shopee sbg pengeluaran terpisah (kode 502-SHP)
+        shopee_admin_fee = float(doc.get("shopee_admin_fee") or 0)
+        if shopee_admin_fee > 0 and payload.payment_method in ("shopee_plaza", "shopee_kastem"):
+            try:
+                await _ensure_shopee_admin_fee_account()
+                await _insert_cash_transaction(
+                    account_code="502-SHP",
+                    description=f"Biaya Admin Shopee — {final_sale_no} ({acc_label})",
+                    amount=shopee_admin_fee,
+                    reference=final_sale_no,
+                    date_iso=doc["date"],
+                    auto=True,
+                    created_by=user.get("email"),
+                )
+            except Exception as ex:
+                logger.warning(f"Cashbook auto-insert (shopee admin fee) failed: {ex}")
     except Exception as ex:
         logger.warning(f"Cashbook auto-insert (sale) failed: {ex}")
     # Apply stock deduction (net dari state saat ini)
@@ -7316,6 +7334,8 @@ async def sales_analytics(
     method_totals: Dict[str, float] = {}
     weekly_total = 0.0
     period_total = 0.0
+    total_shopee_fees = 0.0
+    total_shopee_gross = 0.0
 
     today = datetime.now(timezone.utc).date()
     week_start = today - timedelta(days=today.weekday())
@@ -7442,6 +7462,12 @@ async def sales_analytics(
                 m_key = f"transfer_{str(p_bank).lower()}"
             method_totals[m_key] = method_totals.get(m_key, 0) + p_amount
         period_total += s_total_after_disc
+        # Netto Shopee: kurangi admin fee dari period total (agar Omzet Laporan sinkron dgn kas netto)
+        _shopee_fee = float(s.get("shopee_admin_fee") or 0)
+        if _shopee_fee > 0 and s_method in ("shopee_plaza", "shopee_kastem"):
+            period_total -= _shopee_fee
+            total_shopee_fees += _shopee_fee
+            total_shopee_gross += s_total_after_disc
         daily_series[s_date] = daily_series.get(s_date, 0) + s_total_after_disc
         mkey = s_method
         if s_method == "transfer" and s_bank:
@@ -7449,6 +7475,8 @@ async def sales_analytics(
         method_totals[mkey] = method_totals.get(mkey, 0) + s_total_after_disc
         if s_date >= week_start_iso:
             weekly_total += s_total_after_disc
+            if _shopee_fee > 0 and s_method in ("shopee_plaza", "shopee_kastem"):
+                weekly_total -= _shopee_fee
 
     top_products = sorted(
         [{"name": k, "qty": int(v["qty"]), "total": round(v["total"], 2)} for k, v in product_totals.items()],
@@ -7460,7 +7488,11 @@ async def sales_analytics(
     return {
         "rows": rows,
         "summary": {
-            "period_total": round(period_total, 2),
+            "period_total": round(period_total, 2),  # NETTO (setelah dikurangi biaya admin Shopee)
+            "period_total_gross": round(period_total + total_shopee_fees, 2),  # sebelum dikurangi admin fee
+            "shopee_gross": round(total_shopee_gross, 2),
+            "shopee_admin_fee": round(total_shopee_fees, 2),
+            "shopee_netto": round(total_shopee_gross - total_shopee_fees, 2),
             "weekly_total": round(weekly_total, 2),
             "week_start": week_start_iso,
             "transaction_count": len(sales),
@@ -7582,6 +7614,22 @@ async def _ensure_cash_accounts():
             "active": True,
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
+
+
+async def _ensure_shopee_admin_fee_account():
+    """Ensure account 502-SHP 'Biaya Admin Shopee' exists (type=out)."""
+    exists = await db.cash_accounts.find_one({"code": "502-SHP"})
+    if exists:
+        return
+    await db.cash_accounts.insert_one({
+        "id": str(uuid.uuid4()),
+        "code": "502-SHP",
+        "name": "Biaya Admin Shopee",
+        "type": "out",
+        "system": True,
+        "active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 class CashAccountIn(BaseModel):
@@ -8188,6 +8236,112 @@ async def cashbook_resync_sales(
         "details": inserted_details[:100],  # cap 100 utk response size
         "details_total": len(inserted_details),
     }
+
+
+@api_router.post("/sales/shopee/bulk-set-admin-fee")
+async def sales_bulk_set_shopee_fee(
+    payload: Dict[str, Any],
+    user: dict = Depends(require_super_admin),
+):
+    """Bulk-set biaya admin Shopee untuk transaksi Shopee dalam periode.
+
+    Body:
+      {"date_from": "2026-07-01", "date_to": "2026-07-31",
+       "mode": "flat" | "percent" | "per_sale",
+       "value": 5000,               # nominal utk flat, atau persentase utk percent (e.g., 5 = 5%)
+       "sales": [{"sale_id": "...", "amount": 12345}, ...]  # utk mode per_sale
+      }
+
+    Response: {updated_count, total_fee, sample:[...]}
+    """
+    date_from = payload.get("date_from")
+    date_to = payload.get("date_to")
+    mode = payload.get("mode") or "flat"
+    q: Dict[str, Any] = {"payment_method": {"$in": ["shopee_plaza", "shopee_kastem"]}}
+    if date_from and date_to:
+        q["date"] = {"$gte": date_from, "$lte": date_to}
+    elif date_from:
+        q["date"] = {"$gte": date_from}
+    elif date_to:
+        q["date"] = {"$lte": date_to}
+
+    sales = await db.sales.find(q, {"_id": 0}).to_list(length=10000)
+    updated = 0
+    total_fee = 0.0
+    sample: List[Dict[str, Any]] = []
+
+    if mode == "per_sale":
+        per_sale_map = {row["sale_id"]: float(row.get("amount") or 0) for row in payload.get("sales", []) if row.get("sale_id")}
+        for s in sales:
+            fee = per_sale_map.get(s["id"])
+            if fee is None:
+                continue
+            fee = round(fee, 2)
+            if fee < 0:
+                continue
+            await _apply_shopee_admin_fee_update(s, fee, user)
+            updated += 1
+            total_fee += fee
+            if len(sample) < 10:
+                sample.append({"sale_no": s.get("sale_no"), "date": s.get("date"), "fee": fee})
+    else:
+        value = float(payload.get("value") or 0)
+        if value < 0:
+            raise HTTPException(status_code=400, detail="Value harus >= 0")
+        for s in sales:
+            gross = float(s.get("total") or 0)
+            if mode == "percent":
+                fee = round(gross * value / 100.0, 2)
+            else:  # flat
+                fee = round(value, 2)
+            await _apply_shopee_admin_fee_update(s, fee, user)
+            updated += 1
+            total_fee += fee
+            if len(sample) < 10:
+                sample.append({"sale_no": s.get("sale_no"), "date": s.get("date"), "gross": gross, "fee": fee})
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "updated_count": updated,
+        "total_fee": round(total_fee, 2),
+        "sample": sample,
+    }
+
+
+async def _apply_shopee_admin_fee_update(sale: Dict[str, Any], new_fee: float, user: dict):
+    """Update field shopee_admin_fee di sale + rekonsiliasi baris kas 502-SHP.
+
+    Strategi:
+    - Update sale.shopee_admin_fee = new_fee
+    - Delete existing cash_tx dgn account_code=502-SHP & reference=sale_no
+    - Insert baru bila new_fee > 0
+    """
+    sale_no = sale.get("sale_no")
+    if not sale_no:
+        return
+    await db.sales.update_one(
+        {"id": sale["id"]},
+        {"$set": {"shopee_admin_fee": round(new_fee, 2), "updated_at": datetime.now(timezone.utc).isoformat(), "updated_by": user.get("email")}},
+    )
+    # Clear existing 502-SHP tx for this sale
+    await db.cash_transactions.delete_many({"account_code": "502-SHP", "reference": sale_no})
+    if new_fee > 0:
+        await _ensure_shopee_admin_fee_account()
+        method = sale.get("payment_method") or "shopee_plaza"
+        acc_label = "Shopee Plaza" if method == "shopee_plaza" else "Shopee Kastem"
+        try:
+            await _insert_cash_transaction(
+                account_code="502-SHP",
+                description=f"Biaya Admin Shopee — {sale_no} ({acc_label}) [RESYNC]",
+                amount=new_fee,
+                reference=sale_no,
+                date_iso=sale.get("date"),
+                auto=True,
+                created_by=user.get("email"),
+            )
+        except Exception as ex:
+            logger.warning(f"Insert cash tx 502-SHP for {sale_no} failed: {ex}")
 
 
 @api_router.post("/cashbook/resync-purchases")
