@@ -1668,3 +1668,43 @@ Setelah refactor session-8, `filteredJournal` dibatasi `account_code === "101"` 
   - `filteredJournal` filter: hapus account_code === "101" restriction
   - JournalTab: `kasTx = filtered` (bukan lagi sub-filter)
   - Chip badge & konvensi footnote update
+
+---
+
+## Update: 2026-07-30 (session 11) — Jurnal Akuntansi: Filter Ketat Kredit Hanya Kas 101
+
+### Feature (URGENT UI FIX #5)
+User request finalize semantic Kas ledger:
+- **DEBET**: keep as-is — semua pengeluaran (type=out) dari akun manapun
+- **KREDIT**: filter ketat — hanya (type=in && account_code === "101")
+- Ringkasan total di top cards & running saldo mengikuti filter
+
+### Rationale
+Kredit Kas 101 mewakili uang yang benar-benar masuk fisik ke pot Kas. Pemasukan yang masuk ke Bank/akun lain (misal Sales via transfer) tidak menaikkan saldo Kas fisik — jadi tidak boleh muncul di Kredit.
+
+### Backend Changes (server.py)
+1. **`/cashbook/balance`**: `total_in = sum(in && code=="101")`, total_out unchanged
+2. **`/cashbook/summary`**: sama, plus `prev_net` (opening_of_period computation) juga menerapkan filter
+3. **`/cashbook/transactions`**: helper `_kas_delta(t)` — `+amount` bila `in && 101`, `-amount` bila `out`, `0` bila `in && non-101`. Running balance `t.balance` per row mengikuti helper ini.
+
+### Frontend Changes (CashBook.jsx JournalTab)
+1. `kasTx = filtered.filter(t => t.type === "out" || (t.type === "in" && t.account_code === "101"))` — restore restrictive filter for Kredit
+2. Chip badge: `Debet: Semua Akun · Kredit: Hanya Kas Utama`
+3. Footnote: "Kredit = pemasukan yang tercatat langsung ke Kas Utama (pemasukan ke akun lain seperti Bank tidak menaikkan Saldo Kas)"
+
+### Testing (Playwright + seed 4 tx)
+Seed data (Jul 2026):
+- **101 Kas in Rp 5M** → tampil di KREDIT ✓, saldo 1M → 6M
+- **301 Penjualan in Rp 3.5M "masuk Bank"** → **TIDAK tampil di Jurnal** ✓ (KREDIT filtered out)
+- **502 Biaya Op out Rp 750K** → tampil di DEBET ✓, saldo 6M → 5.25M
+- **201 Utang out Rp 1.2M** → tampil di DEBET ✓
+
+**Top cards match Jurnal**:
+- Pemasukan Jul 2026: Rp 5.000.000 (hanya 101) ✓
+- Pengeluaran Jul 2026: Rp 2.065.500 (semua) ✓
+- Saldo Akhir: Rp 3.934.500 ✓
+- Row count: 7 (was 9 — 2 kredit non-101 hilang: seed 301 Sales & existing 301 Sales Bu Ani) ✓
+
+### Files Changed
+- `backend/server.py`: `/cashbook/balance`, `/cashbook/summary`, `/cashbook/transactions` — Kas 101 flow semantic
+- `frontend/src/pages/CashBook.jsx`: JournalTab `kasTx` filter + chip badge + footnote

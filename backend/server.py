@@ -7750,33 +7750,39 @@ async def cash_transactions_list(
     if account_code:
         q["account_code"] = account_code
     items = await db.cash_transactions.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(length=20000)
-    # Compute running balance
+    # Compute running balance — Kas 101 flow: KREDIT (in) hanya code=101, DEBET (out) semua akun
     setting = await _cash_setting()
     opening_balance = float(setting.get("opening_balance", 0))
     opening_date = setting.get("opening_date")
+
+    def _kas_delta(t):
+        if t["type"] == "in" and t.get("account_code") == "101":
+            return float(t["amount"])
+        elif t["type"] == "out":
+            return -float(t["amount"])
+        return 0.0
+
     # Kalau filter bulan, hitung saldo awal bulan dari transaksi sebelumnya + opening
     if month:
         first_of_month = q["date"]["$gte"]
         last_of_month = q["date"]["$lte"]
         prev = await db.cash_transactions.find(
-            {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1},
+            {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
         ).to_list(length=100000)
         # Include opening_balance selama opening_date jatuh <= akhir periode
-        # yang dilihat. Jika opening_date di masa depan (setelah bulan ini),
-        # baru diabaikan.
         if opening_date and opening_date > last_of_month:
             balance = 0.0
         else:
             balance = opening_balance
         for p in prev:
-            balance += float(p["amount"]) if p["type"] == "in" else -float(p["amount"])
+            balance += _kas_delta(p)
         opening_of_period = round(balance, 2)
     else:
         opening_of_period = opening_balance
         balance = opening_balance
     running = []
     for it in items:
-        balance += float(it["amount"]) if it["type"] == "in" else -float(it["amount"])
+        balance += _kas_delta(it)
         it2 = dict(it)
         it2["balance"] = round(balance, 2)
         running.append(it2)
@@ -7898,8 +7904,9 @@ async def cash_transaction_orphan_check(tx_id: str, user: dict = Depends(require
 @api_router.get("/cashbook/balance")
 async def cash_balance(user: dict = Depends(require_super_admin)):
     setting = await _cash_setting()
-    txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1}).to_list(length=200000)
-    total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in")
+    txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1}).to_list(length=200000)
+    # KREDIT (in) hanya untuk akun 101 Kas; DEBET (out) semua akun
+    total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
     total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
     balance = float(setting.get("opening_balance", 0)) + total_in - total_out
     return {
@@ -7933,12 +7940,16 @@ async def cash_summary(
     opening_date = setting.get("opening_date") or ""
 
     # Opening balance per bulan = opening_balance + net transaksi sebelum first
+    # NB: KREDIT (in) hanya untuk akun 101 Kas; DEBET (out) semua akun
     prev = await db.cash_transactions.find(
-        {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1},
+        {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
     ).to_list(length=200000)
     prev_net = 0.0
     for p in prev:
-        prev_net += float(p["amount"]) if p["type"] == "in" else -float(p["amount"])
+        if p["type"] == "in" and p.get("account_code") == "101":
+            prev_net += float(p["amount"])
+        elif p["type"] == "out":
+            prev_net -= float(p["amount"])
     if opening_date and opening_date > last:
         opening_of_period = 0.0
     else:
@@ -7947,7 +7958,9 @@ async def cash_summary(
 
     # Transaksi bulan ini
     month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
-    total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
+    # Total Pemasukan (KREDIT) — hanya akun 101 Kas
+    total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
+    # Total Pengeluaran (DEBET) — semua akun
     total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
     closing = opening_of_period + total_in - total_out
 
