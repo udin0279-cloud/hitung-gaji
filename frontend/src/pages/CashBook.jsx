@@ -186,8 +186,8 @@ export default function CashBook() {
 
       {/* Tabs */}
       <div className="mt-6 border-b border-zinc-200 flex items-center gap-1 flex-wrap">
-        <TabBtn active={tab === "book"} onClick={() => setTab("book")} testId="tab-book">Buku Kas</TabBtn>
-        <TabBtn active={tab === "journal"} onClick={() => setTab("journal")} testId="tab-journal"><BookOpen className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Jurnal Akuntansi</TabBtn>
+        <TabBtn active={tab === "book"} onClick={() => setTab("book")} testId="tab-book">Jurnal Akuntansi</TabBtn>
+        <TabBtn active={tab === "journal"} onClick={() => setTab("journal")} testId="tab-journal"><BookOpen className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Buku Kas</TabBtn>
         <TabBtn active={tab === "kasbon"} onClick={() => setTab("kasbon")} testId="tab-kasbon"><Users className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Kasbon Sementara</TabBtn>
         <TabBtn active={tab === "summary"} onClick={() => setTab("summary")} testId="tab-summary">Ringkasan Kategori</TabBtn>
         <div className="ml-auto">
@@ -304,7 +304,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
           </div>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
-          {filtered.length} transaksi Non-Kas · <span className="text-zinc-400">(akun 101 Kas ditampilkan di tab Jurnal Akuntansi)</span>
+          {filtered.length} transaksi Non-Kas · <span className="text-zinc-400">(akun 101 Kas ditampilkan di tab Buku Kas)</span>
         </div>
       </div>
 
