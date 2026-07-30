@@ -1637,3 +1637,34 @@ Sekarang:
   - `matchesSearch` helper + `filteredBook`/`filteredJournal` split
   - Props update ke BookTab & JournalTab
   - BookTab rewrite: kolom baru, hapus Saldo, ubah label, TOTAL NON-KAS row
+
+---
+
+## Update: 2026-07-30 (session 10) — Jurnal Akuntansi: Semua Akun (Debet & Kredit)
+
+### Feature (URGENT UI FIX #4)
+User request: JournalTab harus menampilkan **semua arus kas masuk & keluar dari berbagai akun**. Sinkronkan Debet dari modul Pembelian & Kas Operasional. Row yang sebelumnya hilang harus muncul kembali di Debet.
+
+### Root Cause
+Setelah refactor session-8, `filteredJournal` dibatasi `account_code === "101"` yang memutus data auto dari Pembelian (account_code=201 Utang Usaha, dsb). Sehingga Debet kelihatan kosong / hilang.
+
+### Fix (frontend/src/pages/CashBook.jsx)
+1. `filteredJournal` sekarang: `txData.transactions.filter(matchesSearch)` — **tidak ada batasan account_code**
+2. Inner filter di JournalTab (`kasTx = filtered.filter(t.type === "out" || ...)`) → dihapus. `kasTx = filtered` — semua tampil
+3. Running Saldo tetap: `Saldo Awal + Σ Kredit − Σ Debet`
+4. Chip badge: `Debet: Semua · Kredit: Hanya Kas Utama` → **`Debet & Kredit: Semua Akun`**
+5. Konvensi footnote: "Debet = semua pengeluaran uang (dari Pembelian / Kas Op / manual — apapun kode akun tujuannya) · Kredit = semua pemasukan uang (dari Penjualan / manual — apapun kode akun asalnya) · Data auto-sync dari modul **Pembelian** dan **Kas Operasional**"
+
+### Testing (Playwright + seed 3 non-101 transactions)
+- Rows: 5 → **8** setelah seed (301 Sales, 502 Biaya Op, 201 Utang) — semua muncul ✓
+- DEBET column terisi: Rp 750.000 (ATK), Rp 1.200.000 (utang supplier), + 4× auto PO ✓
+- KREDIT column terisi: Rp 3.500.000 (Sales NOTA-001) + Rp 1.000.000 (auto Sales Bu Ani) ✓
+- Saldo running end-of-month: Rp 3.434.500 = matched dgn kartu "Saldo Kas Real-time" & "Saldo Akhir Jul 2026" ✓
+- TOTAL DEBET Rp 2.065.500 · TOTAL KREDIT Rp 4.500.000 ✓
+- Konvensi footnote update dgn referensi sync modul ✓
+
+### Files Changed
+- `frontend/src/pages/CashBook.jsx`:
+  - `filteredJournal` filter: hapus account_code === "101" restriction
+  - JournalTab: `kasTx = filtered` (bukan lagi sub-filter)
+  - Chip badge & konvensi footnote update
