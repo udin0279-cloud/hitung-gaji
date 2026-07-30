@@ -6823,6 +6823,13 @@ async def sales_report_excel(
     is_pay_filtered = bool(hidden_set)
     # Ringkasan per tab pembayaran: {key: {"count": int_sales, "total": Rp}}
     pay_summary: Dict[str, Dict[str, Any]] = {k: {"count": 0, "total": 0.0, "shopee_fee": 0.0} for k, _ in PAY_COLS}
+    # Ringkasan per cabang × method group (Plaza / Kastem × Cash / BCA / Mandiri / Shopee)
+    METHOD_GROUPS = ["cash", "bca", "mandiri", "shopee"]
+    branch_summary: Dict[str, Dict[str, Any]] = {
+        b: {**{m: 0.0 for m in METHOD_GROUPS}, "count": 0, "shopee_fee": 0.0}
+        for b in ("plaza", "kastem")
+    }
+    daily_by_branch: Dict[str, Dict[str, float]] = {}  # {date: {"plaza": ..., "kastem": ...}}
 
     # Flatten rows (mirror analytics endpoint)
     excel_rows = []
@@ -6859,6 +6866,19 @@ async def sales_report_excel(
             pay_summary[pay_col]["total"] += first_row_received
             if _is_shopee and _shopee_fee > 0 and not is_pay_filtered:
                 pay_summary[pay_col]["shopee_fee"] += _shopee_fee
+            # Sheet Cabang: pay_col format = "{method}_{branch}"
+            try:
+                _mg, _br = pay_col.rsplit("_", 1)
+                if _br in branch_summary and _mg in branch_summary[_br]:
+                    branch_summary[_br][_mg] += first_row_received
+                    branch_summary[_br]["count"] += 1
+                    if _is_shopee and _shopee_fee > 0 and not is_pay_filtered:
+                        branch_summary[_br]["shopee_fee"] += _shopee_fee
+                    if s_date:
+                        daily_by_branch.setdefault(s_date, {"plaza": 0.0, "kastem": 0.0})
+                        daily_by_branch[s_date][_br] = daily_by_branch[s_date].get(_br, 0.0) + first_row_received
+            except ValueError:
+                pass
         first_item = True
         for it in (s.get("items") or []):
             if skip_product_rows:
@@ -6905,6 +6925,16 @@ async def sales_report_excel(
                 continue
             if p_col and p_col in pay_summary:
                 pay_summary[p_col]["total"] += p_amount
+                try:
+                    _mg, _br = p_col.rsplit("_", 1)
+                    if _br in branch_summary and _mg in branch_summary[_br]:
+                        branch_summary[_br][_mg] += p_amount
+                        _pd = (p_.get("date") or s_date)
+                        if _pd:
+                            daily_by_branch.setdefault(_pd, {"plaza": 0.0, "kastem": 0.0})
+                            daily_by_branch[_pd][_br] = daily_by_branch[_pd].get(_br, 0.0) + p_amount
+                except ValueError:
+                    pass
             row_no += 1
             p_label = _payment_label(p_method, p_bank)
             row = {
@@ -7129,6 +7159,157 @@ async def sales_report_excel(
         for i in range(1, 7):
             ws2.column_dimensions[get_column_letter(i)].width = widths2.get(i, 14)
         ws2.freeze_panes = ws2["A6"]
+
+        # ============= SHEET 3: RINGKASAN PER CABANG (Plaza vs Kastem) =============
+        ws3 = writer.book.create_sheet("Per Cabang")
+        ws3["A1"] = ci["name"].upper()
+        ws3["A1"].font = Font(bold=True, size=14, color="002FA7")
+        ws3["A2"] = f"Ringkasan Per Cabang · Periode: {period_label}"
+        ws3["A2"].font = Font(bold=True, size=10)
+        ws3["A3"] = _filter_note
+        ws3["A3"].font = Font(italic=True, size=9, color=("F97316" if is_pay_filtered else "666666"))
+
+        # --- Section A: Matrix Cabang × Metode ---
+        ws3["A5"] = "A. OMZET PER CABANG × METODE PEMBAYARAN"
+        ws3["A5"].font = Font(bold=True, size=11, color="002FA7")
+        method_headers = ["Cabang", "Cash", "BCA", "Mandiri", "Shopee", "Biaya Admin", "Total Cabang", "Jumlah Tx", "Kontribusi %"]
+        for i, h in enumerate(method_headers, start=1):
+            c3 = ws3.cell(row=6, column=i, value=h)
+            c3.font = header_font
+            c3.fill = header_fill
+            c3.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            c3.border = border
+
+        _branch_totals = {b: sum(branch_summary[b][m] for m in METHOD_GROUPS) for b in ("plaza", "kastem")}
+        _grand_branch = sum(_branch_totals.values())
+        branch_colors = {"plaza": "002FA7", "kastem": "008A00"}
+        r3 = 7
+        for b in ("plaza", "kastem"):
+            v = branch_summary[b]
+            btotal = _branch_totals[b]
+            contribution = (btotal / _grand_branch * 100) if _grand_branch > 0 else 0
+            values = [
+                ("Plaza" if b == "plaza" else "Kastem", "label"),
+                (round(v["cash"], 2), "money"),
+                (round(v["bca"], 2), "money"),
+                (round(v["mandiri"], 2), "money"),
+                (round(v["shopee"], 2), "money"),
+                (round(v["shopee_fee"], 2), "money"),
+                (round(btotal, 2), "money-bold"),
+                (v["count"], "int"),
+                (round(contribution, 2), "pct"),
+            ]
+            for col, (val, kind) in enumerate(values, start=1):
+                c3 = ws3.cell(row=r3, column=col, value=val)
+                c3.border = border
+                if col == 1:
+                    c3.fill = PatternFill("solid", fgColor=branch_colors[b])
+                    c3.font = Font(bold=True, color="FFFFFF", size=11)
+                    c3.alignment = Alignment(horizontal="center", vertical="center")
+                elif kind == "money" or kind == "money-bold":
+                    c3.number_format = currency_fmt
+                    c3.alignment = Alignment(horizontal="right", vertical="center")
+                    if kind == "money-bold":
+                        c3.font = Font(bold=True, size=11, color="002FA7")
+                elif kind == "int":
+                    c3.number_format = "#,##0"
+                    c3.alignment = Alignment(horizontal="right", vertical="center")
+                elif kind == "pct":
+                    c3.number_format = '0.00"%"'
+                    c3.alignment = Alignment(horizontal="center", vertical="center")
+            r3 += 1
+
+        # Grand total row (branch matrix)
+        gt_row = r3
+        ws3.cell(row=gt_row, column=1, value="TOTAL").font = Font(bold=True, size=11, color="002FA7")
+        ws3.cell(row=gt_row, column=1).fill = PatternFill("solid", fgColor="EFF2FA")
+        ws3.cell(row=gt_row, column=1).alignment = Alignment(horizontal="center")
+        for mi, m in enumerate(METHOD_GROUPS, start=2):
+            tv = branch_summary["plaza"][m] + branch_summary["kastem"][m]
+            c3 = ws3.cell(row=gt_row, column=mi, value=round(tv, 2))
+            c3.font = Font(bold=True, size=11)
+            c3.number_format = currency_fmt
+            c3.alignment = Alignment(horizontal="right")
+            c3.fill = PatternFill("solid", fgColor="EFF2FA")
+        _sum_fee = sum(branch_summary[b]["shopee_fee"] for b in ("plaza", "kastem"))
+        c3 = ws3.cell(row=gt_row, column=6, value=round(_sum_fee, 2))
+        c3.font = Font(bold=True, size=11, color="EE4D2D")
+        c3.number_format = currency_fmt
+        c3.alignment = Alignment(horizontal="right")
+        c3.fill = PatternFill("solid", fgColor="EFF2FA")
+        c3 = ws3.cell(row=gt_row, column=7, value=round(_grand_branch, 2))
+        c3.font = Font(bold=True, size=12, color="002FA7")
+        c3.number_format = currency_fmt
+        c3.alignment = Alignment(horizontal="right")
+        c3.fill = PatternFill("solid", fgColor="EFF2FA")
+        c3 = ws3.cell(row=gt_row, column=8, value=sum(branch_summary[b]["count"] for b in ("plaza", "kastem")))
+        c3.font = Font(bold=True, size=11)
+        c3.number_format = "#,##0"
+        c3.alignment = Alignment(horizontal="right")
+        c3.fill = PatternFill("solid", fgColor="EFF2FA")
+        c3 = ws3.cell(row=gt_row, column=9, value=100.0 if _grand_branch > 0 else 0)
+        c3.font = Font(bold=True, size=11)
+        c3.number_format = '0.00"%"'
+        c3.alignment = Alignment(horizontal="center")
+        c3.fill = PatternFill("solid", fgColor="EFF2FA")
+
+        # --- Section B: Daily Omzet per Branch ---
+        section_b_row = gt_row + 3
+        ws3.cell(row=section_b_row, column=1, value="B. OMZET HARIAN PER CABANG").font = Font(bold=True, size=11, color="002FA7")
+        daily_headers = ["Tanggal", "Plaza", "Kastem", "Total Harian", "Selisih (Plaza − Kastem)"]
+        for i, h in enumerate(daily_headers, start=1):
+            c3 = ws3.cell(row=section_b_row + 1, column=i, value=h)
+            c3.font = header_font
+            c3.fill = header_fill
+            c3.alignment = Alignment(horizontal="center", vertical="center")
+            c3.border = border
+
+        dr = section_b_row + 2
+        _sum_p = _sum_k = 0.0
+        for d_iso in sorted(daily_by_branch.keys()):
+            plaza_v = daily_by_branch[d_iso].get("plaza", 0.0)
+            kastem_v = daily_by_branch[d_iso].get("kastem", 0.0)
+            _sum_p += plaza_v
+            _sum_k += kastem_v
+            values = [
+                (d_iso, "text"),
+                (round(plaza_v, 2), "money"),
+                (round(kastem_v, 2), "money"),
+                (round(plaza_v + kastem_v, 2), "money-bold"),
+                (round(plaza_v - kastem_v, 2), "money-signed"),
+            ]
+            for col, (val, kind) in enumerate(values, start=1):
+                c3 = ws3.cell(row=dr, column=col, value=val)
+                c3.border = border
+                if kind == "money" or kind == "money-bold" or kind == "money-signed":
+                    c3.number_format = currency_fmt
+                    c3.alignment = Alignment(horizontal="right", vertical="center")
+                    if kind == "money-bold":
+                        c3.font = Font(bold=True, color="002FA7")
+                    elif kind == "money-signed":
+                        c3.font = Font(color=("008A00" if val >= 0 else "E81123"))
+                elif kind == "text":
+                    c3.font = Font(name="Consolas", size=10)
+                    c3.alignment = Alignment(horizontal="center", vertical="center")
+            dr += 1
+        # Daily grand total
+        if daily_by_branch:
+            ws3.cell(row=dr, column=1, value="TOTAL").font = Font(bold=True, size=11, color="002FA7")
+            ws3.cell(row=dr, column=1).fill = PatternFill("solid", fgColor="EFF2FA")
+            ws3.cell(row=dr, column=1).alignment = Alignment(horizontal="center")
+            for col, val in enumerate([round(_sum_p, 2), round(_sum_k, 2), round(_sum_p + _sum_k, 2), round(_sum_p - _sum_k, 2)], start=2):
+                c3 = ws3.cell(row=dr, column=col, value=val)
+                c3.font = Font(bold=True, size=11, color="002FA7" if col in (2, 3, 4) else ("008A00" if val >= 0 else "E81123"))
+                c3.number_format = currency_fmt
+                c3.alignment = Alignment(horizontal="right")
+                c3.fill = PatternFill("solid", fgColor="EFF2FA")
+                c3.border = Border(top=Side(border_style="medium", color="002FA7"), bottom=thin, left=thin, right=thin)
+
+        # Column widths & freeze
+        widths3 = {1: 14, 2: 18, 3: 18, 4: 18, 5: 20, 6: 16, 7: 20, 8: 12, 9: 14}
+        for i in range(1, 10):
+            ws3.column_dimensions[get_column_letter(i)].width = widths3.get(i, 14)
+        ws3.freeze_panes = ws3["A7"]
 
     buf.seek(0)
     fname_period = month or (f"{date_from}_sd_{date_to}" if (date_from or date_to) else "semua")
