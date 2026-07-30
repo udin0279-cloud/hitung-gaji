@@ -66,8 +66,13 @@ export default function CashBook() {
 
   // BukuKas: SEMUA akun KECUALI 101 Kas (per request user)
   const filteredBook = txData.transactions.filter((t) => t.account_code !== "101" && matchesSearch(t));
-  // Buku Kas (tab === "journal" · JournalTab): HANYA akun 101 Kas Utama (hard filter permanen).
-  const filteredJournal = txData.transactions.filter((t) => t.account_code === "101" && matchesSearch(t));
+  // Buku Kas (tab === "journal" · JournalTab):
+  // - KREDIT (uang masuk, type=in): DIKUNCI hanya akun 101 Kas Utama.
+  // - DEBET  (uang keluar, type=out): TIDAK di-filter, terima dari akun mana pun.
+  const filteredJournal = txData.transactions.filter((t) =>
+    (t.type === "out" || (t.type === "in" && t.account_code === "101")) &&
+    matchesSearch(t)
+  );
 
   const removeTx = async (t) => {
     if (t.auto) {
@@ -738,7 +743,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Akun 101 · Kas Utama</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Kredit: Akun 101 · Debet: Semua Akun</span>
         </div>
         <div className="text-xs text-zinc-500 font-mono">
           {jurnal.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
