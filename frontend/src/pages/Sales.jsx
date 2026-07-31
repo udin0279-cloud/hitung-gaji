@@ -869,6 +869,7 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
   const [paymentNotes, setPaymentNotes] = useState(edit?.payment_notes || "");
   const [shopeeAdminFee, setShopeeAdminFee] = useState(edit?.shopee_admin_fee || 0);
   const [notes, setNotes] = useState(edit?.notes || "");
+  const [branch, setBranch] = useState(edit?.branch || "plaza");
   const [saving, setSaving] = useState(false);
 
   const addItem = () => setItems((arr) => [...arr, { ...EMPTY_ITEM }]);
@@ -1038,6 +1039,7 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
         payment_notes: paymentMethod === "transfer" ? (paymentNotes.trim() || null) : null,
         shopee_admin_fee: (paymentMethod === "shopee_plaza" || paymentMethod === "shopee_kastem") ? Number(shopeeAdminFee || 0) : 0,
         notes: notes.trim() || null,
+        branch: branch,
         items: items.map((it) => ({
           material_id: it.material_id || null,
           product_id: it.product_id || null,
@@ -1282,6 +1284,29 @@ function NewSaleModal({ materials, products, customers, edit, onClose, onSaved }
             <div className="space-y-3">
               <Field label="Diskon (Rp)">
                 <input data-testid="sale-discount" type="number" step="0.01" min="0" value={discount} onChange={(e) => setDiscount(e.target.value)} className={inputCls + " font-mono"} />
+              </Field>
+              <Field label="Cabang">
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { key: "plaza", label: "Plaza", color: "#002FA7" },
+                    { key: "kastem", label: "Kastem", color: "#008A00" },
+                  ].map((b) => (
+                    <button
+                      key={b.key}
+                      type="button"
+                      data-testid={`sale-branch-${b.key}`}
+                      onClick={() => setBranch(b.key)}
+                      className={`py-2 px-3 text-xs font-bold uppercase tracking-wider border transition-colors ${
+                        branch === b.key
+                          ? "text-white border-transparent"
+                          : "bg-white border-zinc-300 text-zinc-700 hover:border-zinc-500"
+                      }`}
+                      style={branch === b.key ? { backgroundColor: b.color } : {}}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
               </Field>
               <Field label="Metode Pembayaran">
                 <select

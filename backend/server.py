@@ -5810,6 +5810,7 @@ class SaleIn(BaseModel):
     payment_notes: Optional[str] = None  # keterangan tambahan (khusus transfer)
     shopee_admin_fee: float = 0  # biaya admin Shopee — dicatat sebagai pengeluaran terpisah, mengurangi netto omzet
     notes: Optional[str] = None
+    branch: Optional[str] = None  # "plaza" | "kastem" — WAJIB untuk super_admin agar sale ter-tag cabang; kasir cabang otomatis pakai branch usernya.
 
 
 # Mapping payment method → account_code untuk auto cash tx
@@ -6090,7 +6091,9 @@ async def _build_and_persist_sale(
         "customer_phone": (payload.customer_phone or "").strip(),
         "cashier": user.get("email"),
         "cashier_name": user.get("name") or user.get("email"),
-        "branch": _sanitize_branch(user.get("branch")),
+        # Branch resolution: payload.branch (form) DIUTAMAKAN bila super_admin memilih;
+        # fallback ke user.branch (cabang kasir) bila payload kosong.
+        "branch": _sanitize_branch(payload.branch) or _sanitize_branch(user.get("branch")),
         "items": items_out,
         "subtotal": round(subtotal, 2),
         "discount": round(discount, 2),
@@ -6167,6 +6170,35 @@ async def _build_and_persist_sale(
 @api_router.post("/sales")
 async def sales_create(payload: SaleIn, user: dict = Depends(require_super_admin)):
     return await _build_and_persist_sale(payload, user)
+
+
+@api_router.post("/sales/bulk-tag-branch")
+async def sales_bulk_tag_branch(
+    branch: str,
+    only_untagged: bool = True,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    user: dict = Depends(require_super_admin),
+):
+    """Bulk-tag branch (plaza/kastem) untuk sale yg belum bercabang (branch=null).
+    Filter opsional: date_from, date_to.
+    Query param `only_untagged=false` = timpa juga sale yg sudah bercabang.
+    """
+    b = _sanitize_branch(branch)
+    if not b:
+        raise HTTPException(status_code=400, detail="Branch harus 'plaza' atau 'kastem'")
+    q: Dict[str, Any] = {}
+    if only_untagged:
+        q["$or"] = [{"branch": None}, {"branch": {"$exists": False}}, {"branch": ""}]
+    if date_from or date_to:
+        q["date"] = {}
+        if date_from:
+            q["date"]["$gte"] = date_from
+        if date_to:
+            q["date"]["$lte"] = date_to
+    now_iso = datetime.now(timezone.utc).isoformat()
+    res = await db.sales.update_many(q, {"$set": {"branch": b, "updated_at": now_iso}})
+    return {"ok": True, "matched": res.matched_count, "modified": res.modified_count, "branch": b}
 
 
 async def _rollback_sale_effects(sale: Dict[str, Any]) -> None:
