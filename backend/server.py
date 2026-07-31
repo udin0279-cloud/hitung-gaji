@@ -6858,8 +6858,14 @@ async def sales_report_excel(
             first_row_received = max(0.0, s_paid_amount - _shopee_fee)
         else:
             first_row_received = s_paid_amount
-        # Skip semua product rows sale ini bila payment col-nya sedang di-hide di UI.
-        skip_product_rows = bool(pay_col) and pay_col in hidden_set
+        # Skip semua product rows sale ini bila:
+        # - payment_col-nya di-hide, ATAU
+        # - filter tab aktif TAPI sale ini tidak punya payment_col (data lama tanpa cabang).
+        # Ini mencegah tumpang tindih data Plaza/Kastem saat filter tab aktif.
+        skip_product_rows = (
+            (bool(pay_col) and pay_col in hidden_set)
+            or (is_pay_filtered and not pay_col)
+        )
         # Kontribusi ke Ringkasan (hanya bila TIDAK di-hide)
         if pay_col and pay_col in pay_summary and not skip_product_rows:
             pay_summary[pay_col]["count"] += 1
@@ -6921,7 +6927,10 @@ async def sales_report_excel(
             p_amount = float(p_.get("amount") or 0)
             p_date = p_.get("date") or s_date
             p_col = _resolve_report_payment_col(p_method, p_bank, s_branch)
+            # Sama: skip pelunasan yang metode-nya tidak match visible cols (strict mode)
             if p_col and p_col in hidden_set:
+                continue
+            if is_pay_filtered and not p_col:
                 continue
             if p_col and p_col in pay_summary:
                 pay_summary[p_col]["total"] += p_amount

@@ -10,6 +10,18 @@ import { Search, TrendingUp, Package, Calendar, Award, Users, ChevronLeft, Chevr
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 500];
 const HIDDEN_PAY_STORAGE_KEY = "salesReport.hiddenPayCols";
 
+// Payment column configuration — shared across component (needed early in useMemo)
+const PAY_COLS = [
+  { key: "cash_plaza", label: "Cash Plaza", color: "bg-[#008A00]/80" },
+  { key: "cash_kastem", label: "Cash Kastem", color: "bg-[#008A00]/60" },
+  { key: "bca_plaza", label: "BCA Plaza", color: "bg-[#002FA7]/80" },
+  { key: "bca_kastem", label: "BCA Kastem", color: "bg-[#002FA7]/60" },
+  { key: "mandiri_plaza", label: "Mandiri Plaza", color: "bg-[#E81123]/80" },
+  { key: "mandiri_kastem", label: "Mandiri Kastem", color: "bg-[#E81123]/60" },
+  { key: "shopee_plaza", label: "Shopee Plaza", color: "bg-[#F97316]" },
+  { key: "shopee_kastem", label: "Shopee Kastem", color: "bg-[#FDBA74] text-zinc-900" },
+];
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -70,12 +82,13 @@ export default function SalesReport() {
 
   const rows = useMemo(() => {
     let base = data.rows;
-    // 1) Filter berdasarkan tab pembayaran aktif (hiddenPayCols).
-    //    Baris apapun (product / pelunasan) yang payment_column-nya di-hide → disembunyikan.
-    //    Baris tanpa payment_column (fallback data lama) ditampilkan agar tidak hilang total.
+    // 1) Filter berdasarkan tab pembayaran aktif (hiddenPayCols) — STRICT MODE.
+    //    Bila ada tab yg di-hide, hanya baris yg payment_column-nya ada di daftar
+    //    visible yang ditampilkan. Baris tanpa payment_column (data lama tanpa cabang)
+    //    otomatis TIDAK muncul → mencegah tumpang tindih Plaza vs Kastem.
     if (hiddenPayCols.length > 0) {
-      const hiddenSet = new Set(hiddenPayCols);
-      base = base.filter((r) => !r.payment_column || !hiddenSet.has(r.payment_column));
+      const visibleSet = new Set(PAY_COLS.map((c) => c.key).filter((k) => !hiddenPayCols.includes(k)));
+      base = base.filter((r) => r.payment_column && visibleSet.has(r.payment_column));
     }
     // 2) Pencarian teks
     if (searchRow.trim()) {
@@ -163,16 +176,6 @@ export default function SalesReport() {
   const totalRowsItemsSubtotal = rows.reduce((s, r) => s + Number(r.total || 0), 0);
 
   // Payment column totals — sum by payment_column key (already normalized by backend)
-  const PAY_COLS = [
-    { key: "cash_plaza", label: "Cash Plaza", color: "bg-[#008A00]/80" },
-    { key: "cash_kastem", label: "Cash Kastem", color: "bg-[#008A00]/60" },
-    { key: "bca_plaza", label: "BCA Plaza", color: "bg-[#002FA7]/80" },
-    { key: "bca_kastem", label: "BCA Kastem", color: "bg-[#002FA7]/60" },
-    { key: "mandiri_plaza", label: "Mandiri Plaza", color: "bg-[#E81123]/80" },
-    { key: "mandiri_kastem", label: "Mandiri Kastem", color: "bg-[#E81123]/60" },
-    { key: "shopee_plaza", label: "Shopee Plaza", color: "bg-[#F97316]" },
-    { key: "shopee_kastem", label: "Shopee Kastem", color: "bg-[#FDBA74] text-zinc-900" },
-  ];
   const visiblePayCols = PAY_COLS.filter((c) => !hiddenPayCols.includes(c.key));
   // 12 main + 2 (sisa + status) + N pay cols × 2 = totalColSpan
   const totalColSpan = 14 + visiblePayCols.length * 2;
