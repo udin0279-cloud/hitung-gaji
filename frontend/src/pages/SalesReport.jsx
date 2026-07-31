@@ -48,7 +48,7 @@ export default function SalesReport() {
   };
 
   // Reset ke halaman 1 saat filter atau search berubah
-  useEffect(() => { setPage(1); }, [searchRow, dateFrom, dateTo, customer, pageSize]);
+  useEffect(() => { setPage(1); }, [searchRow, dateFrom, dateTo, customer, pageSize, hiddenPayCols]);
 
   const load = async () => {
     setLoading(true);
@@ -69,15 +69,26 @@ export default function SalesReport() {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
   const rows = useMemo(() => {
-    if (!searchRow.trim()) return data.rows;
-    const q = searchRow.toLowerCase();
-    return data.rows.filter((r) =>
-      (r.product_name || "").toLowerCase().includes(q) ||
-      (r.customer_name || "").toLowerCase().includes(q) ||
-      (r.alamat || "").toLowerCase().includes(q) ||
-      (r.sale_no || "").toLowerCase().includes(q)
-    );
-  }, [data.rows, searchRow]);
+    let base = data.rows;
+    // 1) Filter berdasarkan tab pembayaran aktif (hiddenPayCols).
+    //    Baris apapun (product / pelunasan) yang payment_column-nya di-hide → disembunyikan.
+    //    Baris tanpa payment_column (fallback data lama) ditampilkan agar tidak hilang total.
+    if (hiddenPayCols.length > 0) {
+      const hiddenSet = new Set(hiddenPayCols);
+      base = base.filter((r) => !r.payment_column || !hiddenSet.has(r.payment_column));
+    }
+    // 2) Pencarian teks
+    if (searchRow.trim()) {
+      const q = searchRow.toLowerCase();
+      base = base.filter((r) =>
+        (r.product_name || "").toLowerCase().includes(q) ||
+        (r.customer_name || "").toLowerCase().includes(q) ||
+        (r.alamat || "").toLowerCase().includes(q) ||
+        (r.sale_no || "").toLowerCase().includes(q)
+      );
+    }
+    return base;
+  }, [data.rows, searchRow, hiddenPayCols]);
 
   // Pagination (client-side) — max N baris per halaman
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
