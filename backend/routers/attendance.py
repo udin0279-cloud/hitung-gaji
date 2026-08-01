@@ -381,6 +381,24 @@ def make_router(db, require_super_admin, logger):
 
         now_iso = datetime.now(timezone.utc).isoformat()
 
+        # ---- Pre-clear existing daily records ----
+        # Untuk semua bulan yang tersentuh oleh file ini, hapus attendance_daily terlebih dulu
+        # agar tidak menumpuk dgn data lama. Grouping (nik+date) di logic bawah menjamin
+        # scan berulang di hari sama tetap terhitung 1 hari hadir.
+        months_in_file = sorted({(d.year, d.month) for d in agg["_date"]})
+        deleted_daily_count = 0
+        for (yy, mm) in months_in_file:
+            from calendar import monthrange
+            first = f"{yy:04d}-{mm:02d}-01"
+            last_day = monthrange(yy, mm)[1]
+            last = f"{yy:04d}-{mm:02d}-{last_day:02d}"
+            res = await db.attendance_daily.delete_many({"date": {"$gte": first, "$lte": last}})
+            deleted_daily_count += res.deleted_count
+        # Juga hapus attendance_imports untuk periode ini agar summary bersih
+        # (akan di-replace by upsert di bawah, tapi eksplisit lebih aman)
+        await db.attendance_imports.delete_many({"period": period})
+        logger.info(f"Attendance import: pre-cleared {deleted_daily_count} daily records for months {months_in_file}")
+
         # 1) Persist per-day records
         daily_ops: List[Any] = []
         date_range: List[Any] = []
@@ -508,6 +526,7 @@ def make_router(db, require_super_admin, logger):
             "date_range": {"from": min_date, "to": max_date},
             "months_covered": months_covered_str,
             "total_days_persisted": len(daily_ops),
+            "pre_cleared_daily_records": deleted_daily_count,
         }
 
     @router.get("/attendance/{period}")
