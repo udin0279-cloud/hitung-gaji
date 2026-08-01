@@ -299,6 +299,10 @@ class PayrollRunIn(BaseModel):
     period: str  # YYYY-MM
     attendance: Dict[str, Dict[str, float]] = Field(default_factory=dict)
     # attendance[employee_id] = {"days_worked": 22, "overtime_hours": 0, "bonus": 0, "deduction": 0}
+    overrides: Dict[str, Dict[str, float]] = Field(default_factory=dict)
+    # overrides[employee_id] = {"transport": Rp, "inc_individu": Rp, "inc_kolektif": Rp,
+    #                            "inc_lain": Rp, "thr": Rp, "pinjaman": Rp}
+    # Nilai override menggantikan angka default dari master karyawan / attendance.
 
 
 # ---------------- Indonesian Payroll Configuration (overridable via /api/config) ----------------
@@ -365,27 +369,40 @@ def compute_pph21_annual(pkp: float) -> float:
     return tax
 
 
-def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float]) -> Dict[str, Any]:
+def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float], overrides: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """
     Returns full payslip breakdown for one employee for one month.
+    `overrides` (opsional) — dict berisi angka override yg dikirim dari UI Jalankan Payroll
+    (Transport, Inc.Individu/Kolektif/Lain, THR, Pinjaman). Jika key ada dan bernilai numeric,
+    nilainya menggantikan default dari master karyawan.
     """
+    o = overrides or {}
+    def _ov(key: str, default_val: float) -> float:
+        if key in o and o[key] is not None:
+            try:
+                return float(o[key])
+            except (TypeError, ValueError):
+                return default_val
+        return default_val
     basic = float(employee.get("basic_salary", 0))
     fixed_allowance = float(employee.get("fixed_allowance", 0))
     tj_jabatan = float(employee.get("tunjangan_jabatan", 0))
-    tj_transport = float(employee.get("tunjangan_transport", 0))
+    tj_transport = _ov("transport", float(employee.get("tunjangan_transport", 0)))
     tj_lainnya = float(employee.get("tunjangan_lainnya", 0))
-    insentif_individu = float(employee.get("insentif_individu", 0))
+    insentif_individu = _ov("inc_individu", float(employee.get("insentif_individu", 0)))
     tj_tidak_tetap = float(employee.get("tunjangan_tidak_tetap", 0))
     tj_wfh = float(employee.get("tunjangan_wfh", 0))
-    insentif_kolektif = float(employee.get("insentif_kolektif", 0))
-    insentif_lain = float(employee.get("insentif_lain", 0))
+    insentif_kolektif = _ov("inc_kolektif", float(employee.get("insentif_kolektif", 0)))
+    insentif_lain = _ov("inc_lain", float(employee.get("insentif_lain", 0)))
+    thr_override = _ov("thr", 0.0)  # THR baru ditambah via override UI (default 0)
     potongan_terlambat = float(employee.get("potongan_terlambat", 0))
     potongan_pulang_cepat = float(employee.get("potongan_pulang_cepat", 0))
-    loan_installment = float(employee.get("loan_installment", 0))
+    loan_installment = _ov("pinjaman", float(employee.get("loan_installment", 0)))
     loan_tenor_total = int(employee.get("loan_tenor_total", 0) or 0)
     loan_tenor_paid = int(employee.get("loan_tenor_paid", 0) or 0)
     overtime_hours = float(attendance.get("overtime_hours", 0) or 0)
-    bonus = float(attendance.get("bonus", 0) or 0)
+    # THR override ditambahkan ke bonus (taxable earning yg masuk gross tanpa base BPJS)
+    bonus = float(attendance.get("bonus", 0) or 0) + thr_override
     other_deduction = float(attendance.get("deduction", 0) or 0)
     standard_days = float(CONFIG["standard_workdays"]) or 22.0
     days_worked = float(attendance.get("days_worked", standard_days) or standard_days)
@@ -1126,7 +1143,8 @@ async def preview_payroll(payload: PayrollRunIn, user: dict = Depends(require_su
     slips = []
     for emp in employees:
         att = payload.attendance.get(emp["id"], {"days_worked": 22})
-        slip = calculate_payslip(emp, att)
+        ov = payload.overrides.get(emp["id"], {})
+        slip = calculate_payslip(emp, att, ov)
         slips.append({
             "employee_id": emp["id"],
             "nik": emp["nik"],
@@ -1173,7 +1191,8 @@ async def run_payroll(payload: PayrollRunIn, user: dict = Depends(require_super_
 
     for emp in employees:
         att = payload.attendance.get(emp["id"], {"days_worked": 22})
-        slip = calculate_payslip(emp, att)
+        ov = payload.overrides.get(emp["id"], {})
+        slip = calculate_payslip(emp, att, ov)
         slip_doc = {
             "id": str(uuid.uuid4()),
             "run_id": run_id,

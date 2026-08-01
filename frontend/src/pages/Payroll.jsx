@@ -171,7 +171,7 @@ export default function Payroll() {
 
   const runPreview = async () => {
     try {
-      const { data } = await api.post("/payroll/preview", { period, attendance });
+      const { data } = await api.post("/payroll/preview", { period, attendance, overrides: slipOverrides });
       setPreview(data);
       // Init overrides tiap karyawan dari slip data (bisa di-edit user di tabel)
       const initOverrides = {};
@@ -206,7 +206,7 @@ export default function Payroll() {
     if (!window.confirm(`Jalankan payroll untuk periode ${period}? Ini akan menggantikan data lama jika ada.`)) return;
     setRunning(true);
     try {
-      const { data } = await api.post("/payroll/run", { period, attendance });
+      const { data } = await api.post("/payroll/run", { period, attendance, overrides: slipOverrides });
       toast.success(`✅ Payroll ${period} berhasil dijalankan — ${data.employee_count} slip generated (Total Net Rp ${Number(data.total_net || 0).toLocaleString("id-ID")})`);
       clearDraft(period);  // draft dibersihkan setelah berhasil generate
       navigate(`/payroll/${period}`);
