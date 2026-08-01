@@ -51,9 +51,9 @@ export default function Payroll() {
     } catch { return null; }
   };
 
-  const saveDraft = (p, att) => {
+  const saveDraft = (p, att, ov) => {
     try {
-      localStorage.setItem(draftKey(p), JSON.stringify({ attendance: att, saved_at: Date.now() }));
+      localStorage.setItem(draftKey(p), JSON.stringify({ attendance: att, overrides: ov || {}, saved_at: Date.now() }));
       setLastSavedAt(Date.now());
     } catch { /* quota exceeded */ }
   };
@@ -88,6 +88,10 @@ export default function Payroll() {
         });
         setAttendance(merged);
         setDraftLoaded(true);
+        // Restore overrides (Transport/Inc/THR/Pinjaman) dari draft
+        if (draft.overrides && typeof draft.overrides === "object") {
+          setSlipOverrides(draft.overrides);
+        }
         toast.info(`📥 Draft absensi periode ${period} dimuat kembali (tersimpan ${new Date(draft.saved_at).toLocaleString("id-ID")})`);
       } else {
         setAttendance(defaults);
@@ -100,12 +104,12 @@ export default function Payroll() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
-  // Autosave: setiap attendance/period berubah → simpan ke localStorage (debounced ~600ms)
+  // Autosave: setiap attendance/overrides/period berubah → simpan ke localStorage (debounced ~600ms)
   useEffect(() => {
     if (loading || employees.length === 0) return;
-    const t = setTimeout(() => saveDraft(period, attendance), 600);
+    const t = setTimeout(() => saveDraft(period, attendance, slipOverrides), 600);
     return () => clearTimeout(t);
-  }, [attendance, period, loading, employees.length]);
+  }, [attendance, slipOverrides, period, loading, employees.length]);
 
   // Saat period berubah manual: reload draft yg sesuai
   useEffect(() => {
@@ -122,9 +126,15 @@ export default function Payroll() {
       });
       setAttendance(merged);
       setDraftLoaded(true);
+      if (draft.overrides && typeof draft.overrides === "object") {
+        setSlipOverrides(draft.overrides);
+      } else {
+        setSlipOverrides({});
+      }
     } else {
       setAttendance(defaults);
       setDraftLoaded(false);
+      setSlipOverrides({});
     }
   }, [period]);  // eslint-disable-line
 
@@ -173,19 +183,24 @@ export default function Payroll() {
     try {
       const { data } = await api.post("/payroll/preview", { period, attendance, overrides: slipOverrides });
       setPreview(data);
-      // Init overrides tiap karyawan dari slip data (bisa di-edit user di tabel)
-      const initOverrides = {};
-      (data.slips || []).forEach((s) => {
-        initOverrides[s.employee_id] = {
-          transport: Number(s.earnings?.tunjangan_transport || 0),
-          inc_individu: Number(s.earnings?.insentif_individu || 0),
-          inc_kolektif: Number(s.earnings?.insentif_kolektif || 0),
-          inc_lain: Number(s.earnings?.insentif_lain || 0),
-          thr: 0,
-          pinjaman: Number(s.deductions?.loan || 0),
-        };
+      // Init overrides tiap karyawan dari slip data (bisa di-edit user di tabel).
+      // Preserve THR (dan pinjaman) yg sudah diinput user — sebab THR di backend digabung ke `bonus`
+      // sehingga tidak bisa dibaca balik terpisah.
+      setSlipOverrides((prev) => {
+        const init = {};
+        (data.slips || []).forEach((s) => {
+          const existing = prev[s.employee_id] || {};
+          init[s.employee_id] = {
+            transport: Number(s.earnings?.tunjangan_transport || 0),
+            inc_individu: Number(s.earnings?.insentif_individu || 0),
+            inc_kolektif: Number(s.earnings?.insentif_kolektif || 0),
+            inc_lain: Number(s.earnings?.insentif_lain || 0),
+            thr: Number(existing.thr || 0),
+            pinjaman: Number(s.deductions?.loan || 0),
+          };
+        });
+        return init;
       });
-      setSlipOverrides(initOverrides);
       toast.success("Pratinjau dihitung");
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal pratinjau");
