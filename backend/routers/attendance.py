@@ -536,6 +536,34 @@ def make_router(db, require_super_admin, logger):
             return {"period": period, "summary": {}, "matched_employees": 0, "total_scans": 0, "unmatched_niks": []}
         return rec
 
+    @router.post("/attendance/reset-all")
+    async def attendance_reset_all(
+        confirm: str = "",
+        user: dict = Depends(require_super_admin),
+    ):
+        """Reset TOTAL semua data absensi (attendance_daily + attendance_imports).
+        Wajib pass query param `confirm=YES-RESET-ALL` untuk mencegah accidental reset.
+        Return: {ok, deleted_daily, deleted_imports}
+        """
+        if confirm != "YES-RESET-ALL":
+            raise HTTPException(
+                status_code=400,
+                detail="Konfirmasi wajib: kirim query param confirm=YES-RESET-ALL untuk melakukan reset total. Aksi ini TIDAK BISA DIBATALKAN."
+            )
+        r1 = await db.attendance_daily.delete_many({})
+        r2 = await db.attendance_imports.delete_many({})
+        logger.warning(
+            f"ATTENDANCE RESET-ALL executed by {user.get('email')} — "
+            f"deleted {r1.deleted_count} daily + {r2.deleted_count} imports"
+        )
+        return {
+            "ok": True,
+            "deleted_daily": r1.deleted_count,
+            "deleted_imports": r2.deleted_count,
+            "executed_by": user.get("email"),
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     @router.get("/attendance/daily/list")
     async def attendance_daily_list(
         user: dict = Depends(require_super_admin),

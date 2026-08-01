@@ -278,6 +278,30 @@ export default function Payroll() {
     }
   };
 
+  const onResetAllAttendance = async () => {
+    const step1 = window.prompt(
+      "⚠️ RESET TOTAL ABSENSI ⚠️\n\n" +
+      "Ini akan MENGHAPUS SEMUA data:\n" +
+      "  • attendance_daily (semua hari, semua bulan, semua tahun)\n" +
+      "  • attendance_imports (semua riwayat import)\n\n" +
+      "AKSI INI TIDAK BISA DIBATALKAN.\n\n" +
+      "Ketik persis: RESET SEMUA ABSENSI"
+    );
+    if (step1 !== "RESET SEMUA ABSENSI") {
+      if (step1 !== null) toast.error("Konfirmasi tidak cocok. Reset dibatalkan.");
+      return;
+    }
+    if (!window.confirm("Yakin lanjut reset TOTAL? Setelah reset Anda perlu upload ulang file Excel absensi.")) return;
+    try {
+      const { data } = await api.post("/attendance/reset-all?confirm=YES-RESET-ALL");
+      toast.success(`Reset berhasil. Terhapus: ${data.deleted_daily} daily + ${data.deleted_imports} imports.`);
+      setFpResult(null);
+      setAttendance({});
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal reset absensi");
+    }
+  };
+
   const totals = useMemo(() => {
     if (!preview) return null;
     return preview.totals;
@@ -437,21 +461,33 @@ export default function Payroll() {
         <div className="mt-6">
           <div className="flex items-end justify-between mb-2">
             <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Input Kehadiran & Penyesuaian</div>
-            <label
-              data-testid="import-fingerprint-label"
-              className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider hover:bg-zinc-50 inline-flex items-center gap-2 cursor-pointer"
-            >
-              <Fingerprint className="w-3.5 h-3.5" />
-              {fpImporting ? "Mengimpor…" : "Import Fingerprint (XLSX/CSV)"}
-              <input
-                data-testid="import-fingerprint-input"
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={onFingerprintImport}
-                disabled={fpImporting}
-              />
-            </label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid="reset-attendance-all-btn"
+                onClick={onResetAllAttendance}
+                className="rounded-none border border-[#E81123] bg-white text-[#E81123] px-3 py-1.5 text-xs font-semibold uppercase tracking-wider hover:bg-[#E81123] hover:text-white inline-flex items-center gap-2"
+                title="Hapus SEMUA data absensi (semua bulan, semua karyawan). Aksi tidak bisa dibatalkan."
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Reset Total Absensi
+              </button>
+              <label
+                data-testid="import-fingerprint-label"
+                className="rounded-none border border-zinc-300 bg-white text-zinc-900 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider hover:bg-zinc-50 inline-flex items-center gap-2 cursor-pointer"
+              >
+                <Fingerprint className="w-3.5 h-3.5" />
+                {fpImporting ? "Mengimpor…" : "Import Fingerprint (XLSX/CSV)"}
+                <input
+                  data-testid="import-fingerprint-input"
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={onFingerprintImport}
+                  disabled={fpImporting}
+                />
+              </label>
+            </div>
           </div>
 
           {fpResult && (
