@@ -837,7 +837,7 @@ function PiutangModal({ rows, onClose, onPaid }) {
     setSaving(true);
     try {
       // Fetch sale by sale_no untuk dapat id
-      const list = await api.get("/sales", { params: { search: row.sale_no } });
+      const list = await api.get("/sales", { params: { q: row.sale_no, limit: 5 } });
       const items = Array.isArray(list.data) ? list.data : (list.data?.items || []);
       const sale = items.find((s) => s.sale_no === row.sale_no);
       if (!sale) throw new Error("Transaksi tidak ditemukan");

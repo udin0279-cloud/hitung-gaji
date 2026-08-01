@@ -26,6 +26,13 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 9. Printable A4 payslip
 
 
+## Update 2026-08-01 — Fix Attendance Import + Bug P1 (Pelunasan Search & Edit Sale Preserve Payments)
+- **Import Absensi Fingerprint**: Logika `has_pair` (scan_count >= 2 AND in_time != out_time) sudah aktif. VERYAN (PIN 22) tepat = **8 hari** ✓ validated via curl endpoint `/api/attendance/import?period=2026-07` menggunakan file `/tmp/attend.xls`.
+- **Bug P1 Fix #1 (SalesReport)**: `SalesReport.jsx:840` — parameter search endpoint `/sales` diubah dari `search` menjadi `q` (sesuai backend). Pelunasan piutang lama sekarang bisa cari & lunas.
+- **Bug P1 Fix #2 (Edit Sale)**: `PUT /sales/{id}` sekarang **preserve pelunasan payments** (non-initial). Sebelumnya edit sale menghapus riwayat pelunasan dan cash tx-nya. Fix: capture `pelunasan_payments` sebelum rollback → setelah rebuild, `$push` payments kembali + re-insert cash tx via `_insert_cash_transaction`, recompute `cash_paid`/`sisa_tagihan`/`status`. Validated end-to-end via curl: total 500k→600k → sisa jadi 100k dp, 2 payments preserved, 2 cash tx tetap tersimpan di Buku Kas.
+
+
+
 ## Update 2026-07-30 — Omzet = Uang Diterima (Sinkron Buku Kas)
 - `GET /api/sales/report/analytics` now computes **`period_total` (Omzet)** ONLY from received payments (initial DP + pelunasan) where **`payment.date` is within the filter period**.
 - Query is broadened: sales are included if `sale.date` OR `payments.date` falls in period (so pelunasan of an older sale still contributes to that month's Omzet).

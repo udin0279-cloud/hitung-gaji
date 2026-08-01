@@ -1664,6 +1664,7 @@ def _parse_wide_finger_format(df_raw):
     Return None jika bukan format wide.
     """
     import pandas as pd
+    from datetime import time as dtime_cls
     if df_raw is None or len(df_raw) == 0:
         return None
 
@@ -1763,14 +1764,47 @@ def _parse_wide_finger_format(df_raw):
             sv_str = str(sv).strip()
             if not sv_str or sv_str.lower() in ("nan", "nat", "none"):
                 continue
-            # Parse as time HH:MM[:SS]
+            # Parse as time HH:MM[:SS] atau numeric Excel time-serial (0..1)
             t_ts = None
-            for fmt in ("%H:%M:%S", "%H:%M"):
+            # Case 1: numeric excel serial time (fraction of day, e.g. 0.6944 = 16:40)
+            if isinstance(sv, (int, float)) and not (isinstance(sv, float) and pd.isna(sv)):
                 try:
-                    t_ts = datetime.strptime(sv_str, fmt).time()
-                    break
-                except ValueError:
-                    continue
+                    f = float(sv)
+                    if 0 <= f < 1:  # only fractional (time-only)
+                        secs = int(round(f * 86400))
+                        h = min(23, secs // 3600)
+                        mm = (secs % 3600) // 60
+                        s = secs % 60
+                        t_ts = dtime_cls(hour=h, minute=mm, second=s)
+                    elif 1 <= f < 100000:  # excel date+time serial, take fractional part
+                        frac = f - int(f)
+                        secs = int(round(frac * 86400))
+                        h = min(23, secs // 3600)
+                        mm = (secs % 3600) // 60
+                        s = secs % 60
+                        t_ts = dtime_cls(hour=h, minute=mm, second=s)
+                except (ValueError, TypeError):
+                    pass
+            # Case 2: string "HH:MM[:SS]"
+            if t_ts is None:
+                for fmt in ("%H:%M:%S", "%H:%M"):
+                    try:
+                        t_ts = datetime.strptime(sv_str, fmt).time()
+                        break
+                    except ValueError:
+                        continue
+            # Case 3: string with float ("0.694490...") that survived earlier conversion
+            if t_ts is None and sv_str:
+                try:
+                    f = float(sv_str)
+                    if 0 <= f < 1:
+                        secs = int(round(f * 86400))
+                        h = min(23, secs // 3600)
+                        mm = (secs % 3600) // 60
+                        s = secs % 60
+                        t_ts = dtime_cls(hour=h, minute=mm, second=s)
+                except (ValueError, TypeError):
+                    pass
             if t_ts is None:
                 # Fallback: try pandas parser
                 try:
@@ -1903,7 +1937,9 @@ async def attendance_import(
     df = df[df["_nik"] != ""]
 
     # Aggregate per (nik, date) -> earliest=IN, latest=OUT (untuk SEMUA tanggal di file)
-    agg = df.groupby(["_nik", "_date"]).agg(in_time=("_dt", "min"), out_time=("_dt", "max")).reset_index()
+    agg = df.groupby(["_nik", "_date"]).agg(in_time=("_dt", "min"), out_time=("_dt", "max"), scan_count=("_dt", "count")).reset_index()
+    # has_pair = ada minimal 2 scan berbeda di hari sama (scan masuk & scan pulang)
+    agg["has_pair"] = (agg["scan_count"] >= 2) & (agg["in_time"] != agg["out_time"])
 
     # Validasi format periode (dipakai untuk summary card & backward compat)
     try:
@@ -1966,9 +2002,11 @@ async def attendance_import(
             "weekday": weekday_name,
             "in_time": in_t.strftime("%H:%M:%S") if pd.notna(in_t) else None,
             "out_time": out_t.strftime("%H:%M:%S") if pd.notna(out_t) else None,
-            "overtime_hours": overtime_h_day,
-            "late_minutes": late_info["late_minutes"],
-            "late_penalty_minutes": late_info["penalty_minutes"],  # 0 jika ≤ 4h, atau total menit jika > 4h
+            "scan_count": int(r.get("scan_count") or 0),
+            "has_pair": bool(r.get("has_pair") or False),
+            "overtime_hours": overtime_h_day if bool(r.get("has_pair") or False) else 0,
+            "late_minutes": late_info["late_minutes"] if bool(r.get("has_pair") or False) else 0,
+            "late_penalty_minutes": late_info["penalty_minutes"] if bool(r.get("has_pair") or False) else 0,
             "employee_id": emp_id,
             "employee_nik": emp_nik,
             "employee_name": emp_name,
@@ -1991,10 +2029,12 @@ async def attendance_import(
     total_scans = int(len(df))
 
     for nik, group in agg_period.groupby("_nik"):
-        days_worked = int(len(group))
+        # HARI HADIR = hanya hari yg punya scan masuk DAN scan pulang (has_pair=True)
+        valid_days = group[group["has_pair"] == True]  # noqa: E712
+        days_worked = int(len(valid_days))
         overtime_hours_total = 0.0
         late_penalty_min_total = 0.0
-        for _, r in group.iterrows():
+        for _, r in valid_days.iterrows():
             overtime_hours_total += _calculate_overtime_hours(r["_date"], r["in_time"], r["out_time"])
             _lm = _calculate_late_minutes(r["_date"], r["in_time"])
             late_penalty_min_total += _lm["penalty_minutes"]
@@ -6260,11 +6300,15 @@ async def sales_update(sale_id: str, payload: SaleIn, user: dict = Depends(requi
     existing = await db.sales.find_one({"id": sale_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    # Preserve pelunasan (non-initial) payments SEBELUM rollback,
+    # supaya edit item invoice tidak menghapus riwayat pelunasan kas.
+    existing_payments = existing.get("payments") or []
+    pelunasan_payments = [p for p in existing_payments if not p.get("is_initial")]
     # 1. Rollback dulu (stok + cash tx)
     await _rollback_sale_effects(existing)
     # 2. Recompute + apply — preserve sale_no, id, created_at, date
     try:
-        return await _build_and_persist_sale(
+        result = await _build_and_persist_sale(
             payload, user,
             sale_no=existing.get("sale_no"),
             sale_id=existing.get("id"),
@@ -6304,9 +6348,76 @@ async def sales_update(sale_id: str, payload: SaleIn, user: dict = Depends(requi
                 auto=True,
                 created_by=user.get("email"),
             )
+            # Restore pelunasan cash tx & payments juga bila ada
+            for p in pelunasan_payments:
+                try:
+                    acc_code, acc_label = _resolve_payment_account(p.get("payment_method") or "cash", p.get("payment_bank"))
+                    await _insert_cash_transaction(
+                        account_code=acc_code,
+                        description=f"Pelunasan {existing.get('sale_no')} — {existing.get('customer_name')} · {acc_label}",
+                        amount=float(p.get("amount", 0)),
+                        reference=existing.get("sale_no"),
+                        date_iso=p.get("date"),
+                        auto=True,
+                        created_by=p.get("created_by") or user.get("email"),
+                    )
+                except Exception:
+                    pass
         except Exception as ex:
             logger.error(f"Rollback restore failed after update error: {ex}")
         raise
+
+    # 3. Setelah update berhasil, RESTORE pelunasan payments & re-insert cash tx pelunasan
+    if pelunasan_payments:
+        total = float(result.get("total") or 0)
+        initial_amt = float((result.get("payments") or [{}])[0].get("amount", 0))
+        pelunasan_total = round(sum(float(p.get("amount", 0)) for p in pelunasan_payments), 2)
+        # Cap agar total pembayaran tidak melebihi total invoice baru
+        max_pelunasan_allowed = round(max(0.0, total - initial_amt), 2)
+        if pelunasan_total > max_pelunasan_allowed + 0.01:
+            logger.warning(
+                f"Pelunasan history ({pelunasan_total}) melebihi sisa dari total baru ({max_pelunasan_allowed}) "
+                f"utk sale {existing.get('sale_no')}. Menyimpan apa adanya tanpa cap; user perlu review."
+            )
+        new_cash_paid = round(initial_amt + pelunasan_total, 2)
+        new_sisa = round(max(0.0, total - new_cash_paid), 2)
+        new_status = "paid" if new_sisa <= 0.01 else "dp"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.sales.update_one(
+            {"id": sale_id},
+            {
+                "$set": {
+                    "cash_paid": new_cash_paid,
+                    "sisa_tagihan": new_sisa,
+                    "status": new_status,
+                },
+                "$push": {"payments": {"$each": pelunasan_payments}},
+            },
+        )
+        # Re-insert cash tx pelunasan (yang tadi dihapus rollback)
+        for p in pelunasan_payments:
+            try:
+                acc_code, acc_label = _resolve_payment_account(p.get("payment_method") or "cash", p.get("payment_bank"))
+                desc = f"Pelunasan {existing.get('sale_no')} — {existing.get('customer_name')} · {acc_label}"
+                if p.get("notes"):
+                    desc += f" ({p['notes']})"
+                await _insert_cash_transaction(
+                    account_code=acc_code,
+                    description=desc,
+                    amount=float(p.get("amount", 0)),
+                    reference=existing.get("sale_no"),
+                    date_iso=p.get("date") or now_iso[:10],
+                    auto=True,
+                    created_by=p.get("created_by") or user.get("email"),
+                )
+            except Exception as ex:
+                logger.warning(f"Failed to re-insert pelunasan cash tx: {ex}")
+        # Update result payload utk return
+        result["payments"] = (result.get("payments") or []) + list(pelunasan_payments)
+        result["cash_paid"] = new_cash_paid
+        result["sisa_tagihan"] = new_sisa
+        result["status"] = new_status
+    return result
 
 
 @api_router.delete("/sales/{sale_id}")
