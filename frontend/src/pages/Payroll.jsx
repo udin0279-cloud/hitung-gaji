@@ -28,6 +28,9 @@ export default function Payroll() {
   const [employees, setEmployees] = useState([]);
   const [attendance, setAttendance] = useState({});
   const [preview, setPreview] = useState(null);
+  // Per-employee overrides for the new Rincian table (Transport, Inc, THR, Pinjaman).
+  // Diinisialisasi dari slip data saat preview selesai; user bisa override langsung.
+  const [slipOverrides, setSlipOverrides] = useState({});
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -170,6 +173,19 @@ export default function Payroll() {
     try {
       const { data } = await api.post("/payroll/preview", { period, attendance });
       setPreview(data);
+      // Init overrides tiap karyawan dari slip data (bisa di-edit user di tabel)
+      const initOverrides = {};
+      (data.slips || []).forEach((s) => {
+        initOverrides[s.employee_id] = {
+          transport: Number(s.earnings?.tunjangan_transport || 0),
+          inc_individu: Number(s.earnings?.insentif_individu || 0),
+          inc_kolektif: Number(s.earnings?.insentif_kolektif || 0),
+          inc_lain: Number(s.earnings?.insentif_lain || 0),
+          thr: 0,
+          pinjaman: Number(s.deductions?.loan || 0),
+        };
+      });
+      setSlipOverrides(initOverrides);
       toast.success("Pratinjau dihitung");
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal pratinjau");
@@ -547,39 +563,117 @@ export default function Payroll() {
             <PreviewCard label="Total Net (estimasi)" value={formatIDR(totals.net)} highlight />
           </div>
 
-          <div className="mt-4 border border-zinc-200 bg-white overflow-x-auto">
+          <div className="mt-4 border border-zinc-200 bg-white">
             <div className="px-4 py-3 border-b border-zinc-200 flex items-center justify-between">
-              <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Rincian Pratinjau — Periode {preview.period}</div>
+              <div>
+                <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Rincian Pratinjau — Periode {preview.period}</div>
+                <div className="text-[10px] text-zinc-400 mt-0.5 font-mono">Scroll ke samping untuk lihat semua kolom · Insentif/THR/Pinjaman dapat di-edit inline</div>
+              </div>
               <div className="text-xs text-zinc-500 font-mono">Belum tersimpan</div>
             </div>
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
-                  <th className="px-4 py-3">Karyawan</th>
-                  <th className="px-4 py-3 text-right">Bruto</th>
-                  <th className="px-4 py-3 text-right">BPJS Karyawan</th>
-                  <th className="px-4 py-3 text-right">PPh 21</th>
-                  <th className="px-4 py-3 text-right">Take Home</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.slips.map((s) => {
-                  const bpjs = s.deductions.bpjs_kesehatan_employee + s.deductions.jht_employee + s.deductions.jp_employee;
-                  return (
-                    <tr key={s.employee_id} className="border-b border-zinc-100">
-                      <td className="px-4 py-2.5">
-                        <div className="font-medium text-zinc-900">{s.name}</div>
-                        <div className="text-xs text-zinc-500 font-mono">{s.nik} · {s.ptkp_status}</div>
-                      </td>
-                      <td className="px-4 py-2.5 font-mono text-right text-zinc-900">{formatIDR(s.earnings.gross)}</td>
-                      <td className="px-4 py-2.5 font-mono text-right text-zinc-700">{formatIDR(bpjs)}</td>
-                      <td className="px-4 py-2.5 font-mono text-right text-zinc-700">{formatIDR(s.deductions.pph21)}</td>
-                      <td className="px-4 py-2.5 font-mono text-right font-semibold text-zinc-900">{formatIDR(s.net_salary)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="overflow-x-auto">
+              <table className="text-left text-sm" style={{ minWidth: "1900px" }} data-testid="rincian-pratinjau-table">
+                <thead>
+                  <tr className="bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-widest">
+                    <th className="px-3 py-3 text-left sticky left-0 z-10 bg-zinc-900 whitespace-nowrap">NIK</th>
+                    <th className="px-3 py-3 text-left sticky left-[80px] z-10 bg-zinc-900 whitespace-nowrap min-w-[180px]">Nama</th>
+                    <th className="px-3 py-3 text-right whitespace-nowrap">Gaji Pokok</th>
+                    <th className="px-3 py-3 text-center whitespace-nowrap">Hari Hadir</th>
+                    <th className="px-3 py-3 text-center whitespace-nowrap">Lembur<br/>(Jam)</th>
+                    <th className="px-3 py-3 text-right bg-[#002FA7]/80 whitespace-nowrap">Lembur (Rp)</th>
+                    <th className="px-3 py-3 text-center whitespace-nowrap">Terlambat<br/>(Jam)</th>
+                    <th className="px-3 py-3 text-right bg-[#E81123]/80 whitespace-nowrap">Terlambat (Rp)</th>
+                    <th className="px-3 py-3 text-right whitespace-nowrap">Transport</th>
+                    <th className="px-3 py-3 text-right whitespace-nowrap">Inc. Individu</th>
+                    <th className="px-3 py-3 text-right whitespace-nowrap">Inc. Kolektif</th>
+                    <th className="px-3 py-3 text-right whitespace-nowrap">Inc. Lain</th>
+                    <th className="px-3 py-3 text-right whitespace-nowrap">THR</th>
+                    <th className="px-3 py-3 text-right whitespace-nowrap text-[#F97316]">Pinjaman</th>
+                    <th className="px-3 py-3 text-right bg-[#008A00]/90 whitespace-nowrap min-w-[160px]">Total Gaji</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.slips.map((s) => {
+                    const ov = slipOverrides[s.employee_id] || { transport: 0, inc_individu: 0, inc_kolektif: 0, inc_lain: 0, thr: 0, pinjaman: 0 };
+                    const gpokok = Number(s.earnings?.basic_salary || 0);
+                    const overtimeRp = Number(s.earnings?.overtime || 0);
+                    const lateRp = Number(s.deductions?.potongan_terlambat || 0);
+                    const overtimeJam = Number(s.attendance?.overtime_hours || 0);
+                    const lateJam = Number(s.attendance?.late_penalty_minutes || 0) / 60;
+                    const daysWorked = Number(s.attendance?.days_worked || 0);
+                    // Rumus user: Total Gaji = (Gaji Pokok + Lembur Rp + Transport + Semua Inc + THR) − (Terlambat Rp + Pinjaman)
+                    const totalGaji =
+                      gpokok + overtimeRp + Number(ov.transport || 0) +
+                      Number(ov.inc_individu || 0) + Number(ov.inc_kolektif || 0) + Number(ov.inc_lain || 0) +
+                      Number(ov.thr || 0) - lateRp - Number(ov.pinjaman || 0);
+                    const inpCls = "w-24 border border-zinc-200 px-2 py-1 text-xs text-right font-mono focus:border-[#002FA7] focus:outline-none bg-zinc-50";
+                    const setField = (field, v) => setSlipOverrides((prev) => ({ ...prev, [s.employee_id]: { ...prev[s.employee_id], [field]: Number(v) || 0 } }));
+                    return (
+                      <tr key={s.employee_id} className="border-b border-zinc-100 hover:bg-zinc-50" data-testid={`preview-row-${s.employee_id}`}>
+                        <td className="px-3 py-2.5 font-mono text-xs text-zinc-700 whitespace-nowrap sticky left-0 z-10 bg-white">{s.nik}</td>
+                        <td className="px-3 py-2.5 sticky left-[80px] z-10 bg-white">
+                          <div className="font-medium text-zinc-900 text-sm">{s.name}</div>
+                          <div className="text-[10px] text-zinc-400 font-mono">{s.ptkp_status}</div>
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-right text-zinc-900 text-xs whitespace-nowrap">{formatIDR(gpokok)}</td>
+                        <td className="px-3 py-2.5 font-mono text-center text-zinc-700 text-xs">{daysWorked}</td>
+                        <td className="px-3 py-2.5 font-mono text-center text-zinc-700 text-xs">{overtimeJam.toFixed(2)}</td>
+                        <td className="px-3 py-2.5 font-mono text-right text-[#002FA7] text-xs whitespace-nowrap font-semibold">{formatIDR(overtimeRp)}</td>
+                        <td className="px-3 py-2.5 font-mono text-center text-[#E81123] text-xs">{lateJam.toFixed(2)}</td>
+                        <td className="px-3 py-2.5 font-mono text-right text-[#E81123] text-xs whitespace-nowrap font-semibold">{formatIDR(lateRp)}</td>
+                        <td className="px-2 py-2 text-right"><input data-testid={`inp-transport-${s.employee_id}`} type="number" min="0" step="1000" value={ov.transport} onChange={(e) => setField("transport", e.target.value)} className={inpCls} /></td>
+                        <td className="px-2 py-2 text-right"><input data-testid={`inp-inc-individu-${s.employee_id}`} type="number" min="0" step="1000" value={ov.inc_individu} onChange={(e) => setField("inc_individu", e.target.value)} className={inpCls} /></td>
+                        <td className="px-2 py-2 text-right"><input data-testid={`inp-inc-kolektif-${s.employee_id}`} type="number" min="0" step="1000" value={ov.inc_kolektif} onChange={(e) => setField("inc_kolektif", e.target.value)} className={inpCls} /></td>
+                        <td className="px-2 py-2 text-right"><input data-testid={`inp-inc-lain-${s.employee_id}`} type="number" min="0" step="1000" value={ov.inc_lain} onChange={(e) => setField("inc_lain", e.target.value)} className={inpCls} /></td>
+                        <td className="px-2 py-2 text-right"><input data-testid={`inp-thr-${s.employee_id}`} type="number" min="0" step="1000" value={ov.thr} onChange={(e) => setField("thr", e.target.value)} className={inpCls} /></td>
+                        <td className="px-2 py-2 text-right"><input data-testid={`inp-pinjaman-${s.employee_id}`} type="number" min="0" step="1000" value={ov.pinjaman} onChange={(e) => setField("pinjaman", e.target.value)} className={inpCls + " text-[#F97316] border-[#F97316]/40"} /></td>
+                        <td className={`px-3 py-2.5 font-mono text-right text-sm font-bold whitespace-nowrap ${totalGaji >= 0 ? "text-[#008A00]" : "text-[#E81123]"} bg-[#008A00]/5`} data-testid={`total-gaji-${s.employee_id}`}>{formatIDR(totalGaji)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  {(() => {
+                    // Grand total per user's formula
+                    let tGpokok = 0, tLemburRp = 0, tTransport = 0, tIncI = 0, tIncK = 0, tIncL = 0, tTHR = 0, tLate = 0, tPinj = 0;
+                    preview.slips.forEach((s) => {
+                      const ov = slipOverrides[s.employee_id] || {};
+                      tGpokok += Number(s.earnings?.basic_salary || 0);
+                      tLemburRp += Number(s.earnings?.overtime || 0);
+                      tLate += Number(s.deductions?.potongan_terlambat || 0);
+                      tTransport += Number(ov.transport || 0);
+                      tIncI += Number(ov.inc_individu || 0);
+                      tIncK += Number(ov.inc_kolektif || 0);
+                      tIncL += Number(ov.inc_lain || 0);
+                      tTHR += Number(ov.thr || 0);
+                      tPinj += Number(ov.pinjaman || 0);
+                    });
+                    const grandTotal = tGpokok + tLemburRp + tTransport + tIncI + tIncK + tIncL + tTHR - tLate - tPinj;
+                    return (
+                      <tr className="bg-zinc-900 text-white border-t-2 border-zinc-900" data-testid="preview-footer-total">
+                        <td colSpan={2} className="px-3 py-3 text-[10px] font-bold uppercase tracking-widest sticky left-0 z-10 bg-zinc-900">TOTAL ({preview.slips.length} kry)</td>
+                        <td className="px-3 py-3 font-mono text-right text-xs whitespace-nowrap">{formatIDR(tGpokok)}</td>
+                        <td className="px-3 py-3"></td>
+                        <td className="px-3 py-3"></td>
+                        <td className="px-3 py-3 font-mono text-right text-xs whitespace-nowrap text-[#93C5FD]">{formatIDR(tLemburRp)}</td>
+                        <td className="px-3 py-3"></td>
+                        <td className="px-3 py-3 font-mono text-right text-xs whitespace-nowrap text-[#FCA5A5]">{formatIDR(tLate)}</td>
+                        <td className="px-3 py-3 font-mono text-right text-xs whitespace-nowrap">{formatIDR(tTransport)}</td>
+                        <td className="px-3 py-3 font-mono text-right text-xs whitespace-nowrap">{formatIDR(tIncI)}</td>
+                        <td className="px-3 py-3 font-mono text-right text-xs whitespace-nowrap">{formatIDR(tIncK)}</td>
+                        <td className="px-3 py-3 font-mono text-right text-xs whitespace-nowrap">{formatIDR(tIncL)}</td>
+                        <td className="px-3 py-3 font-mono text-right text-xs whitespace-nowrap">{formatIDR(tTHR)}</td>
+                        <td className="px-3 py-3 font-mono text-right text-xs whitespace-nowrap text-[#FDBA74]">{formatIDR(tPinj)}</td>
+                        <td className="px-3 py-3 font-mono text-right text-base font-bold text-[#4ADE80] whitespace-nowrap" data-testid="preview-grand-total">{formatIDR(grandTotal)}</td>
+                      </tr>
+                    );
+                  })()}
+                </tfoot>
+              </table>
+            </div>
+            <div className="px-4 py-2 border-t border-zinc-200 text-[10px] font-mono text-zinc-500 leading-relaxed">
+              <b>Rumus Total Gaji</b> = (Gaji Pokok + Lembur Rp + Transport + Inc.Individu + Inc.Kolektif + Inc.Lain + THR) − (Terlambat Rp + Pinjaman)
+            </div>
           </div>
         </div>
       )}
