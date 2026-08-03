@@ -835,11 +835,24 @@ def make_router(
         }
 
 
+    def _normalize_kasbon_status(raw: Any) -> str:
+        """Normalize kasbon status ke UPPERCASE canonical: 'PENDING' atau 'PAID'.
+
+        Rules:
+          - "open" / "pending" / "" / None → 'PENDING'
+          - "settled" / "paid" / "lunas" / "closed" / "done" → 'PAID'
+          - Lainnya → 'PENDING' (safe fallback, agar tidak lolos filter yang salah)
+        """
+        s = str(raw or "").strip().lower()
+        if s in ("settled", "paid", "lunas", "closed", "done"):
+            return "PAID"
+        return "PENDING"
+
     @router.get("/cashbook/kasbon")
     async def kasbon_list(
         user: dict = Depends(require_super_admin),
         month: Optional[str] = None,  # YYYY-MM (opsional)
-        status: Optional[str] = None,  # "open" | "settled"
+        status: Optional[str] = None,  # "open"/"PENDING" | "settled"/"PAID"
     ):
         q: Dict[str, Any] = {}
         if month:
@@ -853,11 +866,26 @@ def make_router(
                 q["date"] = {"$gte": first, "$lt": nxt}
             except Exception:
                 raise HTTPException(status_code=400, detail="Format bulan salah, gunakan YYYY-MM")
-        if status in ("open", "settled"):
-            q["status"] = status
-        items = await db.kasbon_sementara.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(length=5000)
-        total_open = sum(float(i.get("amount", 0)) for i in items if i.get("status") == "open")
-        total_settled = sum(float(i.get("amount", 0)) for i in items if i.get("status") == "settled")
+        # Filter status di DB level (menerima berbagai varian input)
+        status_lc = (status or "").strip().lower()
+        if status_lc in ("open", "pending"):
+            # Data lama bisa punya value bervariasi — match beberapa varian
+            q["status"] = {"$in": ["open", "pending", "OPEN", "PENDING", "Pending", "Open", "", None]}
+        elif status_lc in ("settled", "paid", "lunas"):
+            q["status"] = {"$in": ["settled", "paid", "lunas", "closed", "done", "SETTLED", "PAID", "LUNAS", "Settled", "Paid", "Lunas"]}
+        items_raw = await db.kasbon_sementara.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(length=5000)
+        # Normalize status di setiap item agar frontend terima label seragam ("PENDING"/"PAID")
+        items: List[Dict[str, Any]] = []
+        for it in items_raw:
+            it["status"] = _normalize_kasbon_status(it.get("status"))
+            items.append(it)
+        # Extra safety: jika client minta status=open/PENDING, filter lagi post-normalize
+        if status_lc in ("open", "pending"):
+            items = [it for it in items if it["status"] == "PENDING"]
+        elif status_lc in ("settled", "paid", "lunas"):
+            items = [it for it in items if it["status"] == "PAID"]
+        total_open = sum(float(i.get("amount", 0)) for i in items if i["status"] == "PENDING")
+        total_settled = sum(float(i.get("amount", 0)) for i in items if i["status"] == "PAID")
         total_all = sum(float(i.get("amount", 0)) for i in items)
         return {
             "items": items,
@@ -880,13 +908,15 @@ def make_router(
             "name": payload.name.strip(),
             "description": (payload.description or "").strip(),
             "amount": round(float(payload.amount), 2),
-            "status": "open",
+            "status": "open",  # simpan sbg "open" di DB (backward-compat); output di-normalize ke "PENDING"
             "settled_at": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "created_by": user.get("email"),
         }
         await db.kasbon_sementara.insert_one(doc)
         doc.pop("_id", None)
+        # Normalize output status
+        doc["status"] = _normalize_kasbon_status(doc["status"])
         return doc
 
 
@@ -910,6 +940,8 @@ def make_router(
             }},
         )
         doc = await db.kasbon_sementara.find_one({"id": kasbon_id}, {"_id": 0})
+        if doc:
+            doc["status"] = _normalize_kasbon_status(doc.get("status"))
         return doc
 
 
@@ -975,6 +1007,8 @@ def make_router(
         except Exception as ex:
             logger.warning(f"Cashbook auto-insert (kasbon settle) failed: {ex}")
         doc = await db.kasbon_sementara.find_one({"id": kasbon_id}, {"_id": 0})
+        if doc:
+            doc["status"] = _normalize_kasbon_status(doc.get("status"))
         return doc
 
 
@@ -993,6 +1027,8 @@ def make_router(
         except Exception as ex:
             logger.warning(f"Cashbook auto-delete (kasbon reopen) failed: {ex}")
         doc = await db.kasbon_sementara.find_one({"id": kasbon_id}, {"_id": 0})
+        if doc:
+            doc["status"] = _normalize_kasbon_status(doc.get("status"))
         return doc
 
 

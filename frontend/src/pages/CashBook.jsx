@@ -16,13 +16,19 @@ function monthLabel(m) {
   const names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
   return `${names[parseInt(mm, 10) - 1]} ${y}`;
 }
-// Filter permanen Buku Kas: hanya kasbon dgn status BELUM LUNAS/PENDING/OPEN.
-// Menangani berbagai varian label status dari data lama.
+// Filter permanen Buku Kas: STRICT — hanya kasbon dgn status === 'PENDING' (backend normalize).
+// Semua status lain (PAID/LUNAS/settled/paid/dll) DITOLAK — HARAM tampil di tab Buku Kas.
 function isOpenKasbon(k) {
-  const s = String(k?.status || "").toLowerCase().trim();
-  if (["settled", "paid", "lunas", "closed", "done"].includes(s)) return false;
-  if (k?.settled_at || k?.paid_at || k?.date_settled) return false;
-  if (Number(k?.amount || 0) <= 0) return false;
+  if (!k) return false;
+  // WHITELIST STRICT: hanya terima "PENDING" exact match.
+  // Backend endpoint /cashbook/kasbon selalu normalize status ke "PENDING" atau "PAID".
+  // Toleransi tambahan untuk backward-compat: "open"/"pending" (lowercase) dari data lama.
+  const s = String(k.status || "").trim();
+  if (s !== "PENDING" && s.toLowerCase() !== "open" && s.toLowerCase() !== "pending") return false;
+  // Extra guard: kalau timestamp pelunasan ada → BUKAN pending
+  if (k.settled_at || k.paid_at || k.date_settled) return false;
+  // Nominal harus > 0
+  if (Number(k.amount || 0) <= 0) return false;
   return true;
 }
 
