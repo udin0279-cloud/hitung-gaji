@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Users as UsersIcon, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays, UserCog, Menu, X as XIcon, Package, TrendingUp, ShoppingCart, ShoppingBag, Wallet, Tags, BarChart3, Store } from "lucide-react";
+import { LayoutDashboard, Users as UsersIcon, Calculator, Settings as SettingsIcon, LogOut, Square, Gift, CalendarDays, UserCog, Menu, X as XIcon, Package, TrendingUp, ShoppingCart, ShoppingBag, Wallet, Tags, BarChart3, Store, HardDrive } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 import { hasMenuAccess } from "../lib/menuAccess";
@@ -22,6 +22,7 @@ const ALL_NAV = [
   { to: "/leave", label: "Izin & Cuti", icon: CalendarDays, testId: "nav-leave", badgeKey: "pending", menuKey: "izin_cuti" },
   { to: "/users", label: "Kelola User", icon: UserCog, testId: "nav-users", menuKey: "kelola_user" },
   { to: "/settings", label: "Konfigurasi", icon: SettingsIcon, testId: "nav-settings", menuKey: "konfigurasi" },
+  { to: "/backup", label: "Pusat Backup", icon: HardDrive, testId: "nav-backup", superAdminOnly: true },
 ];
 
 const ROLE_BADGE = {

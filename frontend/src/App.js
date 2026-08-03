@@ -21,6 +21,7 @@ import SalesReport from "@/pages/SalesReport";
 import ShopeeRincianReport from "@/pages/ShopeeRincianReport";
 import CashBook from "@/pages/CashBook";
 import Categories from "@/pages/Categories";
+import BackupCenter from "@/pages/BackupCenter";
 import Layout from "@/components/Layout";
 import AccessDenied from "@/components/AccessDenied";
 import PortalLogin from "@/pages/PortalLogin";
@@ -85,6 +86,7 @@ function App() {
               <Route path="/laporan-penjualan" element={<ProtectedRoute menuKey="laporan_penjualan"><SalesReport /></ProtectedRoute>} />
               <Route path="/laporan-rincian-shopee" element={<ProtectedRoute menuKey="laporan_penjualan"><ShopeeRincianReport /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute menuKey="konfigurasi"><Settings /></ProtectedRoute>} />
+              <Route path="/backup" element={<ProtectedRoute><BackupCenter /></ProtectedRoute>} />
             </Route>
 
             {/* Employee Portal */}

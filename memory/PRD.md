@@ -27,6 +27,8 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 
 
 ## Update 2026-08-01 — Fix Attendance Import + Bug P1 (Pelunasan Search & Edit Sale Preserve Payments) + POC Refactor
+- **Pusat Backup Data (2026-08-03)**: Fitur baru untuk super_admin — halaman `/backup` dengan tombol **Download Backup (.zip)** yang export SEMUA koleksi MongoDB (attendance_daily, attendance_imports, payroll_runs, payslips, sales, users, products, cash_accounts, cash_transactions, dsb) ke ZIP berisi JSON per collection + `manifest.json` (metadata: timestamp, user, counts). Backend router baru `/app/backend/routers/backup.py` (~150 baris). Log tercatat di `backup_logs` collection dan ditampilkan sebagai tabel riwayat (timestamp, user, jumlah koleksi/record, ukuran file, nama file). Guard super_admin di frontend + backend endpoint. Nav item "Pusat Backup" (icon HardDrive) muncul di sidebar hanya untuk super_admin. Tested: 29 koleksi, 173 records, 21.7 KB output ZIP valid.
+
 - **Import Absensi Fingerprint** (3 update):
   1. Logika `has_pair` (scan_count >= 2 AND in_time != out_time) sudah aktif. VERYAN (PIN 22) tepat = **8 hari** ✓
   2. **Fix data ganda (2026-08-01 malam)**: `POST /attendance/import` sekarang **pre-clear** semua `attendance_daily` untuk semua bulan yang tersentuh file sebelum insert baru. Juga hapus `attendance_imports` untuk period yang di-import. Response field baru `pre_cleared_daily_records`.

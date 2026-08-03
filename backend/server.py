@@ -5366,6 +5366,11 @@ api_router.include_router(_make_sales_router(
 ))
 
 
+# ---------------- Backup Router (added 2026-08-01) ----------------
+from routers.backup import make_router as _make_backup_router
+api_router.include_router(_make_backup_router(db=db, require_super_admin=require_super_admin, logger=logger))
+
+
 
 
 
