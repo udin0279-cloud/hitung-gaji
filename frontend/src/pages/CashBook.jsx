@@ -3,7 +3,7 @@ import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
 import {
   Plus, Trash2, X, Search, Wallet, TrendingUp, TrendingDown, Download,
-  Pencil, ArrowUpCircle, ArrowDownCircle, Settings, ChevronRight, Lock,
+  Pencil, ArrowUpCircle, ArrowDownCircle, Settings, ChevronRight, ChevronLeft, Lock,
   BookOpen, Users, CheckCircle2, RotateCcw, RefreshCw, Target,
 } from "lucide-react";
 
@@ -23,6 +23,48 @@ function prevMonthLabel(m) {
   const prevM = mm === 1 ? 12 : mm - 1;
   const names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
   return `${names[prevM - 1]} ${prevY}`;
+}
+function shiftMonth(m, delta) {
+  // shiftMonth("2026-08", -1) → "2026-07"; shiftMonth("2026-12", 1) → "2027-01"
+  const [y, mm] = m.split("-").map((v) => parseInt(v, 10));
+  const total = y * 12 + (mm - 1) + delta;
+  const nY = Math.floor(total / 12);
+  const nM = (total % 12) + 1;
+  return `${nY.toString().padStart(4, "0")}-${nM.toString().padStart(2, "0")}`;
+}
+
+/** MonthNav — picker bulan + tombol prev/next.
+ * Props: value (YYYY-MM), onChange (str), testIdPrefix (opsional). */
+function MonthNav({ value, onChange, testIdPrefix = "cash-month" }) {
+  return (
+    <div className="inline-flex items-stretch border border-zinc-300 bg-white">
+      <button
+        type="button"
+        data-testid={`${testIdPrefix}-prev`}
+        onClick={() => onChange(shiftMonth(value, -1))}
+        title={`Bulan Sebelumnya (${prevMonthLabel(value)})`}
+        className="px-2 border-r border-zinc-300 text-zinc-600 hover:bg-[#002FA7] hover:text-white transition-colors flex items-center"
+      >
+        <ChevronLeft className="w-4 h-4" />
+      </button>
+      <input
+        type="month"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        data-testid={`${testIdPrefix}-filter`}
+        className="border-none bg-transparent px-3 py-2 text-sm font-mono focus:outline-none focus:bg-[#002FA7]/5"
+      />
+      <button
+        type="button"
+        data-testid={`${testIdPrefix}-next`}
+        onClick={() => onChange(shiftMonth(value, 1))}
+        title={`Bulan Berikutnya (${(() => { const nm = shiftMonth(value, 1); return prevMonthLabel(shiftMonth(nm, 1)); })()})`}
+        className="px-2 border-l border-zinc-300 text-zinc-600 hover:bg-[#002FA7] hover:text-white transition-colors flex items-center"
+      >
+        <ChevronRight className="w-4 h-4" />
+      </button>
+    </div>
+  );
 }
 
 export default function CashBook() {
@@ -313,11 +355,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
-          <input
-            type="month" value={month} onChange={(e) => setMonth(e.target.value)}
-            data-testid="cash-month-filter"
-            className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none"
-          />
+          <MonthNav value={month} onChange={setMonth} testIdPrefix="cash-month" />
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input
@@ -423,7 +461,7 @@ function SummaryTab({ summary, month, setMonth }) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-4">
-        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm font-mono" />
+        <MonthNav value={month} onChange={setMonth} testIdPrefix="summary-month" />
         <div className="text-xs text-zinc-500 font-mono ml-2">Periode: {summary.period_start} s/d {summary.period_end}</div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -800,11 +838,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
-          <input
-            type="month" value={month} onChange={(e) => setMonth(e.target.value)}
-            data-testid="journal-month-filter"
-            className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none"
-          />
+          <MonthNav value={month} onChange={setMonth} testIdPrefix="journal-month" />
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input
@@ -1077,8 +1111,7 @@ function KasbonTab({ month, setMonth, onCashChanged }) {
 
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2 flex-wrap">
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} data-testid="kasbon-month-filter"
-            className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:outline-none" />
+          <MonthNav value={month} onChange={setMonth} testIdPrefix="kasbon-month" />
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} data-testid="kasbon-status-filter"
             className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-[#002FA7] focus:outline-none">
             <option value="">Semua Status</option>
