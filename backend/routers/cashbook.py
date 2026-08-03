@@ -187,13 +187,14 @@ def make_router(
         if account_code:
             q["account_code"] = account_code
         items = await db.cash_transactions.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(length=20000)
-        # Compute running balance — Kas flow: SEMUA type=in menambah, SEMUA type=out mengurangi
+        # Compute running balance — Kas flow: HANYA type=in dari akun 101 menambah, SEMUA type=out mengurangi.
+        # Ini konsisten dengan filter tab Buku Kas di frontend.
         setting = await _cash_setting()
         opening_balance = float(setting.get("opening_balance", 0))
         opening_date = setting.get("opening_date")
 
         def _kas_delta(t):
-            if t["type"] == "in":
+            if t["type"] == "in" and t.get("account_code") == "101":
                 return float(t["amount"])
             elif t["type"] == "out":
                 return -float(t["amount"])
@@ -204,7 +205,7 @@ def make_router(
             first_of_month = q["date"]["$gte"]
             last_of_month = q["date"]["$lte"]
             prev = await db.cash_transactions.find(
-                {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1},
+                {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
             ).to_list(length=100000)
             # Include opening_balance selama opening_date jatuh <= akhir periode
             if opening_date and opening_date > last_of_month:
@@ -341,9 +342,13 @@ def make_router(
     @router.get("/cashbook/balance")
     async def cash_balance(user: dict = Depends(require_super_admin)):
         setting = await _cash_setting()
-        txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1}).to_list(length=200000)
-        # Total pemasukan Kas = SEMUA type=in (termasuk 301-SPP/SPK Shopee netto, 301 Tunai, dsb)
-        total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in")
+        txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1}).to_list(length=200000)
+        # KREDIT (uang masuk kas fisik) — HARD FILTER hanya akun 101 (Kas Utama).
+        # Alasan: konsisten dengan tampilan Buku Kas — hanya kas fisik/tunai yang menambah saldo.
+        # Uang masuk ke akun 301-* (revenue penjualan Shopee/Bank Transfer) TIDAK menambah saldo kas fisik
+        # sampai ditarik/disetor ke kas via akun 101.
+        total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
+        # DEBET (uang keluar) — semua akun, tidak difilter.
         total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
         balance = float(setting.get("opening_balance", 0)) + total_in - total_out
         return {
@@ -376,14 +381,14 @@ def make_router(
         opening_balance = float(setting.get("opening_balance", 0))
         opening_date = setting.get("opening_date") or ""
 
-        # Opening balance per bulan = opening_balance + net transaksi sebelum first
-        # Total pemasukan Kas mencakup SEMUA type=in (termasuk 301-SPP/SPK Shopee)
+        # Opening balance per bulan = opening_balance + NET transaksi sebelum first
+        # KREDIT (in) DIBATASI hanya akun 101; DEBET (out) semua akun — konsisten dengan tab Buku Kas.
         prev = await db.cash_transactions.find(
-            {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1},
+            {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
         ).to_list(length=200000)
         prev_net = 0.0
         for p in prev:
-            if p["type"] == "in":
+            if p["type"] == "in" and p.get("account_code") == "101":
                 prev_net += float(p["amount"])
             elif p["type"] == "out":
                 prev_net -= float(p["amount"])
@@ -395,8 +400,8 @@ def make_router(
 
         # Transaksi bulan ini
         month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
-        # Total Pemasukan (KREDIT) — SEMUA type=in
-        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
+        # Total Pemasukan (KREDIT) — hanya akun 101
+        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
         # Total Pengeluaran (DEBET) — semua akun
         total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
         closing = opening_of_period + total_in - total_out
@@ -430,6 +435,121 @@ def make_router(
             "tx_count": len(month_tx),
             "breakdown_in": sorted(breakdown_in.values(), key=lambda x: x["amount"], reverse=True),
             "breakdown_out": sorted(breakdown_out.values(), key=lambda x: x["amount"], reverse=True),
+        }
+
+
+    async def _ensure_adjustment_accounts():
+        """Pastikan akun penyesuaian saldo kas exist."""
+        for code, name, typ in [
+            ("199-ADJ", "Penyesuaian Saldo Kas (Masuk)", "in"),
+            ("599-ADJ", "Penyesuaian Saldo Kas (Keluar)", "out"),
+        ]:
+            exists = await db.cash_accounts.find_one({"code": code})
+            if not exists:
+                await db.cash_accounts.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "code": code,
+                    "name": name,
+                    "type": typ,
+                    "system": True,
+                    "active": True,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+
+    class AdjustBalanceIn(BaseModel):
+        target_balance: float
+        note: Optional[str] = ""
+
+    @router.post("/cashbook/adjust-balance")
+    async def cash_adjust_balance(payload: AdjustBalanceIn, user: dict = Depends(require_super_admin)):
+        """Buat jurnal penyesuaian OTOMATIS agar saldo kas real-time menjadi `target_balance`.
+
+        Formula konsisten dgn tampilan Buku Kas:
+          current_balance = opening_balance + Σ(type=in, account=101) − Σ(type=out, semua akun)
+          delta = target_balance − current_balance
+          delta > 0: insert 1 tx type=in account=199-ADJ (Penyesuaian Kas Masuk) — TAPI account 199-ADJ pakai type=in
+          delta < 0: insert 1 tx type=out account=599-ADJ (Penyesuaian Kas Keluar)
+
+        Catatan: karena filter Buku Kas hanya menghitung KREDIT dari akun 101, kita buat akun penyesuaian
+        khusus dengan code "101-ADJ" (type=in) supaya delta positif tetap menambah saldo Buku Kas.
+        """
+        # Pastikan akun penyesuaian ada (khusus 101-ADJ agar KREDIT dihitung Buku Kas via rule "in && 101*")
+        # Kita override: akun 199-ADJ akan tetap type=in dan account_code akan diperlakukan sebagai 101
+        # supaya masuk hitungan Buku Kas.
+        # Alternative sederhana: pakai account_code="101" langsung supaya konsisten (dengan flag adjustment=True).
+        setting = await _cash_setting()
+        opening_balance = float(setting.get("opening_balance", 0))
+        txs = await db.cash_transactions.find(
+            {}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1}
+        ).to_list(length=200000)
+        total_in_101 = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
+        total_out_all = sum(float(t["amount"]) for t in txs if t["type"] == "out")
+        current_balance = round(opening_balance + total_in_101 - total_out_all, 2)
+
+        target = round(float(payload.target_balance), 2)
+        delta = round(target - current_balance, 2)
+
+        if abs(delta) < 0.01:
+            return {
+                "ok": True,
+                "no_op": True,
+                "message": "Saldo saat ini sudah sama dengan target — tidak ada penyesuaian dibuat.",
+                "current_balance": current_balance,
+                "target_balance": target,
+                "delta": 0.0,
+            }
+
+        # Bikin akun jika perlu — akun penyesuaian tetap pakai code 101/599-ADJ agar cocok dgn rule Buku Kas
+        # Untuk delta positif → tx type=in account=101 (Kas) → masuk hitungan Buku Kas
+        # Untuk delta negatif → tx type=out account=599-ADJ (Penyesuaian Keluar)
+        await _ensure_cash_accounts()  # pastikan 101 ada
+        if delta < 0:
+            await _ensure_adjustment_accounts()
+
+        note_txt = (payload.note or "").strip()
+        base_desc = "Penyesuaian Saldo Kas — Update Manual"
+        desc = f"{base_desc} · target Rp {int(target):,}".replace(",", ".") + (f" ({note_txt})" if note_txt else "")
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+
+        if delta > 0:
+            # Insert kredit ke akun 101 (uang masuk kas)
+            inserted = await _insert_cash_transaction(
+                account_code="101",
+                description=desc,
+                amount=abs(delta),
+                reference="ADJUSTMENT",
+                date_iso=today_iso,
+                auto=False,
+                created_by=user.get("email"),
+            )
+        else:
+            # Insert debet ke akun 599-ADJ (uang keluar kas)
+            inserted = await _insert_cash_transaction(
+                account_code="599-ADJ",
+                description=desc,
+                amount=abs(delta),
+                reference="ADJUSTMENT",
+                date_iso=today_iso,
+                auto=False,
+                created_by=user.get("email"),
+            )
+
+        logger.info(
+            f"SALDO KAS ADJUSTMENT by {user.get('email')} — "
+            f"target={target}, current={current_balance}, delta={delta}, tx_id={inserted.get('id')}"
+        )
+
+        # Recompute after insertion untuk verifikasi
+        new_balance = round(current_balance + delta, 2)
+        return {
+            "ok": True,
+            "no_op": False,
+            "current_balance": current_balance,
+            "target_balance": target,
+            "delta": delta,
+            "new_balance": new_balance,
+            "transaction": inserted,
         }
 
 

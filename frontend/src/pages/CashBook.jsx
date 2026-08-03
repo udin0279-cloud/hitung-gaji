@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   Plus, Trash2, X, Search, Wallet, TrendingUp, TrendingDown, Download,
   Pencil, ArrowUpCircle, ArrowDownCircle, Settings, ChevronRight, Lock,
-  BookOpen, Users, CheckCircle2, RotateCcw, RefreshCw,
+  BookOpen, Users, CheckCircle2, RotateCcw, RefreshCw, Target,
 } from "lucide-react";
 
 const inputCls = "rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm w-full focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none";
@@ -33,6 +33,7 @@ export default function CashBook() {
   const [editingTx, setEditingTx] = useState(null);
   const [openSetting, setOpenSetting] = useState(false);
   const [openAccounts, setOpenAccounts] = useState(false);
+  const [openAdjust, setOpenAdjust] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -215,6 +216,8 @@ export default function CashBook() {
             txData={txData} filtered={filteredBook} loading={loading}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
+            onAdjustBalance={() => setOpenAdjust(true)}
+            currentBalance={(balance?.balance ?? 0) - kasbonOpen.total_open}
           />
         )}
         {tab === "journal" && (
@@ -258,6 +261,14 @@ export default function CashBook() {
           onChanged={async () => { await loadAll(); }}
         />
       )}
+
+      {openAdjust && (
+        <AdjustBalanceModal
+          currentBalance={(balance?.balance ?? 0) - kasbonOpen.total_open}
+          onClose={() => setOpenAdjust(false)}
+          onSaved={async () => { setOpenAdjust(false); await loadAll(); }}
+        />
+      )}
     </div>
   );
 }
@@ -289,7 +300,7 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 }
 
 /* ---------- Buku Kas Tab ---------- */
-function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove }) {
+function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance }) {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -309,8 +320,20 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             />
           </div>
         </div>
-        <div className="text-xs text-zinc-500 font-mono">
-          {filtered.length} transaksi Non-Kas · <span className="text-zinc-400">(akun 101 Kas ditampilkan di tab Buku Kas)</span>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-zinc-500 font-mono">
+            {filtered.length} transaksi Non-Kas · <span className="text-zinc-400">(akun 101 Kas ditampilkan di tab Buku Kas)</span>
+          </div>
+          <button
+            type="button"
+            data-testid="cash-adjust-balance-btn"
+            onClick={onAdjustBalance}
+            className="rounded-none border border-[#002FA7] bg-white text-[#002FA7] px-3 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#002FA7] hover:text-white inline-flex items-center gap-2"
+            title="Bikin jurnal penyesuaian otomatis agar saldo kas real-time menjadi angka target."
+          >
+            <Target className="w-3.5 h-3.5" />
+            Update Saldo Kas Terakhir
+          </button>
         </div>
       </div>
 
@@ -1187,3 +1210,105 @@ function KasbonFormModal({ initial, onClose, onSaved }) {
   );
 }
 
+
+function AdjustBalanceModal({ currentBalance, onClose, onSaved }) {
+  const [target, setTarget] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const numeric = Number(String(target).replace(/[^\d.-]/g, "")) || 0;
+  const delta = Math.round((numeric - Number(currentBalance || 0)) * 100) / 100;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!target || numeric <= 0) {
+      toast.error("Isi target saldo (Rupiah)");
+      return;
+    }
+    if (Math.abs(delta) < 0.01) {
+      toast.info("Saldo saat ini sudah sama dengan target");
+      return;
+    }
+    if (!window.confirm(
+      `Buat jurnal penyesuaian ${delta > 0 ? "MASUK" : "KELUAR"} sebesar Rp ${Math.abs(delta).toLocaleString("id-ID")}?\n\n` +
+      `Saldo saat ini: Rp ${Number(currentBalance).toLocaleString("id-ID")}\n` +
+      `Target baru:   Rp ${numeric.toLocaleString("id-ID")}\n\n` +
+      `Jurnal ini akan tercatat permanen di Buku Kas dengan referensi ADJUSTMENT.`
+    )) return;
+    setSaving(true);
+    try {
+      const { data } = await api.post("/cashbook/adjust-balance", { target_balance: numeric, note });
+      if (data.no_op) {
+        toast.info(data.message || "Tidak ada penyesuaian dibuat");
+      } else {
+        toast.success(
+          `Saldo diperbarui: ${formatIDR(data.current_balance)} → ${formatIDR(data.new_balance)} (delta ${delta > 0 ? "+" : ""}${formatIDR(delta)})`
+        );
+      }
+      await onSaved();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal update saldo");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" data-testid="adjust-balance-modal">
+      <div className="bg-white w-full max-w-md p-6 border border-zinc-300">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-[#002FA7] font-bold flex items-center gap-1">
+              <Target className="w-3 h-3" /> Jurnal Penyesuaian
+            </div>
+            <h2 className="font-heading text-xl font-bold text-zinc-900 mt-0.5">Update Saldo Kas Terakhir</h2>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-zinc-100" aria-label="Tutup"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="bg-zinc-50 border border-zinc-200 p-3 mb-4">
+          <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-500">Saldo Kas Real-time Sekarang</div>
+          <div className="font-heading text-2xl font-bold text-zinc-900 font-mono mt-1">{formatIDR(currentBalance)}</div>
+          <div className="text-[11px] text-zinc-500 mt-1">Formula: Saldo Awal + Σ(Kredit akun 101) − Σ(Debet semua akun) − Kasbon Belum Lunas</div>
+        </div>
+
+        <form onSubmit={submit} className="space-y-3">
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Target Saldo Baru (Rp)</label>
+            <input
+              type="number" step="1" min="0" required autoFocus
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder="Contoh: 10921218"
+              data-testid="adjust-balance-target"
+              className={inputCls + " font-mono text-lg font-bold text-right"}
+            />
+            {target && (
+              <div className={`mt-2 text-xs font-mono ${delta > 0 ? "text-[#008A00]" : delta < 0 ? "text-[#E81123]" : "text-zinc-500"}`}>
+                Delta: {delta > 0 ? "+" : ""}{formatIDR(delta)} — Akan buat 1 jurnal {delta > 0 ? "MASUK (Kredit akun 101)" : delta < 0 ? "KELUAR (Debet akun 599-ADJ)" : "no-op"}
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Catatan (opsional)</label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Contoh: Rekonsiliasi kas fisik tgl 3 Agu"
+              data-testid="adjust-balance-note"
+              className={inputCls}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-200">
+            <button type="button" onClick={onClose} className="rounded-none border border-zinc-300 bg-white px-4 py-2 text-sm hover:bg-zinc-50">Batal</button>
+            <button type="submit" disabled={saving} data-testid="adjust-balance-submit" className="rounded-none bg-[#002FA7] text-white px-5 py-2 text-sm font-bold uppercase tracking-wider hover:bg-[#002FA7]/90 disabled:opacity-50 inline-flex items-center gap-2">
+              <Target className="w-4 h-4" />
+              {saving ? "Memproses…" : "Buat Jurnal Penyesuaian"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
