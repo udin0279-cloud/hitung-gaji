@@ -29,10 +29,11 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 ## Update 2026-08-01 — Fix Attendance Import + Bug P1 (Pelunasan Search & Edit Sale Preserve Payments) + POC Refactor
 - **Pusat Backup Data (2026-08-03)**: Fitur baru untuk super_admin — halaman `/backup` dengan tombol **Download Backup (.zip)** yang export SEMUA koleksi MongoDB (attendance_daily, attendance_imports, payroll_runs, payslips, sales, users, products, cash_accounts, cash_transactions, dsb) ke ZIP berisi JSON per collection + `manifest.json` (metadata: timestamp, user, counts). Backend router baru `/app/backend/routers/backup.py` (~150 baris). Log tercatat di `backup_logs` collection dan ditampilkan sebagai tabel riwayat (timestamp, user, jumlah koleksi/record, ukuran file, nama file). Guard super_admin di frontend + backend endpoint. Nav item "Pusat Backup" (icon HardDrive) muncul di sidebar hanya untuk super_admin. Tested: 29 koleksi, 173 records, 21.7 KB output ZIP valid.
 
-- **Buku Kas — Perbaikan Rumus Saldo & Endpoint Adjustment (2026-08-03)**:
-  1. **Rumus konsisten backend↔frontend**: `/cashbook/balance`, `/cashbook/summary`, `/cashbook/transactions?month=X` — semua endpoint sekarang hitung KREDIT **hanya akun `101`** (bukan semua `type=in`). DEBET tetap semua akun. Kartu ringkasan atas (Saldo Kas Real-time, Pemasukan, Pengeluaran, Saldo Akhir bulan) sekarang identik dengan total di tab Buku Kas — tidak ada lagi mixed dgn akun 301-* Shopee/Bank.
-  2. **Endpoint `POST /cashbook/adjust-balance`**: Buat jurnal penyesuaian otomatis. Terima `{target_balance, note}` → hitung delta = target − current → insert 1 tx (type=in code=101 utk delta+, atau type=out code=599-ADJ utk delta−) dengan `reference="ADJUSTMENT"`. No-op bila delta<0.01. Log warning di backend untuk audit.
-  3. **UI Modal "Update Saldo Kas Terakhir"**: Tombol biru di tab Jurnal Akuntansi (icon Target, testid `cash-adjust-balance-btn`). Modal menampilkan saldo saat ini + input target + live preview delta + tombol "Buat Jurnal Penyesuaian" dengan double confirm. Tested E2E: adjust 884.500 → 10.921.218 (delta +10.036.718), lalu adjust turun ke 5jt (delta −5.921.218 via akun 599-ADJ), lalu kembali ke original 884.500.
+- **Buku Kas — Perbaikan Rumus Saldo & Endpoint Adjustment + Filter Riwayat (2026-08-03)**:
+  1. **Rumus konsisten backend↔frontend**: `/cashbook/balance`, `/cashbook/summary`, `/cashbook/transactions?month=X` — semua endpoint sekarang hitung KREDIT **hanya akun `101`** (bukan semua `type=in`). DEBET tetap semua akun.
+  2. **Endpoint `POST /cashbook/adjust-balance`**: Buat jurnal penyesuaian otomatis. Insert 1 tx dgn `reference="ADJUSTMENT"`.
+  3. **UI Modal "Update Saldo Kas Terakhir"** di tab Jurnal Akuntansi (icon Target).
+  4. **Filter Riwayat Adjustment** di tab Buku Kas: badge hijau/merah "Penyesuaian" di baris terkait, row highlighted, tombol toggle "Adjustment Only (N)" di header, counter dinamis di footer. Testid: `filter-adjustment-toggle` + `data-adjustment` di row.
 
 
 - **Import Absensi Fingerprint** (3 update):

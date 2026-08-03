@@ -758,16 +758,22 @@ function Field({ label, hint, children }) {
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
 function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, kasbonOpen }) {
+  const [showAdjustOnly, setShowAdjustOnly] = useState(false);
   // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
-  const kasTx = filtered;
+  const kasTxAll = filtered;
+  const adjustCount = kasTxAll.filter((t) => t.reference === "ADJUSTMENT").length;
+  const kasTx = showAdjustOnly ? kasTxAll.filter((t) => t.reference === "ADJUSTMENT") : kasTxAll;
   // Recompute running balance: Saldo Awal + Kredit − Debet (per baris)
-  const jurnal = (() => {
+  // NOTE: Saldo dihitung dari FULL kasTxAll (bukan filtered) supaya angka Saldo tetap akurat
+  //       ketika user filter "Adjustment Only".
+  const jurnalAll = (() => {
     let running = Number(txData.opening_balance || 0);
-    return kasTx.map((t) => {
+    return kasTxAll.map((t) => {
       running = t.type === "in" ? running + Number(t.amount || 0) : running - Number(t.amount || 0);
       return { ...t, balance: running };
     });
   })();
+  const jurnal = showAdjustOnly ? jurnalAll.filter((t) => t.reference === "ADJUSTMENT") : jurnalAll;
   const totalKredit = kasTx.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
   const totalDebet = kasTx.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
   // Kasbon Belum Lunas — dianggap pengurang saldo kas nyata (uang sudah dikeluarkan tapi belum lunas).
@@ -801,10 +807,26 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             />
           </div>
           <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Kredit: Akun 101 · Debet: Semua Akun</span>
+          {adjustCount > 0 && (
+            <button
+              type="button"
+              data-testid="filter-adjustment-toggle"
+              onClick={() => setShowAdjustOnly((v) => !v)}
+              className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 whitespace-nowrap ${
+                showAdjustOnly
+                  ? "bg-[#002FA7] text-white border-[#002FA7]"
+                  : "bg-white text-[#002FA7] border-[#002FA7]/40 hover:bg-[#002FA7]/5"
+              }`}
+              title={showAdjustOnly ? "Klik untuk tampilkan semua transaksi" : "Filter hanya jurnal penyesuaian"}
+            >
+              <Target className="w-3 h-3" />
+              {showAdjustOnly ? `Adjustment Only (${adjustCount})` : `Adjustment: ${adjustCount}`}
+            </button>
+          )}
         </div>
         <div className="text-xs text-zinc-500 font-mono">
-          {jurnal.length} jurnal · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
-          {kasbonList.length > 0 && (
+          {jurnal.length} jurnal{showAdjustOnly ? " (penyesuaian saja)" : ""} · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
+          {kasbonList.length > 0 && !showAdjustOnly && (
             <> · Kasbon <b className="text-[#F97316]">{formatIDR(kasbonTotal)}</b></>
           )}
         </div>
@@ -838,12 +860,26 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             {!loading && jurnal.length === 0 && (
               <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada arus kas bulan ini.</td></tr>
             )}
-            {jurnal.map((t) => (
-              <tr key={t.id} data-testid="journal-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${t.auto ? "bg-amber-50/40" : ""}`}>
+            {jurnal.map((t) => {
+              const isAdjustment = t.reference === "ADJUSTMENT";
+              const rowBg = isAdjustment
+                ? (t.type === "in" ? "bg-[#008A00]/10" : "bg-[#E81123]/10")
+                : (t.auto ? "bg-amber-50/40" : "");
+              return (
+              <tr key={t.id} data-testid="journal-row" data-adjustment={isAdjustment ? "true" : "false"} className={`border-b border-zinc-100 hover:bg-zinc-50 ${rowBg}`}>
                 <td className="px-3 py-2.5 font-mono text-xs font-bold text-zinc-700 whitespace-nowrap">{t.account_code}</td>
                 <td className="px-3 py-2.5 text-xs">
                   {t.account_name}
                   {t.auto && <span className="ml-2 text-[9px] uppercase tracking-widest font-bold text-amber-700 inline-flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Auto</span>}
+                  {isAdjustment && (
+                    <span className={`ml-2 text-[9px] uppercase tracking-widest font-bold inline-flex items-center gap-1 px-1.5 py-0.5 border ${
+                      t.type === "in"
+                        ? "bg-[#008A00] text-white border-[#008A00]"
+                        : "bg-[#E81123] text-white border-[#E81123]"
+                    }`}>
+                      <Target className="w-2.5 h-2.5" /> Penyesuaian
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{t.date}</td>
                 <td className="px-3 py-2.5 text-xs">
@@ -878,7 +914,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
             {kasbonRows.length > 0 && (
               <>
                 <tr className="border-t border-dashed border-[#F97316]/40 bg-[#F97316]/5">
