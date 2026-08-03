@@ -1044,4 +1044,80 @@ def make_router(
             logger.warning(f"Cashbook auto-delete (kasbon delete) failed: {ex}")
         return {"ok": True}
 
+
+    @router.post("/cashbook/kasbon/migrate-status")
+    async def kasbon_migrate_status(
+        user: dict = Depends(require_super_admin),
+        apply: bool = False,
+    ):
+        """One-time migration: normalize semua kasbon.status di DB ke canonical UPPERCASE.
+
+        Args:
+          apply: bool (default False) → dry-run mode. Set `?apply=true` untuk commit ke DB.
+
+        Rules:
+          - open/pending/empty/null → "PENDING"
+          - settled/paid/lunas/closed/done (any case) → "PAID"
+
+        Returns:
+          {
+            mode: "dry_run" | "applied",
+            total_scanned, would_change|changed,
+            by_status_before: {status_raw: count},
+            by_status_after:  {PENDING: n, PAID: n},
+            sample_changes: [{id, before, after, name}, ...] (max 10)
+          }
+        """
+        if user.get("role") != "super_admin":
+            raise HTTPException(status_code=403, detail="Hanya Super Admin yang bisa migrate")
+
+        all_kasbon = await db.kasbon_sementara.find({}, {"_id": 0}).to_list(length=100000)
+        by_before: Dict[str, int] = {}
+        changes: List[Dict[str, Any]] = []
+        after_pending = 0
+        after_paid = 0
+
+        for k in all_kasbon:
+            raw = k.get("status")
+            key = f"{raw!r}"
+            by_before[key] = by_before.get(key, 0) + 1
+            normalized = _normalize_kasbon_status(raw)
+            if raw != normalized:
+                changes.append({
+                    "id": k.get("id"),
+                    "name": k.get("name", ""),
+                    "before": raw,
+                    "after": normalized,
+                })
+            if normalized == "PENDING":
+                after_pending += 1
+            else:
+                after_paid += 1
+
+        applied_count = 0
+        if apply and changes:
+            # Bulk update: MongoDB update_many per status target
+            for target_status in ["PENDING", "PAID"]:
+                ids_for_target = [c["id"] for c in changes if c["after"] == target_status]
+                if ids_for_target:
+                    r = await db.kasbon_sementara.update_many(
+                        {"id": {"$in": ids_for_target}},
+                        {"$set": {"status": target_status, "status_migrated_at": datetime.now(timezone.utc).isoformat()}},
+                    )
+                    applied_count += r.modified_count
+            logger.warning(
+                f"KASBON STATUS MIGRATION applied by {user.get('email')} — "
+                f"modified {applied_count} records"
+            )
+
+        return {
+            "mode": "applied" if apply else "dry_run",
+            "total_scanned": len(all_kasbon),
+            "would_change" if not apply else "changed": len(changes) if not apply else applied_count,
+            "by_status_before": by_before,
+            "by_status_after": {"PENDING": after_pending, "PAID": after_paid},
+            "sample_changes": changes[:10],
+        }
+
+
     return router
