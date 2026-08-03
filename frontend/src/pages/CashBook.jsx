@@ -16,6 +16,14 @@ function monthLabel(m) {
   const names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
   return `${names[parseInt(mm, 10) - 1]} ${y}`;
 }
+function prevMonthLabel(m) {
+  // "2026-08" → "Jul 2026"; "2026-01" → "Des 2025"
+  const [y, mm] = m.split("-").map((v) => parseInt(v, 10));
+  const prevY = mm === 1 ? y - 1 : y;
+  const prevM = mm === 1 ? 12 : mm - 1;
+  const names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
+  return `${names[prevM - 1]} ${prevY}`;
+}
 
 export default function CashBook() {
   const [tab, setTab] = useState("book");
@@ -849,7 +857,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
           <tbody>
             <tr className="border-b border-zinc-200 bg-[#002FA7]/5">
               <td colSpan={4} className="px-3 py-2.5">
-                <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Saldo Awal {monthLabel(month)}</span>
+                <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Saldo Akhir {prevMonthLabel(month)}</span>
               </td>
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5"></td>
