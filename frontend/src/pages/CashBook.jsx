@@ -16,6 +16,16 @@ function monthLabel(m) {
   const names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
   return `${names[parseInt(mm, 10) - 1]} ${y}`;
 }
+// Filter permanen Buku Kas: hanya kasbon dgn status BELUM LUNAS/PENDING/OPEN.
+// Menangani berbagai varian label status dari data lama.
+function isOpenKasbon(k) {
+  const s = String(k?.status || "").toLowerCase().trim();
+  if (["settled", "paid", "lunas", "closed", "done"].includes(s)) return false;
+  if (k?.settled_at || k?.paid_at || k?.date_settled) return false;
+  if (Number(k?.amount || 0) <= 0) return false;
+  return true;
+}
+
 function prevMonthLabel(m) {
   // "2026-08" → "Jul 2026"; "2026-01" → "Des 2025"
   const [y, mm] = m.split("-").map((v) => parseInt(v, 10));
@@ -101,7 +111,12 @@ export default function CashBook() {
       setSummary(s.data);
       setBalance(b.data);
       setSetting(st.data);
-      setKasbonOpen({ items: kb.data.items || [], total_open: Number(kb.data.total_open || 0) });
+      // Cleanup: filter permanen — hanya kasbon dgn status open/pending yang dihitung.
+      // Menangani data lama yang mungkin punya label status non-standard.
+      const rawKasbon = kb.data.items || [];
+      const openItems = rawKasbon.filter(isOpenKasbon);
+      const openTotal = openItems.reduce((sum, k) => sum + Number(k.amount || 0), 0);
+      setKasbonOpen({ items: openItems, total_open: openTotal });
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
     } finally { setLoading(false); }
@@ -823,8 +838,10 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
   const totalKredit = kasTx.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
   const totalDebet = kasTx.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
   // Kasbon Belum Lunas — dianggap pengurang saldo kas nyata (uang sudah dikeluarkan tapi belum lunas).
-  const kasbonList = (kasbonOpen?.items || []).slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-  const kasbonTotal = Number(kasbonOpen?.total_open || 0);
+  // Data sudah difilter di level `loadAll` (isOpenKasbon), tapi kita filter lagi di sini
+  // sebagai defense-in-depth untuk memastikan tidak ada kasbon lunas yang lolos.
+  const kasbonList = (kasbonOpen?.items || []).filter(isOpenKasbon).slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  const kasbonTotal = kasbonList.reduce((s, k) => s + Number(k.amount || 0), 0);
   const runningAfterTx = jurnal.length > 0 ? jurnal[jurnal.length - 1].balance : Number(txData.opening_balance || 0);
   const kasbonRows = (() => {
     let running = runningAfterTx;

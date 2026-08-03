@@ -29,7 +29,17 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 ## Update 2026-08-01 — Fix Attendance Import + Bug P1 (Pelunasan Search & Edit Sale Preserve Payments) + POC Refactor
 - **Pusat Backup Data (2026-08-03)**: Fitur baru untuk super_admin — halaman `/backup` dengan tombol **Download Backup (.zip)** yang export SEMUA koleksi MongoDB (attendance_daily, attendance_imports, payroll_runs, payslips, sales, users, products, cash_accounts, cash_transactions, dsb) ke ZIP berisi JSON per collection + `manifest.json` (metadata: timestamp, user, counts). Backend router baru `/app/backend/routers/backup.py` (~150 baris). Log tercatat di `backup_logs` collection dan ditampilkan sebagai tabel riwayat (timestamp, user, jumlah koleksi/record, ukuran file, nama file). Guard super_admin di frontend + backend endpoint. Nav item "Pusat Backup" (icon HardDrive) muncul di sidebar hanya untuk super_admin. Tested: 29 koleksi, 173 records, 21.7 KB output ZIP valid.
 
-- **Buku Kas — Perbaikan Rumus Saldo & Endpoint Adjustment + Filter Riwayat (2026-08-03)**:
+- **Buku Kas — Cleanup Kasbon Filter Permanen (2026-08-03)**: Bagian ringkasan Kasbon di tab Buku Kas sekarang menerapkan filter **defense-in-depth** yang hanya menampilkan kasbon dengan status PENDING/OPEN. Helper `isOpenKasbon(k)` menangani berbagai varian label status dari data lama (settled/paid/lunas/closed/done disembunyikan; cek juga `settled_at`/`paid_at` timestamps + `amount <= 0`). Diterapkan di 2 layer: (1) `loadAll()` filter raw response + recompute `total_open`, (2) JournalTab re-filter sebelum render. Kartu ringkasan atas ("Saldo Kas Real-time − Kasbon", "Saldo Akhir Bulan − Kasbon") kini pakai `total_open` yang di-recompute client-side. Judul tetap "· KASBON SEMENTARA (BELUM LUNAS)". E2E tested: settle 1 dari 3 kasbon → langsung hilang dari list.
+
+- **Buku Kas — Perbaikan Rumus + Adjustment + Filter Riwayat + Navigasi Bulan (2026-08-03)**:
+  1. Rumus KREDIT hanya akun `101`, DEBET semua akun — konsisten di `/cashbook/balance`, `/summary`, `/transactions`.
+  2. Endpoint `POST /cashbook/adjust-balance` untuk jurnal penyesuaian otomatis (delta+ code 101 in, delta− code 599-ADJ out, ref="ADJUSTMENT").
+  3. Modal "Update Saldo Kas Terakhir" di tab Jurnal Akuntansi dgn double confirm.
+  4. Filter Riwayat Adjustment: badge hijau/merah "Penyesuaian" di row, toggle "Adjustment Only (N)" di header.
+  5. Label "Saldo Awal [bulan]" → **"Saldo Akhir [bulan sebelumnya]"** untuk clarity akuntansi.
+  6. Komponen `MonthNav` dgn tombol prev/next di 4 tab (Jurnal Akuntansi, Buku Kas, Ringkasan Kategori, Kasbon Sementara) — navigasi antar-bulan 1-klik.
+
+
   1. **Rumus konsisten backend↔frontend**: `/cashbook/balance`, `/cashbook/summary`, `/cashbook/transactions?month=X` — semua endpoint sekarang hitung KREDIT **hanya akun `101`** (bukan semua `type=in`). DEBET tetap semua akun.
   2. **Endpoint `POST /cashbook/adjust-balance`**: Buat jurnal penyesuaian otomatis. Insert 1 tx dgn `reference="ADJUSTMENT"`.
   3. **UI Modal "Update Saldo Kas Terakhir"** di tab Jurnal Akuntansi (icon Target).
