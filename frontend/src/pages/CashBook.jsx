@@ -249,26 +249,26 @@ export default function CashBook() {
         </div>
       </div>
 
-      {/* Saldo Real-time (dikurangi kasbon belum lunas) */}
+      {/* Saldo Real-time */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-px bg-zinc-200 border border-zinc-200">
         <StatCard
           label="Saldo Kas Real-time"
-          value={(balance?.balance ?? 0) - kasbonOpen.total_open}
+          value={balance?.balance ?? 0}
           icon={Wallet}
           big
-          positive={(((balance?.balance ?? 0) - kasbonOpen.total_open) >= 0)}
+          positive={((balance?.balance ?? 0) >= 0)}
           testId="stat-balance"
-          subValue={kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
+          subValue={null}
         />
         <StatCard label={`Pemasukan ${monthLabel(month)}`} value={summary?.total_in ?? 0} icon={TrendingUp} positive testId="stat-in-month" />
         <StatCard label={`Pengeluaran ${monthLabel(month)}`} value={summary?.total_out ?? 0} icon={TrendingDown} danger testId="stat-out-month" />
         <StatCard
           label={`Saldo Akhir ${monthLabel(month)}`}
-          value={(summary?.closing_balance ?? 0) - kasbonOpen.total_open}
+          value={summary?.closing_balance ?? 0}
           icon={Wallet}
           testId="stat-closing-month"
-          positive={(((summary?.closing_balance ?? 0) - kasbonOpen.total_open) >= 0)}
-          subValue={kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
+          positive={((summary?.closing_balance ?? 0) >= 0)}
+          subValue={null}
         />
       </div>
 
@@ -288,14 +288,13 @@ export default function CashBook() {
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
             onAdjustBalance={() => setOpenAdjust(true)}
-            currentBalance={(balance?.balance ?? 0) - kasbonOpen.total_open}
+            currentBalance={balance?.balance ?? 0}
           />
         )}
         {tab === "journal" && (
           <JournalTab
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
             txData={txData} filtered={filteredJournal} loading={loading}
-            kasbonOpen={kasbonOpen}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
           />
@@ -335,7 +334,7 @@ export default function CashBook() {
 
       {openAdjust && (
         <AdjustBalanceModal
-          currentBalance={(balance?.balance ?? 0) - kasbonOpen.total_open}
+          currentBalance={balance?.balance ?? 0}
           onClose={() => setOpenAdjust(false)}
           onSaved={async () => { setOpenAdjust(false); await loadAll(); }}
         />
@@ -824,15 +823,13 @@ function Field({ label, hint, children }) {
    - Saldo berjalan = saldo sebelumnya + Kredit − Debet
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
-function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, kasbonOpen }) {
+function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove }) {
   const [showAdjustOnly, setShowAdjustOnly] = useState(false);
   // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
   const kasTxAll = filtered;
   const adjustCount = kasTxAll.filter((t) => t.reference === "ADJUSTMENT").length;
   const kasTx = showAdjustOnly ? kasTxAll.filter((t) => t.reference === "ADJUSTMENT") : kasTxAll;
   // Recompute running balance: Saldo Awal + Kredit − Debet (per baris)
-  // NOTE: Saldo dihitung dari FULL kasTxAll (bukan filtered) supaya angka Saldo tetap akurat
-  //       ketika user filter "Adjustment Only".
   const jurnalAll = (() => {
     let running = Number(txData.opening_balance || 0);
     return kasTxAll.map((t) => {
@@ -843,20 +840,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
   const jurnal = showAdjustOnly ? jurnalAll.filter((t) => t.reference === "ADJUSTMENT") : jurnalAll;
   const totalKredit = kasTx.reduce((s, t) => s + (t.type === "in" ? Number(t.amount) : 0), 0);
   const totalDebet = kasTx.reduce((s, t) => s + (t.type === "out" ? Number(t.amount) : 0), 0);
-  // Kasbon Belum Lunas — dianggap pengurang saldo kas nyata (uang sudah dikeluarkan tapi belum lunas).
-  // Data sudah difilter di level `loadAll` (isOpenKasbon), tapi kita filter lagi di sini
-  // sebagai defense-in-depth untuk memastikan tidak ada kasbon lunas yang lolos.
-  const kasbonList = (kasbonOpen?.items || []).filter(isOpenKasbon).slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-  const kasbonTotal = kasbonList.reduce((s, k) => s + Number(k.amount || 0), 0);
-  const runningAfterTx = jurnal.length > 0 ? jurnal[jurnal.length - 1].balance : Number(txData.opening_balance || 0);
-  const kasbonRows = (() => {
-    let running = runningAfterTx;
-    return kasbonList.map((k) => {
-      running = running - Number(k.amount || 0);
-      return { ...k, running_balance: running };
-    });
-  })();
-  const closingBalance = Number(txData.opening_balance || 0) + totalKredit - totalDebet - kasbonTotal;
+  // Kasbon dihapus dari tab Buku Kas — audit tersedia di tab "Kasbon Sementara" terpisah.
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -891,9 +875,6 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         </div>
         <div className="text-xs text-zinc-500 font-mono">
           {jurnal.length} jurnal{showAdjustOnly ? " (penyesuaian saja)" : ""} · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
-          {kasbonList.length > 0 && !showAdjustOnly && (
-            <> · Kasbon <b className="text-[#F97316]">{formatIDR(kasbonTotal)}</b></>
-          )}
         </div>
       </div>
 
@@ -981,39 +962,6 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               </tr>
               );
             })}
-            {kasbonRows.length > 0 && (
-              <>
-                <tr className="border-t border-dashed border-[#F97316]/40 bg-[#F97316]/5">
-                  <td colSpan={8} className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[#F97316]">
-                    · Kasbon Sementara (belum lunas)
-                  </td>
-                </tr>
-                {kasbonRows.map((k) => (
-                  <tr key={`kasbon-${k.id}`} data-testid="journal-kasbon-row" className="border-b border-zinc-100 hover:bg-[#F97316]/10 bg-[#F97316]/5">
-                    <td className="px-3 py-2.5 font-mono text-xs font-bold text-[#F97316] whitespace-nowrap">KASBON</td>
-                    <td className="px-3 py-2.5 text-xs">
-                      Kasbon · {k.name}
-                      <span className="ml-2 text-[9px] uppercase tracking-widest font-bold text-[#F97316]">pending</span>
-                    </td>
-                    <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{k.date}</td>
-                    <td className="px-3 py-2.5 text-xs">
-                      <div className="text-zinc-700">{k.description || "Uang muka staff — belum dilunasi"}</div>
-                      <div className="text-[10px] font-mono text-zinc-400 mt-0.5">ref: KASBON-{String(k.id).slice(0, 8)}</div>
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-mono text-xs bg-[#F97316]/10">
-                      <span className="text-[#F97316] font-bold">{formatIDR(k.amount)}</span>
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-mono text-xs bg-[#008A00]/5">
-                      <span className="text-zinc-300">—</span>
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-[#F97316]">{formatIDR(k.running_balance)}</td>
-                    <td className="px-3 py-2.5 text-center">
-                      <span className="text-[9px] font-mono uppercase text-zinc-400">tab Kasbon</span>
-                    </td>
-                  </tr>
-                ))}
-              </>
-            )}
             {!loading && jurnal.length > 0 && (
               <>
                 <tr className="border-t-2 border-zinc-900 bg-zinc-50">
@@ -1025,22 +973,11 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                   <td className="px-3 py-3 text-right font-mono font-bold text-zinc-900">{formatIDR(Number(txData.opening_balance || 0) + totalKredit - totalDebet)}</td>
                   <td className="px-3 py-3"></td>
                 </tr>
-                {kasbonTotal > 0 && (
-                  <tr className="bg-[#F97316]/10 border-b border-[#F97316]/30">
-                    <td colSpan={4} className="px-3 py-2.5">
-                      <span className="text-xs font-bold uppercase tracking-widest text-[#F97316]">− Kasbon Belum Lunas</span>
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">{formatIDR(kasbonTotal)}</td>
-                    <td className="px-3 py-2.5"></td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">−{formatIDR(kasbonTotal)}</td>
-                    <td className="px-3 py-2.5"></td>
-                  </tr>
-                )}
                 <tr className="border-t-2 border-zinc-900 bg-zinc-900 text-white">
                   <td colSpan={6} className="px-3 py-3">
-                    <span className="text-xs font-bold uppercase tracking-widest">Saldo Akhir (setelah Kasbon)</span>
+                    <span className="text-xs font-bold uppercase tracking-widest">Saldo Akhir</span>
                   </td>
-                  <td className="px-3 py-3 text-right font-mono font-bold text-lg" data-testid="journal-closing-balance">{formatIDR(closingBalance)}</td>
+                  <td className="px-3 py-3 text-right font-mono font-bold text-lg" data-testid="journal-closing-balance">{formatIDR(Number(txData.opening_balance || 0) + totalKredit - totalDebet)}</td>
                   <td className="px-3 py-3"></td>
                 </tr>
               </>
@@ -1049,8 +986,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         </table>
       </div>
       <div className="mt-3 text-[11px] text-zinc-500">
-        <b>Konvensi:</b> Debet = pengeluaran · Kredit = pemasukan akun 101 · <b className="text-[#F97316]">Kasbon</b> = uang muka staff yg belum lunas (kas fisik berkurang meski belum jadi expense resmi). Rumus: <b>Saldo Akhir = Saldo Awal + Kredit − Debet − Kasbon Belum Lunas</b>.
-        Auto-sync dari modul <b>Pembelian</b>, <b>Penjualan/Kasir</b>, <b>Kas Operasional</b>, dan <b>Kasbon Sementara</b>.
+        <b>Konvensi:</b> Debet = pengeluaran · Kredit = pemasukan akun 101 · Rumus: <b>Saldo Akhir = Saldo Awal + Kredit − Debet</b>.
+        Auto-sync dari modul <b>Pembelian</b>, <b>Penjualan/Kasir</b>, dan <b>Kas Operasional</b>. Kasbon Sementara tersedia di tab terpisah.
       </div>
     </div>
   );
