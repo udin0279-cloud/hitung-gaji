@@ -26,6 +26,11 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 9. Printable A4 payslip
 
 
+
+## Update 2026-08-04 — REVERT Section Kasbon Sementara di Buku Kas
+- **Buku Kas — REVERT: Tampilkan Kembali Tabel Kasbon Sementara di Tab Buku Kas (2026-08-04)**: User meralat instruksi penghapusan sebelumnya. Section "· KASBON SEMENTARA (BELUM LUNAS)" dikembalikan ke JournalTab di `CashBook.jsx` dengan STRICT filter — hanya row dengan `status === 'PENDING'` yang tampil (data LUNAS otomatis tersembunyi via `isOpenKasbon()`). Yang direstore: (1) list rows orange di table, (2) baris footer "− Kasbon Belum Lunas", (3) formula `closingBalance = openingBalance + Kredit − Debet − kasbonTotal`, (4) subValue "− Kasbon: Rp X" di StatCard Saldo Real-time + Saldo Akhir Bulanan, (5) prop `currentBalance` di BookTab & AdjustBalanceModal dikurangi `kasbonOpen.total_open` kembali, (6) prop `kasbonOpen` dikembalikan ke `<JournalTab>`. Filter `isOpenKasbon` tetap STRICT (whitelist "PENDING" only + `settled_at` guard + amount > 0). Data saat ini 0 kasbon PENDING karena migrasi sebelumnya sudah menandai semua sebagai PAID — perilaku display kosong = CORRECT.
+
+
 ## Update 2026-08-01 — Fix Attendance Import + Bug P1 (Pelunasan Search & Edit Sale Preserve Payments) + POC Refactor
 - **Pusat Backup Data (2026-08-03)**: Fitur baru untuk super_admin — halaman `/backup` dengan tombol **Download Backup (.zip)** yang export SEMUA koleksi MongoDB (attendance_daily, attendance_imports, payroll_runs, payslips, sales, users, products, cash_accounts, cash_transactions, dsb) ke ZIP berisi JSON per collection + `manifest.json` (metadata: timestamp, user, counts). Backend router baru `/app/backend/routers/backup.py` (~150 baris). Log tercatat di `backup_logs` collection dan ditampilkan sebagai tabel riwayat (timestamp, user, jumlah koleksi/record, ukuran file, nama file). Guard super_admin di frontend + backend endpoint. Nav item "Pusat Backup" (icon HardDrive) muncul di sidebar hanya untuk super_admin. Tested: 29 koleksi, 173 records, 21.7 KB output ZIP valid.
 
