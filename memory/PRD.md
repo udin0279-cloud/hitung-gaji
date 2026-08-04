@@ -27,6 +27,14 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 
 
 
+## Update 2026-08-04 (part 2) — Refactor Portal + Employees → router terpisah
+- **Refactor Employees & Portal ke Router Terpisah (2026-08-04)**: Bagian dari lanjutan modularisasi. Membuat 2 file baru:
+  - `/app/backend/routers/employees.py` (168 baris): 7 endpoint admin karyawan — `GET/POST /employees`, `GET/PUT/DELETE /employees/{id}`, `GET /employees-template.csv`, `POST /employees-import`. Model `EmployeeIn` + `EMPLOYEE_CSV_HEADERS` diinjeksi via factory.
+  - `/app/backend/routers/portal.py` (443 baris): 15 endpoint self-service karyawan — `/portal/login`, `/portal/logout`, `/portal/me`, `/portal/payslips`, `/portal/payslip/{id}`, `/portal/payslip/{id}/pdf`, `/portal/thr`, `/portal/annual/{year}`, `/portal/bukti-potong/{year}/pdf`, `/portal/forgot`, `/portal/magic-login`, `/portal/leave` (POST/GET/DELETE/attachment). Helpers `get_current_employee`, `create_portal_token`, `_build_payslip_pdf`, `_build_annual_summary`, `_build_bukti_potong_pdf`, `_send_simple_email`, `_leave_view`, konstanta `LEAVE_TYPES`/`LEAVE_TYPE_LABELS`/`MAX_ATTACHMENT_SIZE`/`ALLOWED_ATTACHMENT_MIME` diinjeksi via factory. Model `PortalLoginIn` & `ForgotPortalIn` di-duplicate lokal.
+  - **server.py**: 5082 → 4630 baris (-452). Total routers extracted: 7 (attendance, cashbook, sales, backup, payroll, employees, portal). Tested via curl: `/employees` (5), `/employees-template.csv` (200), `/portal/login` (valid & invalid), `/portal/me`, `/portal/payslips` (1), `/portal/leave` (0). Frontend Karyawan page render 5 karyawan sempurna.
+
+
+
 ## Update 2026-08-04 — Refactor Payroll → routers/payroll.py
 - **Refactor Payroll ke Router Terpisah (2026-08-04)**: Bagian dari lanjutan modularisasi setelah Attendance/Cashbook/Sales/Backup. Membuat `/app/backend/routers/payroll.py` (480 baris) yang berisi 17 endpoint admin Payroll: `/payroll/preview`, `/payroll/run`, `/payroll/runs`, `/payroll/runs/{period}/slips`, `/payroll/payslip/{id}`, DELETE `/payroll/runs/{period}`, `/payroll/payslip/{id}/pdf`, `/payroll/thr/preview`, `/payroll/thr/run`, `/payroll/thr/runs`, `/payroll/thr/{period}/slips`, `/payroll/payslip/{id}/email`, `/payroll/runs/{period}/email-all`, `/payroll/runs/{period}/bank-export`, `/payroll/payslip/{id}/whatsapp`, `/payroll/runs/{period}/whatsapp-all`, `/payroll/bukti-potong/{emp_id}/{year}/pdf`. Helpers (`calculate_payslip`, `_calculate_thr`, `_build_payslip_pdf`, `_payslip_html`, `_send_email_via_resend`, `_whatsapp_slip_message`, `_send_whatsapp`, `_format_bank_export`, `_build_annual_summary`, `_build_bukti_potong_pdf`) tetap di server.py dan diinjeksi via factory `make_router(...)`. Models `PayrollRunIn` & `THRRunIn` di-duplicate lokal di router. Server.py berkurang dari 5449 → 5082 baris (-367). Tested via curl: preview 5 slips, /runs list, payslip PDF 2931 bytes. Frontend Payroll page render normal.
 
