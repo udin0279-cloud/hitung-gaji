@@ -1045,6 +1045,39 @@ def make_router(
         return {"ok": True}
 
 
+    @router.post("/cashbook/kasbon/settle-all-pending")
+    async def kasbon_settle_all_pending(user: dict = Depends(require_super_admin)):
+        """Bulk-mark SEMUA kasbon status PENDING → PAID sekaligus.
+
+        Nuclear option untuk membersihkan tabel "Kasbon Sementara (belum lunas)"
+        di tab Buku Kas ketika ada banyak entri lama yang seharusnya sudah lunas
+        tapi belum ditandai. TIDAK membuat auto cash-tx pelunasan (karena kasbon
+        lama biasanya bukan berasal dari kas real — mis. entri auto dari
+        Pembelian/Shopee).
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        # Match semua varian status yang dianggap PENDING (data lama tidak konsisten)
+        q = {"status": {"$in": ["open", "pending", "OPEN", "PENDING", "Pending", "Open", "", None]}}
+        result = await db.kasbon_sementara.update_many(
+            q,
+            {"$set": {
+                "status": "PAID",
+                "settled_at": now_iso,
+                "bulk_settled_at": now_iso,
+                "bulk_settled_by": user.get("email"),
+            }},
+        )
+        logger.warning(
+            f"KASBON BULK-SETTLE ALL PENDING by {user.get('email')} — "
+            f"marked {result.modified_count} kasbon as PAID"
+        )
+        return {
+            "ok": True,
+            "settled_count": result.modified_count,
+            "settled_at": now_iso,
+        }
+
+
     @router.post("/cashbook/kasbon/migrate-status")
     async def kasbon_migrate_status(
         user: dict = Depends(require_super_admin),

@@ -27,6 +27,11 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 
 
 
+## Update 2026-08-04 (part 3) — Fitur Bulk Settle All Pending Kasbon
+- **Bulk Settle All Pending Kasbon (2026-08-04)**: Menambahkan tombol "TANDAI SEMUA LUNAS" (hijau) di tab Kasbon Sementara — muncul otomatis hanya ketika ada kasbon PENDING (`data.total_open > 0`). Ketika diklik → double confirm (konfirmasi window + ketik "LUNAS SEMUA") → memanggil endpoint baru `POST /cashbook/kasbon/settle-all-pending`. Backend melakukan `update_many` untuk mengubah semua kasbon dengan status varian (open/pending/OPEN/PENDING/Pending/Open/""/null) menjadi "PAID" sekaligus, TANPA membuat auto cash-tx pelunasan (karena kasbon lama biasanya bukan dari kas real seperti auto entry Pembelian/Shopee). Tersimpan `bulk_settled_at` + `bulk_settled_by` untuk audit. Setelah bulk-settle, tabel "Kasbon Sementara (belum lunas)" di tab Buku Kas otomatis bersih. Verified: endpoint returns `{ok:true, settled_count:N}`, button muncul saat ada PENDING, hidden saat tidak. **Perlu redeploy ke production untuk pakai.**
+
+
+
 ## Update 2026-08-04 (part 2) — Refactor Portal + Employees → router terpisah
 - **Refactor Employees & Portal ke Router Terpisah (2026-08-04)**: Bagian dari lanjutan modularisasi. Membuat 2 file baru:
   - `/app/backend/routers/employees.py` (168 baris): 7 endpoint admin karyawan — `GET/POST /employees`, `GET/PUT/DELETE /employees/{id}`, `GET /employees-template.csv`, `POST /employees-import`. Model `EmployeeIn` + `EMPLOYEE_CSV_HEADERS` diinjeksi via factory.

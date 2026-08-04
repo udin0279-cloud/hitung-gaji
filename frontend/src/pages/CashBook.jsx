@@ -1115,6 +1115,29 @@ function KasbonTab({ month, setMonth, onCashChanged }) {
     } catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Gagal"); }
   };
 
+  const bulkSettleAll = async () => {
+    const totalOpen = Number(data.total_open || 0);
+    if (totalOpen <= 0) {
+      toast.info("Tidak ada kasbon PENDING untuk dilunaskan.");
+      return;
+    }
+    const msg1 = `Anda akan menandai SEMUA kasbon PENDING sebagai LUNAS sekaligus.\n\nTotal: ${formatIDR(totalOpen)}\n\nAksi ini TIDAK memotong kas otomatis (untuk data lama). Lanjutkan?`;
+    if (!window.confirm(msg1)) return;
+    const confirm2 = window.prompt('Ketik "LUNAS SEMUA" (huruf besar) untuk konfirmasi:');
+    if (confirm2 !== "LUNAS SEMUA") {
+      toast.error("Dibatalkan — konfirmasi tidak cocok.");
+      return;
+    }
+    try {
+      const res = await api.post("/cashbook/kasbon/settle-all-pending");
+      toast.success(`${res.data.settled_count} kasbon ditandai LUNAS`);
+      await load();
+      if (onCashChanged) await onCashChanged();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal");
+    }
+  };
+
   return (
     <div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-zinc-200 border border-zinc-200 mb-5">
@@ -1147,10 +1170,22 @@ function KasbonTab({ month, setMonth, onCashChanged }) {
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-72 focus:border-[#002FA7] focus:outline-none" />
           </div>
         </div>
-        <button data-testid="kasbon-add-button" onClick={() => { setEditing(null); setOpenForm(true); }}
-          className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-[#001E7A] inline-flex items-center gap-2">
-          <Plus className="w-4 h-4" /> Tambah Kasbon
-        </button>
+        <div className="flex items-center gap-2">
+          {Number(data.total_open || 0) > 0 && (
+            <button
+              data-testid="kasbon-bulk-settle-all"
+              onClick={bulkSettleAll}
+              className="rounded-none bg-white text-[#008A00] border border-[#008A00] px-4 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-[#008A00]/5 inline-flex items-center gap-2"
+              title="Tandai SEMUA kasbon PENDING → LUNAS (tanpa memotong kas). Untuk membersihkan data lama."
+            >
+              <CheckCircle2 className="w-4 h-4" /> Tandai Semua Lunas
+            </button>
+          )}
+          <button data-testid="kasbon-add-button" onClick={() => { setEditing(null); setOpenForm(true); }}
+            className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-[#001E7A] inline-flex items-center gap-2">
+            <Plus className="w-4 h-4" /> Tambah Kasbon
+          </button>
+        </div>
       </div>
 
       <div className="border border-zinc-200 bg-white overflow-x-auto">
