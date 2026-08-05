@@ -372,6 +372,21 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 
 /* ---------- Buku Kas Tab ---------- */
 function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance }) {
+  // Running Saldo Kas per transaksi — mengikuti aturan Buku Kas:
+  //   • KREDIT (uang masuk) = HANYA type=in & account_code=101 → menambah saldo
+  //   • DEBET  (uang keluar) = type=out dari akun mana pun     → mengurangi saldo
+  // Snapshot per tx.id agar bisa ditampilkan di kolom SALDO KAS pada tabel non-Kas.
+  const kasBalanceByTxId = useMemo(() => {
+    let running = Number(txData.opening_balance || 0);
+    const map = {};
+    for (const t of txData.transactions || []) {
+      if (t.type === "in" && t.account_code === "101") running += Number(t.amount || 0);
+      else if (t.type === "out") running -= Number(t.amount || 0);
+      map[t.id] = running;
+    }
+    return map;
+  }, [txData]);
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -411,7 +426,8 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             <col className="w-[90px]" />
             <col className="w-[180px]" />
             <col />
-            <col className="w-[140px]" />
+            <col className="w-[130px]" />
+            <col className="w-[130px]" />
             <col className="w-[140px]" />
             <col className="w-[90px]" />
           </colgroup>
@@ -423,13 +439,14 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
               <th className="px-4 py-3">Keterangan</th>
               <th className="px-4 py-3 text-right">Pemasukan</th>
               <th className="px-4 py-3 text-right">Pengeluaran</th>
+              <th className="px-4 py-3 text-right bg-[#002FA7]/5 text-[#002FA7]">Saldo Kas</th>
               <th className="px-4 py-3 text-right">Aksi</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
+            {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi non-Kas bulan ini.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi non-Kas bulan ini.</td></tr>
             )}
             {filtered.map((t) => (
               <tr key={t.id} data-testid="cash-tx-row" className={`border-b border-zinc-100 hover:bg-zinc-50/80 ${t.auto ? "bg-amber-50/30" : ""}`}>
@@ -449,6 +466,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
                 </td>
                 <td className="px-4 py-2.5 text-right font-mono text-xs">{t.type === "in" ? <span className="text-[#008A00] font-bold">{formatIDR(t.amount)}</span> : ""}</td>
                 <td className="px-4 py-2.5 text-right font-mono text-xs">{t.type === "out" ? <span className="text-[#E81123] font-bold">{formatIDR(t.amount)}</span> : ""}</td>
+                <td data-testid="book-saldo-kas-cell" className="px-4 py-2.5 text-right font-mono text-xs font-bold text-[#002FA7] bg-[#002FA7]/5 whitespace-nowrap">{formatIDR(kasBalanceByTxId[t.id] ?? 0)}</td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center justify-end gap-1">
                     <button data-testid="edit-tx-button" onClick={() => onEdit(t)} disabled={t.auto} className="p-1.5 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed" title={t.auto ? "Transaksi otomatis — edit di modul sumbernya" : "Edit"}><Pencil className="w-3.5 h-3.5" /></button>
@@ -464,6 +482,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
                 </td>
                 <td className="px-4 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(filtered.filter(t => t.type === "in").reduce((s, t) => s + Number(t.amount || 0), 0))}</td>
                 <td className="px-4 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(filtered.filter(t => t.type === "out").reduce((s, t) => s + Number(t.amount || 0), 0))}</td>
+                <td className="px-4 py-3 text-right font-mono font-bold text-[#002FA7] bg-[#002FA7]/5" data-testid="book-saldo-kas-total">{formatIDR(currentBalance ?? 0)}</td>
                 <td className="px-4 py-3"></td>
               </tr>
             )}

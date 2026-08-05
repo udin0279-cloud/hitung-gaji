@@ -27,6 +27,11 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 
 
 
+## Update 2026-08-05 — Kolom SALDO KAS di Jurnal Akuntansi
+- **Kolom SALDO KAS di Tab Jurnal Akuntansi (2026-08-05)**: Menambahkan kolom baru "SALDO KAS" (highlight biru) di antara PENGELUARAN dan AKSI pada BookTab `CashBook.jsx`. Kolom AKSI dipindah ke paling kanan. Running balance dihitung via `useMemo` yang men-walk `txData.transactions` menerapkan aturan Buku Kas yang sama: KREDIT hanya untuk `type=in && account_code=101`, DEBET untuk `type=out` (semua akun). Snapshot per tx.id memungkinkan setiap baris (termasuk row non-Kas) menampilkan saldo kas real-time pada saat itu. Row TOTAL menampilkan `currentBalance` (dari balance API) agar tersinkronisasi dengan tab Buku Kas. Verified via screenshot Jul 2026: 5 transaksi non-Kas dengan running balance 1jt → 970rb → 940rb → 930rb → 884.500, sync sempurna dengan Saldo Akhir Jul 2026.
+
+
+
 ## Update 2026-08-04 (part 3) — Fitur Bulk Settle All Pending Kasbon
 - **Bulk Settle All Pending Kasbon (2026-08-04)**: Menambahkan tombol "TANDAI SEMUA LUNAS" (hijau) di tab Kasbon Sementara — muncul otomatis hanya ketika ada kasbon PENDING (`data.total_open > 0`). Ketika diklik → double confirm (konfirmasi window + ketik "LUNAS SEMUA") → memanggil endpoint baru `POST /cashbook/kasbon/settle-all-pending`. Backend melakukan `update_many` untuk mengubah semua kasbon dengan status varian (open/pending/OPEN/PENDING/Pending/Open/""/null) menjadi "PAID" sekaligus, TANPA membuat auto cash-tx pelunasan (karena kasbon lama biasanya bukan dari kas real seperti auto entry Pembelian/Shopee). Tersimpan `bulk_settled_at` + `bulk_settled_by` untuk audit. Setelah bulk-settle, tabel "Kasbon Sementara (belum lunas)" di tab Buku Kas otomatis bersih. Verified: endpoint returns `{ok:true, settled_count:N}`, button muncul saat ada PENDING, hidden saat tidak. **Perlu redeploy ke production untuk pakai.**
 
