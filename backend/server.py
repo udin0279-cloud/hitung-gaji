@@ -488,13 +488,25 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float], ov
     loan_active = loan_installment > 0 and (loan_tenor_total == 0 or loan_tenor_paid < loan_tenor_total)
     loan_deduction = loan_installment if loan_active else 0
 
-    # Sisa Pinjaman (Rp) — nilai total pinjaman yang belum diangsur, dihitung dari:
-    #   loan_total_amount - (loan_installment × loan_tenor_paid)
-    # Ditampilkan di slip sebagai info transparansi untuk karyawan.
+    # Sisa Pinjaman (Rp) — nilai total pinjaman yang belum diangsur.
+    # Formula robust: coba loan_total_amount, fallback ke (installment × tenor_total)
+    # jika loan_total_amount belum diset di DB. Setelah slip ini, tenor_paid akan +1
+    # → sisa = total - (installment × tenor_paid_after).
     loan_total_amount = float(employee.get("loan_total_amount", 0) or 0)
     if loan_active:
-        # Setelah slip ini, tenor_paid akan +1 → sisa pinjaman = total - (installment × tenor_paid_after)
-        loan_remaining_amount = max(0.0, loan_total_amount - loan_installment * (loan_tenor_paid + 1))
+        tenor_paid_after = loan_tenor_paid + 1
+        # Fallback: jika loan_total_amount belum diset, hitung dari installment × tenor_total
+        if loan_total_amount <= 0 and loan_tenor_total > 0:
+            loan_total_amount = loan_installment * loan_tenor_total
+        # Final sisa (setelah angsuran slip ini)
+        if loan_total_amount > 0:
+            loan_remaining_amount = max(0.0, loan_total_amount - loan_installment * tenor_paid_after)
+        elif loan_tenor_total > 0:
+            # Tanpa loan_total_amount + tanpa tenor → tidak bisa hitung sisa
+            loan_remaining_amount = loan_installment * max(0, loan_tenor_total - tenor_paid_after)
+        else:
+            # Loan ongoing tanpa tenor tetap (open-ended) → sisa tidak diketahui
+            loan_remaining_amount = 0.0
     else:
         loan_remaining_amount = 0.0
 
