@@ -185,23 +185,17 @@ export default function Payslip() {
           </div>
           <div>
             <div className="text-[11px] uppercase tracking-widest font-bold text-[#E81123] pb-2 border-b border-zinc-300">Potongan</div>
-            <Row label="BPJS Kesehatan (1%)" value={d.bpjs_kesehatan_employee} />
-            <Row label="JHT (2%)" value={d.jht_employee} />
-            <Row label="JP (1%)" value={d.jp_employee} />
-            <Row label="PPh 21" value={d.pph21} />
             {d.loan > 0 && <Row label="Angsuran Pinjaman" value={d.loan} />}
-            {d.potongan_terlambat > 0 && (
-              <Row
-                label={
-                  slip.attendance?.late_penalty_source === "auto_from_attendance" && Number(slip.attendance?.late_penalty_minutes || 0) > 0
-                    ? `Potongan Terlambat (>4 Jam · ${Math.round(Number(slip.attendance.late_penalty_minutes))} menit)`
-                    : "Potongan Terlambat"
-                }
-                value={d.potongan_terlambat}
-              />
+            {d.other_deduction > 0 && <Row label="Potongan Lain-lain" value={d.other_deduction} />}
+            {slip.loan_info?.active && slip.loan_info?.remaining_amount > 0 && (
+              <div className="flex items-center justify-between py-1.5 text-xs text-zinc-500">
+                <span>
+                  Sisa Pinjaman
+                  {slip.loan_info.tenor_total > 0 && ` · tenor ${slip.loan_info.tenor_paid_after}/${slip.loan_info.tenor_total}`}
+                </span>
+                <span className="font-mono">{formatIDR(slip.loan_info.remaining_amount)}</span>
+              </div>
             )}
-            {d.potongan_pulang_cepat > 0 && <Row label="Potongan Pulang Cepat" value={d.potongan_pulang_cepat} />}
-            {d.other_deduction > 0 && <Row label="Potongan Lain" value={d.other_deduction} />}
             <Row label="Total Potongan" value={d.total} bold border />
           </div>
         </div>

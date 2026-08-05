@@ -488,8 +488,24 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float], ov
     loan_active = loan_installment > 0 and (loan_tenor_total == 0 or loan_tenor_paid < loan_tenor_total)
     loan_deduction = loan_installment if loan_active else 0
 
-    total_deductions = bpjs_kes_employee + jht_employee + jp_employee + pph21_monthly + other_deduction + loan_deduction + potongan_terlambat + potongan_pulang_cepat
-    net_salary = gross - total_deductions
+    # Sisa Pinjaman (Rp) — nilai total pinjaman yang belum diangsur, dihitung dari:
+    #   loan_total_amount - (loan_installment × loan_tenor_paid)
+    # Ditampilkan di slip sebagai info transparansi untuk karyawan.
+    loan_total_amount = float(employee.get("loan_total_amount", 0) or 0)
+    if loan_active:
+        # Setelah slip ini, tenor_paid akan +1 → sisa pinjaman = total - (installment × tenor_paid_after)
+        loan_remaining_amount = max(0.0, loan_total_amount - loan_installment * (loan_tenor_paid + 1))
+    else:
+        loan_remaining_amount = 0.0
+
+    # === PERUBAHAN 2026-08-05: HANYA 2 POTONGAN DI SLIP ===
+    # Sesuai permintaan user (Opsi B): Total Potongan & Gaji Bersih HANYA dihitung dari
+    # (1) Angsuran Pinjaman + (2) Potongan Lain-lain. BPJS/JHT/JP/PPh21 tetap DIHITUNG untuk
+    # keperluan laporan tahunan/bukti potong, TAPI TIDAK dipotong dari take-home pay.
+    # potongan_terlambat & potongan_pulang_cepat digabung ke Potongan Lain-lain (visible).
+    other_deduction_combined = other_deduction + potongan_terlambat + potongan_pulang_cepat
+    total_deductions_visible = loan_deduction + other_deduction_combined
+    net_salary = gross - total_deductions_visible
 
     return {
         "earnings": {
@@ -513,10 +529,12 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float], ov
             "jp_employee": round(jp_employee, 2),
             "pph21": round(pph21_monthly, 2),
             "loan": round(loan_deduction, 2),
-            "other_deduction": round(other_deduction, 2),
+            "other_deduction": round(other_deduction_combined, 2),
+            # Simpan komponen mentah untuk audit; TIDAK ditampilkan di slip
+            "other_deduction_raw": round(other_deduction, 2),
             "potongan_terlambat": round(potongan_terlambat, 2),
             "potongan_pulang_cepat": round(potongan_pulang_cepat, 2),
-            "total": round(total_deductions, 2),
+            "total": round(total_deductions_visible, 2),
         },
         "loan_info": {
             "active": loan_active,
@@ -525,6 +543,8 @@ def calculate_payslip(employee: Dict[str, Any], attendance: Dict[str, float], ov
             "tenor_paid_before": loan_tenor_paid,
             "tenor_paid_after": loan_tenor_paid + 1 if loan_active else loan_tenor_paid,
             "remaining_after": max(0, loan_tenor_total - (loan_tenor_paid + 1)) if loan_active and loan_tenor_total else 0,
+            "total_amount": round(loan_total_amount, 2),
+            "remaining_amount": round(loan_remaining_amount, 2),
         },
         "employer_contributions": {
             "bpjs_kesehatan_employer": round(bpjs_kes_employer, 2),
@@ -973,29 +993,23 @@ def _build_payslip_pdf(slip: Dict[str, Any]) -> bytes:
         earn_rows.append(["Bonus", _format_idr(e["bonus"])])
     earn_rows.append(["Total Bruto", _format_idr(e["gross"])])
 
+    # === PERUBAHAN 2026-08-05: HANYA 2 POTONGAN DI SLIP (Angsuran + Lain-lain) ===
+    # BPJS/JHT/JP/PPh21 DISEMBUNYIKAN sepenuhnya dari slip sesuai permintaan user.
+    # Kolom "other_deduction" di backend sudah digabung dengan potongan_terlambat & pulang_cepat.
     deduct_rows = [
         ["POTONGAN", ""],
-        ["BPJS Kesehatan (1%)", _format_idr(d["bpjs_kesehatan_employee"])],
-        ["JHT (2%)", _format_idr(d["jht_employee"])],
-        ["JP (1%)", _format_idr(d["jp_employee"])],
-        ["PPh 21", _format_idr(d["pph21"])],
     ]
     if d.get("loan", 0):
         deduct_rows.append(["Angsuran Pinjaman", _format_idr(d["loan"])])
-    if d.get("potongan_terlambat", 0):
-        # Bila auto-penalty, tampilkan menitnya untuk transparansi
-        att_ = slip.get("attendance", {}) if isinstance(slip, dict) else {}
-        _lpm = float(att_.get("late_penalty_minutes", 0) or 0)
-        _src = att_.get("late_penalty_source")
-        if _src == "auto_from_attendance" and _lpm > 0:
-            _label_late = f"Potongan Terlambat (>4 Jam · {int(_lpm)} menit)"
-        else:
-            _label_late = "Potongan Terlambat"
-        deduct_rows.append([_label_late, _format_idr(d["potongan_terlambat"])])
-    if d.get("potongan_pulang_cepat", 0):
-        deduct_rows.append(["Potongan Pulang Cepat", _format_idr(d["potongan_pulang_cepat"])])
     if d.get("other_deduction", 0):
-        deduct_rows.append(["Potongan Lain", _format_idr(d["other_deduction"])])
+        deduct_rows.append(["Potongan Lain-lain", _format_idr(d["other_deduction"])])
+    # Sisa Pinjaman — info transparansi untuk karyawan (tidak dipotong lagi, sekedar info)
+    _li = slip.get("loan_info", {}) if isinstance(slip, dict) else {}
+    if _li.get("active") and _li.get("remaining_amount"):
+        _tenor = _li.get("tenor_total", 0)
+        _paid_after = _li.get("tenor_paid_after", 0)
+        _tenor_info = f" (tenor {_paid_after}/{_tenor})" if _tenor else ""
+        deduct_rows.append([f"Sisa Pinjaman{_tenor_info}", _format_idr(_li.get("remaining_amount", 0))])
     deduct_rows.append(["Total Potongan", _format_idr(d["total"])])
     # Pad to same length
     max_len = max(len(earn_rows), len(deduct_rows))
@@ -1439,7 +1453,21 @@ def _calculate_thr(employee: Dict[str, Any], reference_dt: datetime) -> Dict[str
 # ---------------- Email Payslip ----------------
 def _payslip_html(slip: Dict[str, Any]) -> str:
     e, d = slip["earnings"], slip["deductions"]
+    li = slip.get("loan_info", {}) or {}
     company = os.environ.get("COMPANY_NAME", "PLAZAKREASI DIGITAL PRINTING")
+    # Baris potongan dinamis — HANYA Angsuran Pinjaman + Potongan Lain-lain (per Opsi B, 2026-08-05)
+    deduction_rows_html = ""
+    if d.get("loan", 0):
+        deduction_rows_html += f'<tr><td>Angsuran Pinjaman</td><td align="right" style="font-family:monospace;">{_format_idr(d["loan"])}</td></tr>'
+    if d.get("other_deduction", 0):
+        deduction_rows_html += f'<tr><td>Potongan Lain-lain</td><td align="right" style="font-family:monospace;">{_format_idr(d["other_deduction"])}</td></tr>'
+    # Info Sisa Pinjaman (tidak dipotong, sekedar info karyawan)
+    sisa_row = ""
+    if li.get("active") and li.get("remaining_amount"):
+        _tenor = li.get("tenor_total", 0)
+        _paid_after = li.get("tenor_paid_after", 0)
+        _tenor_info = f" · tenor {_paid_after}/{_tenor}" if _tenor else ""
+        sisa_row = f'<tr style="color:#71717a;font-size:12px;"><td>Sisa Pinjaman{_tenor_info}</td><td align="right" style="font-family:monospace;">{_format_idr(li.get("remaining_amount", 0))}</td></tr>'
     return f"""
     <table width="100%" cellpadding="0" cellspacing="0" style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
       <tr><td style="padding: 24px 0; border-bottom: 2px solid #18181b;">
@@ -1449,7 +1477,7 @@ def _payslip_html(slip: Dict[str, Any]) -> str:
       <tr><td style="padding: 20px 0;">
         Halo <strong>{slip['name']}</strong>,<br/><br/>
         Berikut adalah ringkasan slip gaji Anda untuk periode <strong>{slip['period']}</strong>.
-        Slip lengkap dengan rincian pajak terlampir sebagai PDF.
+        Slip lengkap terlampir sebagai PDF.
       </td></tr>
       <tr><td>
         <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse; font-size: 13px;">
@@ -1460,9 +1488,8 @@ def _payslip_html(slip: Dict[str, Any]) -> str:
           <tr><td>Bonus</td><td align="right" style="font-family:monospace;">{_format_idr(e['bonus'])}</td></tr>
           <tr style="font-weight:bold; border-top:1px solid #a1a1aa;"><td>Total Bruto</td><td align="right" style="font-family:monospace;">{_format_idr(e['gross'])}</td></tr>
           <tr style="background:#f4f4f5;"><th align="left" style="border-bottom:1px solid #e4e4e7;">POTONGAN</th><th align="right" style="border-bottom:1px solid #e4e4e7;">Rp</th></tr>
-          <tr><td>BPJS Karyawan</td><td align="right" style="font-family:monospace;">{_format_idr(d['bpjs_kesehatan_employee'] + d['jht_employee'] + d['jp_employee'])}</td></tr>
-          <tr><td>PPh 21</td><td align="right" style="font-family:monospace;">{_format_idr(d['pph21'])}</td></tr>
-          <tr><td>Lain-lain</td><td align="right" style="font-family:monospace;">{_format_idr(d['other_deduction'])}</td></tr>
+          {deduction_rows_html}
+          {sisa_row}
           <tr style="font-weight:bold; border-top:1px solid #a1a1aa;"><td>Total Potongan</td><td align="right" style="font-family:monospace;">{_format_idr(d['total'])}</td></tr>
         </table>
       </td></tr>

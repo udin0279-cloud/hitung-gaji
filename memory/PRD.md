@@ -27,6 +27,21 @@ Aplikasi payroll Indonesia yang lengkap dengan perhitungan otomatis (PPh 21, BPJ
 
 
 
+## Update 2026-08-05 (part 2) — Slip Gaji: HANYA 2 Potongan Visible (Opsi B)
+- **Simplifikasi Potongan Slip Gaji (2026-08-05, Opsi B — REMOVE dari perhitungan)**: Per permintaan user, HANYA 2 baris potongan yang muncul di slip:
+  - **Angsuran Pinjaman** (dari `d.loan`)
+  - **Potongan Lain-lain** (gabungan dari `other_deduction` + `potongan_terlambat` + `potongan_pulang_cepat`)
+  - **Total Potongan** = loan + other_combined (BPJS/JHT/JP/PPh21 TIDAK dipotong lagi dari take-home)
+  - **Net Salary** = gross − Total Potongan (visible only) → take-home pay LEBIH BESAR
+  - **Sisa Pinjaman**: baris info baru — muncul jika loan aktif & remaining_amount > 0, format `Sisa Pinjaman · tenor N/M`, tidak masuk ke Total Potongan (info transparansi saja)
+  - BPJS/JHT/JP/PPh21 **masih dihitung** di backend (untuk laporan tahunan/bukti potong 1721-A1 compliance), tersimpan di `deductions.bpjs_*/jht_*/jp_*/pph21` tapi tidak masuk `deductions.total`
+  - Field baru: `loan_info.total_amount`, `loan_info.remaining_amount` untuk info sisa
+  - **Files updated**: `calculate_payslip` (server.py), `_build_payslip_pdf` (server.py), `_payslip_html` (server.py), `Payslip.jsx` (frontend)
+  - **Verified via curl+screenshot**: Gross Rp 1.692.308 − (Loan 500rb + Other 100rb) = Net Rp 1.092.308 ✓ tampil di UI dengan hanya 2 baris potongan visible
+  - **⚠ IMPACT**: Payslip lama (2026-07) tetap pakai formula lama sampai payroll di-rerun untuk periode itu. Payroll run baru akan pakai formula baru.
+
+
+
 ## Update 2026-08-05 — Kolom SALDO KAS di Jurnal Akuntansi
 - **Kolom SALDO KAS di Tab Jurnal Akuntansi (2026-08-05)**: Menambahkan kolom baru "SALDO KAS" (highlight biru) di antara PENGELUARAN dan AKSI pada BookTab `CashBook.jsx`. Kolom AKSI dipindah ke paling kanan. Running balance dihitung via `useMemo` yang men-walk `txData.transactions` menerapkan aturan Buku Kas yang sama: KREDIT hanya untuk `type=in && account_code=101`, DEBET untuk `type=out` (semua akun). Snapshot per tx.id memungkinkan setiap baris (termasuk row non-Kas) menampilkan saldo kas real-time pada saat itu. Row TOTAL menampilkan `currentBalance` (dari balance API) agar tersinkronisasi dengan tab Buku Kas. Verified via screenshot Jul 2026: 5 transaksi non-Kas dengan running balance 1jt → 970rb → 940rb → 930rb → 884.500, sync sempurna dengan Saldo Akhir Jul 2026.
 
