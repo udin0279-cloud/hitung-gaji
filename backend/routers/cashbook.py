@@ -553,6 +553,39 @@ def make_router(
         }
 
 
+    @router.post("/cashbook/purge-adjustments")
+    async def cash_purge_adjustments(user: dict = Depends(require_super_admin)):
+        """Hapus SEMUA transaksi penyesuaian saldo (ref='ADJUSTMENT').
+
+        Digunakan ketika user ingin membersihkan histori adjust-balance (mis. karena
+        salah input atau ingin reset). Setelah dihapus, `Saldo Kas Real-time` akan
+        berubah — user harus manual set `opening_balance` via PUT /cashbook/settings
+        agar saldo kembali ke angka yang dikehendaki.
+        """
+        # Sample dulu utk audit log
+        sample = await db.cash_transactions.find(
+            {"reference": "ADJUSTMENT"},
+            {"_id": 0, "id": 1, "date": 1, "type": 1, "amount": 1, "description": 1},
+        ).sort("date", -1).to_list(length=200)
+        total_amount_in = sum(float(t["amount"]) for t in sample if t.get("type") == "in")
+        total_amount_out = sum(float(t["amount"]) for t in sample if t.get("type") == "out")
+
+        result = await db.cash_transactions.delete_many({"reference": "ADJUSTMENT"})
+
+        logger.warning(
+            f"CASHBOOK PURGE ADJUSTMENTS by {user.get('email')} — "
+            f"deleted {result.deleted_count} tx (in={total_amount_in}, out={total_amount_out})"
+        )
+        return {
+            "ok": True,
+            "deleted_count": result.deleted_count,
+            "total_in_removed": round(total_amount_in, 2),
+            "total_out_removed": round(total_amount_out, 2),
+            "net_impact": round(total_amount_out - total_amount_in, 2),
+            "sample": sample[:10],
+        }
+
+
     @router.get("/cashbook/export")
     async def cash_export(user: dict = Depends(require_super_admin), month: Optional[str] = None):
         """Export bulan tertentu ke Excel."""

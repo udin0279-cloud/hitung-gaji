@@ -296,6 +296,7 @@ export default function CashBook() {
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
             txData={txData} filtered={filteredJournal} loading={loading}
             kasbonOpen={kasbonOpen}
+            onCashChanged={loadAll}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
           />
@@ -843,11 +844,31 @@ function Field({ label, hint, children }) {
    - Saldo berjalan = saldo sebelumnya + Kredit − Debet
    Data sumber sama dengan Buku Kas — hanya tampilan berbeda.
    ================================================================ */
-function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, kasbonOpen }) {
+function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, kasbonOpen, onCashChanged }) {
   const [showAdjustOnly, setShowAdjustOnly] = useState(false);
   // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
   const kasTxAll = filtered;
   const adjustCount = kasTxAll.filter((t) => t.reference === "ADJUSTMENT").length;
+
+  // Purge ALL adjustment transactions — nuclear cleanup.
+  // Backend akan hapus semua cash_transactions dgn reference="ADJUSTMENT".
+  const purgeAdjustments = async () => {
+    if (adjustCount === 0) {
+      toast.info("Tidak ada jurnal penyesuaian untuk dihapus.");
+      return;
+    }
+    const msg1 = `HAPUS SEMUA transaksi penyesuaian saldo?\n\nAksi ini akan menghapus ${adjustCount} jurnal dengan ref='ADJUSTMENT' di bulan ini + bulan-bulan lain.\n\nSetelah dihapus, saldo real-time akan BERUBAH. Anda dapat set ulang Saldo Awal manual via tombol "Saldo Awal" di atas.\n\nLanjutkan?`;
+    if (!window.confirm(msg1)) return;
+    const c = window.prompt('Ketik "HAPUS PENYESUAIAN" untuk konfirmasi:');
+    if (c !== "HAPUS PENYESUAIAN") { toast.error("Dibatalkan — konfirmasi tidak cocok."); return; }
+    try {
+      const res = await api.post("/cashbook/purge-adjustments");
+      toast.success(`${res.data.deleted_count} jurnal penyesuaian dihapus. Silakan cek Saldo Awal.`);
+      if (onCashChanged) await onCashChanged();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal");
+    }
+  };
   const kasTx = showAdjustOnly ? kasTxAll.filter((t) => t.reference === "ADJUSTMENT") : kasTxAll;
   // Recompute running balance: Saldo Awal + Kredit − Debet (per baris)
   // NOTE: Saldo dihitung dari FULL kasTxAll (bukan filtered) supaya angka Saldo tetap akurat
@@ -892,20 +913,31 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
           </div>
           <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Kredit: Akun 101 · Debet: Semua Akun</span>
           {adjustCount > 0 && (
-            <button
-              type="button"
-              data-testid="filter-adjustment-toggle"
-              onClick={() => setShowAdjustOnly((v) => !v)}
-              className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 whitespace-nowrap ${
-                showAdjustOnly
-                  ? "bg-[#002FA7] text-white border-[#002FA7]"
-                  : "bg-white text-[#002FA7] border-[#002FA7]/40 hover:bg-[#002FA7]/5"
-              }`}
-              title={showAdjustOnly ? "Klik untuk tampilkan semua transaksi" : "Filter hanya jurnal penyesuaian"}
-            >
-              <Target className="w-3 h-3" />
-              {showAdjustOnly ? `Adjustment Only (${adjustCount})` : `Adjustment: ${adjustCount}`}
-            </button>
+            <>
+              <button
+                type="button"
+                data-testid="filter-adjustment-toggle"
+                onClick={() => setShowAdjustOnly((v) => !v)}
+                className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 whitespace-nowrap ${
+                  showAdjustOnly
+                    ? "bg-[#002FA7] text-white border-[#002FA7]"
+                    : "bg-white text-[#002FA7] border-[#002FA7]/40 hover:bg-[#002FA7]/5"
+                }`}
+                title={showAdjustOnly ? "Klik untuk tampilkan semua transaksi" : "Filter hanya jurnal penyesuaian"}
+              >
+                <Target className="w-3 h-3" />
+                {showAdjustOnly ? `Adjustment Only (${adjustCount})` : `Adjustment: ${adjustCount}`}
+              </button>
+              <button
+                type="button"
+                data-testid="purge-adjustments-btn"
+                onClick={purgeAdjustments}
+                className="text-[10px] font-bold uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 whitespace-nowrap bg-white text-[#E81123] border-[#E81123]/40 hover:bg-[#E81123]/5"
+                title="Hapus SEMUA jurnal penyesuaian (ref=ADJUSTMENT) — saldo akan berubah, set manual via Saldo Awal setelah"
+              >
+                <Trash2 className="w-3 h-3" /> Hapus Semua Penyesuaian
+              </button>
+            </>
           )}
         </div>
         <div className="text-xs text-zinc-500 font-mono">
