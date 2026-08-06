@@ -992,12 +992,14 @@ def make_router(
         existing = await db.kasbon_sementara.find_one({"id": kasbon_id})
         if not existing:
             raise HTTPException(status_code=404, detail="Kasbon tidak ditemukan")
-        if existing.get("status") == "settled":
+        # Normalisasi: cek semua varian PAID (settled/paid/lunas/dll — case-insensitive)
+        _cur_status = str(existing.get("status") or "").strip().upper()
+        if _cur_status in ("SETTLED", "PAID", "LUNAS", "CLOSED", "DONE"):
             raise HTTPException(status_code=400, detail="Kasbon sudah dilunaskan")
         settled_at = datetime.now(timezone.utc).isoformat()
         await db.kasbon_sementara.update_one(
             {"id": kasbon_id},
-            {"$set": {"status": "settled", "settled_at": settled_at}},
+            {"$set": {"status": "PAID", "settled_at": settled_at}},
         )
         # Auto-insert pengeluaran ke Jurnal Kas Utama (Akun 101, DEBET)
         try:
@@ -1019,7 +1021,7 @@ def make_router(
             raise HTTPException(status_code=404, detail="Kasbon tidak ditemukan")
         await db.kasbon_sementara.update_one(
             {"id": kasbon_id},
-            {"$set": {"status": "open", "settled_at": None}},
+            {"$set": {"status": "PENDING", "settled_at": None, "paid_at": None, "date_settled": None}},
         )
         # Rollback auto cash-tx pelunasan
         try:

@@ -1224,14 +1224,19 @@ function KasbonTab({ month, setMonth, onCashChanged }) {
             {!loading && filtered.length === 0 && (
               <tr><td colSpan={6} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada kasbon.</td></tr>
             )}
-            {filtered.map((k) => (
-              <tr key={k.id} data-testid="kasbon-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${k.status === "settled" ? "opacity-60" : ""}`}>
+            {filtered.map((k) => {
+              // Backend selalu normalize status ke "PENDING" (belum lunas) atau "PAID" (lunas).
+              // Fallback: legacy value "open"/"settled" tetap didukung (case-insensitive).
+              const _s = String(k.status || "").trim().toUpperCase();
+              const isPaid = _s === "PAID" || _s === "SETTLED";
+              return (
+              <tr key={k.id} data-testid="kasbon-row" className={`border-b border-zinc-100 hover:bg-zinc-50 ${isPaid ? "opacity-60" : ""}`}>
                 <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{k.date}</td>
                 <td className="px-3 py-2.5 text-sm font-semibold text-zinc-900">{k.name}</td>
                 <td className="px-3 py-2.5 text-xs text-zinc-600">{k.description || "—"}</td>
                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold text-zinc-900">{formatIDR(k.amount)}</td>
                 <td className="px-3 py-2.5">
-                  {k.status === "settled" ? (
+                  {isPaid ? (
                     <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold text-[#008A00] bg-[#008A00]/10 px-2 py-1">
                       <CheckCircle2 className="w-3 h-3" /> Lunas
                     </span>
@@ -1243,12 +1248,12 @@ function KasbonTab({ month, setMonth, onCashChanged }) {
                 </td>
                 <td className="px-3 py-2.5">
                   <div className="flex items-center justify-end gap-1">
-                    {k.status === "open" ? (
-                      <button data-testid="kasbon-settle-btn" onClick={() => settle(k)} className="p-1.5 hover:bg-[#008A00]/10 text-[#008A00]" title="Tandai lunas">
+                    {!isPaid ? (
+                      <button data-testid="kasbon-settle-btn" onClick={() => settle(k)} className="p-1.5 hover:bg-[#008A00]/10 text-[#008A00] border border-[#008A00]/30 rounded" title="Tandai Lunas — ubah status jadi PAID">
                         <CheckCircle2 className="w-3.5 h-3.5" />
                       </button>
                     ) : (
-                      <button data-testid="kasbon-reopen-btn" onClick={() => reopen(k)} className="p-1.5 hover:bg-amber-100 text-amber-700" title="Buka kembali">
+                      <button data-testid="kasbon-reopen-btn" onClick={() => reopen(k)} className="p-1.5 hover:bg-amber-100 text-amber-700" title="Buka kembali (batalkan pelunasan)">
                         <RotateCcw className="w-3.5 h-3.5" />
                       </button>
                     )}
@@ -1261,7 +1266,8 @@ function KasbonTab({ month, setMonth, onCashChanged }) {
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
             {!loading && filtered.length > 0 && (
               <tr className="border-t-2 border-zinc-900 bg-zinc-50">
                 <td colSpan={3} className="px-3 py-3">
