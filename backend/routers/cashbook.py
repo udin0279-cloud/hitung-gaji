@@ -361,6 +361,75 @@ def make_router(
         }
 
 
+    @router.get("/cashbook/diagnose")
+    async def cash_diagnose(user: dict = Depends(require_super_admin)):
+        """Diagnostik saldo kas dengan breakdown per akun.
+
+        Bantu user verifikasi angka: Saldo Awal + Total Kredit − Total Debet = Saldo Real-time.
+        Menunjukkan detail semua transaksi in/out per akun untuk deteksi anomali.
+        """
+        setting = await _cash_setting()
+        opening = float(setting.get("opening_balance", 0))
+        txs = await db.cash_transactions.find(
+            {}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1, "account_name": 1, "date": 1, "description": 1, "reference": 1},
+        ).to_list(length=200000)
+
+        # Breakdown per akun (in dan out)
+        in_by_account = {}
+        out_by_account = {}
+        ignored_in = []  # type=in tapi bukan akun 101 → TIDAK menambah saldo kas
+        for t in txs:
+            code = t.get("account_code") or "?"
+            name = t.get("account_name") or ""
+            amt = float(t.get("amount", 0))
+            key = f"{code} · {name}"
+            if t["type"] == "in":
+                if code == "101":
+                    in_by_account[key] = in_by_account.get(key, {"code": code, "name": name, "count": 0, "total": 0.0})
+                    in_by_account[key]["count"] += 1
+                    in_by_account[key]["total"] += amt
+                else:
+                    # Type=in but not 101 — these are revenue accounts (301, 302, dll) yg TIDAK menambah kas fisik
+                    ignored_in.append({"code": code, "name": name, "amount": amt, "date": t.get("date"), "desc": t.get("description")})
+            elif t["type"] == "out":
+                out_by_account[key] = out_by_account.get(key, {"code": code, "name": name, "count": 0, "total": 0.0})
+                out_by_account[key]["count"] += 1
+                out_by_account[key]["total"] += amt
+
+        total_in_kas = sum(v["total"] for v in in_by_account.values())
+        total_out = sum(v["total"] for v in out_by_account.values())
+        total_ignored = sum(x["amount"] for x in ignored_in)
+        balance = opening + total_in_kas - total_out
+
+        # Adjustment transactions detection
+        adj_count = sum(1 for t in txs if t.get("reference") == "ADJUSTMENT")
+
+        return {
+            "opening_balance": round(opening, 2),
+            "opening_date": setting.get("opening_date"),
+            "total_in_kas_101": round(total_in_kas, 2),
+            "total_out_all_accounts": round(total_out, 2),
+            "formula": f"Saldo Real-time = {opening:,.0f} + {total_in_kas:,.0f} − {total_out:,.0f}",
+            "balance_calculated": round(balance, 2),
+            "tx_count_total": len(txs),
+            "tx_count_kredit_101": sum(v["count"] for v in in_by_account.values()),
+            "tx_count_debet_all": sum(v["count"] for v in out_by_account.values()),
+            "in_by_account": sorted(list(in_by_account.values()), key=lambda x: -x["total"]),
+            "out_by_account": sorted(list(out_by_account.values()), key=lambda x: -x["total"]),
+            "ignored_in_non_101": {
+                "count": len(ignored_in),
+                "total_amount": round(total_ignored, 2),
+                "note": "Transaksi type=in dari akun ≠ 101 (misal 301-* Penjualan) TIDAK menambah Saldo Kas fisik. Ini sesuai konvensi Buku Kas — hanya uang yg benar-benar masuk kas tunai/rekening menambah saldo.",
+                "sample": ignored_in[:10],
+            },
+            "adjustment_count": adj_count,
+            "notes": [
+                "Formula: Saldo Real-time = Opening + Σ(type=in & account=101) − Σ(type=out semua akun)",
+                "Jika saldo tidak sesuai ekspektasi: (1) Cek Opening Balance, (2) Cek transaksi 'ignored_in' — mungkin ada penjualan yg belum masuk kas, (3) Cek 'adjustment_count' — hapus via tombol Hapus Semua Penyesuaian jika perlu.",
+            ],
+        }
+
+
     @router.get("/cashbook/summary")
     async def cash_summary(
         user: dict = Depends(require_super_admin),

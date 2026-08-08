@@ -100,6 +100,7 @@ export default function CashBook() {
   const [openSetting, setOpenSetting] = useState(false);
   const [openAccounts, setOpenAccounts] = useState(false);
   const [openAdjust, setOpenAdjust] = useState(false);
+  const [openDiagnose, setOpenDiagnose] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -231,6 +232,9 @@ export default function CashBook() {
           <button data-testid="cash-setting-button" onClick={() => setOpenSetting(true)} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-4 py-2.5 text-sm hover:bg-zinc-50 inline-flex items-center gap-2" title="Saldo Awal">
             <Settings className="w-3.5 h-3.5" /> Saldo Awal
           </button>
+          <button data-testid="cash-diagnose-button" onClick={() => setOpenDiagnose(true)} className="rounded-none bg-white text-[#002FA7] border border-[#002FA7]/40 px-4 py-2.5 text-sm hover:bg-[#002FA7]/5 inline-flex items-center gap-2" title="Verifikasi rumus saldo — breakdown per akun untuk deteksi anomali">
+            <Target className="w-3.5 h-3.5" /> Diagnose Saldo
+          </button>
           <button data-testid="cash-accounts-button" onClick={() => setOpenAccounts(true)} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-4 py-2.5 text-sm hover:bg-zinc-50 inline-flex items-center gap-2">
             Kategori Akun
           </button>
@@ -339,6 +343,12 @@ export default function CashBook() {
           currentBalance={(balance?.balance ?? 0) - kasbonOpen.total_open}
           onClose={() => setOpenAdjust(false)}
           onSaved={async () => { setOpenAdjust(false); await loadAll(); }}
+        />
+      )}
+
+      {openDiagnose && (
+        <DiagnoseSaldoModal
+          onClose={() => setOpenDiagnose(false)}
         />
       )}
     </div>
@@ -1507,6 +1517,180 @@ function AdjustBalanceModal({ currentBalance, onClose, onSaved }) {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+
+/* ================================================================
+   ===== Modal Diagnose Saldo — Verifikasi rumus & breakdown =====
+   Menampilkan detail: Opening + Total Kredit − Total Debet = Saldo
+   Plus breakdown per akun untuk spot anomali (mis. penjualan yg
+   masuk revenue tapi belum tarik ke kas → tidak menambah saldo).
+   ================================================================ */
+function DiagnoseSaldoModal({ onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get("/cashbook/diagnose");
+        setData(res.data);
+      } catch (e) {
+        setErr(formatApiError(e.response?.data?.detail) || "Gagal memuat");
+      } finally { setLoading(false); }
+    })();
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white max-w-3xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="p-6 border-b border-zinc-200 flex items-center justify-between sticky top-0 bg-white z-10">
+          <div>
+            <h2 className="text-xl font-bold text-zinc-900">Diagnose Saldo Kas</h2>
+            <p className="text-xs text-zinc-500 mt-1">Verifikasi rumus: Opening + Total Kredit − Total Debet = Saldo Real-time</p>
+          </div>
+          <button data-testid="diagnose-close" onClick={onClose} className="text-zinc-500 hover:text-zinc-900 text-2xl leading-none">×</button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {loading && <div className="text-zinc-400 font-mono text-sm">Memuat…</div>}
+          {err && <div className="p-3 bg-[#E81123]/10 border border-[#E81123]/30 text-[#E81123] text-sm">{err}</div>}
+          {data && (
+            <>
+              {/* Ringkasan Rumus */}
+              <div className="p-4 bg-[#002FA7]/5 border border-[#002FA7]/30">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-[#002FA7] mb-2">Rumus Saldo Real-time</div>
+                <div className="font-mono text-sm text-zinc-800 mb-3">
+                  Saldo = Opening + Total Kredit (akun 101) − Total Debet (semua akun)
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">Opening</div>
+                    <div className="font-mono font-bold text-zinc-900 mt-1">{formatIDR(data.opening_balance)}</div>
+                  </div>
+                  <div>
+                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">+ Kredit</div>
+                    <div className="font-mono font-bold text-[#008A00] mt-1">{formatIDR(data.total_in_kas_101)}</div>
+                  </div>
+                  <div>
+                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">− Debet</div>
+                    <div className="font-mono font-bold text-[#E81123] mt-1">{formatIDR(data.total_out_all_accounts)}</div>
+                  </div>
+                  <div className="border-l-2 border-[#002FA7] pl-3">
+                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">= Saldo Real-time</div>
+                    <div data-testid="diagnose-balance" className="font-mono font-bold text-lg text-[#002FA7] mt-1">{formatIDR(data.balance_calculated)}</div>
+                  </div>
+                </div>
+                <div className="mt-3 text-[10px] text-zinc-500 font-mono">
+                  {data.tx_count_total} transaksi total · {data.tx_count_kredit_101} kredit ke 101 · {data.tx_count_debet_all} debet
+                  {data.adjustment_count > 0 && (
+                    <> · <span className="text-[#E81123] font-bold">{data.adjustment_count} jurnal ADJUSTMENT</span></>
+                  )}
+                </div>
+              </div>
+
+              {/* Ignored In (revenue non-101) — biasanya sumber kebingungan */}
+              {data.ignored_in_non_101.count > 0 && (
+                <div className="p-4 bg-amber-50 border border-amber-300">
+                  <div className="text-[10px] uppercase tracking-widest font-bold text-amber-700 mb-2">
+                    ⚠ Transaksi type=in yang TIDAK menambah Saldo Kas ({data.ignored_in_non_101.count} tx · {formatIDR(data.ignored_in_non_101.total_amount)})
+                  </div>
+                  <div className="text-xs text-amber-900 mb-2">
+                    Ini adalah penjualan/pemasukan yg masuk ke akun revenue (301, 302, dll) — <b>bukan kas fisik</b>.
+                    Uang belum masuk kas sampai ditarik/disetor via akun 101. Cocok untuk Shopee/Bank Transfer yg saldonya masih di platform.
+                  </div>
+                  <div className="mt-2 max-h-40 overflow-y-auto border border-amber-200 bg-white">
+                    <table className="w-full text-xs">
+                      <thead className="bg-amber-100">
+                        <tr>
+                          <th className="px-2 py-1 text-left">Tanggal</th>
+                          <th className="px-2 py-1 text-left">Akun</th>
+                          <th className="px-2 py-1 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.ignored_in_non_101.sample.map((s, i) => (
+                          <tr key={i} className="border-t border-amber-100">
+                            <td className="px-2 py-1 font-mono">{s.date}</td>
+                            <td className="px-2 py-1">{s.code} · {s.name}</td>
+                            <td className="px-2 py-1 text-right font-mono">{formatIDR(s.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Kredit breakdown */}
+              <div>
+                <div className="text-[10px] uppercase tracking-widest font-bold text-[#008A00] mb-2">Breakdown Kredit (uang masuk kas 101)</div>
+                {data.in_by_account.length === 0 ? (
+                  <div className="text-zinc-400 text-xs font-mono">Tidak ada transaksi kredit ke akun 101.</div>
+                ) : (
+                  <div className="border border-zinc-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-zinc-50 text-[10px] uppercase tracking-widest">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Akun</th>
+                          <th className="px-3 py-2 text-right">Jumlah Tx</th>
+                          <th className="px-3 py-2 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.in_by_account.map((row, i) => (
+                          <tr key={i} className="border-t border-zinc-100">
+                            <td className="px-3 py-2 font-mono">{row.code} · {row.name}</td>
+                            <td className="px-3 py-2 text-right font-mono">{row.count}</td>
+                            <td className="px-3 py-2 text-right font-mono text-[#008A00] font-bold">{formatIDR(row.total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Debet breakdown */}
+              <div>
+                <div className="text-[10px] uppercase tracking-widest font-bold text-[#E81123] mb-2">Breakdown Debet (uang keluar semua akun)</div>
+                {data.out_by_account.length === 0 ? (
+                  <div className="text-zinc-400 text-xs font-mono">Tidak ada transaksi debet.</div>
+                ) : (
+                  <div className="border border-zinc-200 max-h-60 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-zinc-50 text-[10px] uppercase tracking-widest sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Akun</th>
+                          <th className="px-3 py-2 text-right">Jumlah Tx</th>
+                          <th className="px-3 py-2 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.out_by_account.map((row, i) => (
+                          <tr key={i} className="border-t border-zinc-100">
+                            <td className="px-3 py-2 font-mono">{row.code} · {row.name}</td>
+                            <td className="px-3 py-2 text-right font-mono">{row.count}</td>
+                            <td className="px-3 py-2 text-right font-mono text-[#E81123] font-bold">{formatIDR(row.total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Notes */}
+              <div className="text-[11px] text-zinc-500 border-t border-zinc-200 pt-3">
+                {data.notes.map((n, i) => <div key={i}>• {n}</div>)}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
