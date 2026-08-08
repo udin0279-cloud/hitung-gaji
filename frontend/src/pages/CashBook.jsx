@@ -384,19 +384,25 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 
 /* ---------- Buku Kas Tab ---------- */
 function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance }) {
-  // === RUMUS SEDERHANA (per permintaan user 2026-08-08) ===
-  // Saldo Kas per baris HANYA dihitung dari transaksi yang TAMPIL di tab ini:
-  //   Saldo Kas = Saldo Awal + Σ(Pemasukan baris sebelumnya) − Σ(Pengeluaran baris sebelumnya)
-  // TIDAK mengambil data dari akun lain atau bulan lain — persis apa yg user lihat.
+  // === RUMUS KAS (dikembalikan 2026-08-08 sore) ===
+  // Saldo Kas per baris = Saldo Awal + Kredit (HANYA akun 101 in) − Debet (semua out) SEQUENTIAL
+  // dari data yg TAMPIL di tab ini (Jurnal Akuntansi = tab utama yang menampilkan SEMUA transaksi).
   const openingBalance = Number(txData.opening_balance || 0);
-  const totalKreditVisible = filtered.reduce((s, t) => s + (t.type === "in" ? Number(t.amount || 0) : 0), 0);
+  // Kredit visible (untuk footer): HANYA akun 101 in
+  const totalKreditVisible = filtered.reduce(
+    (s, t) => s + (t.type === "in" && t.account_code === "101" ? Number(t.amount || 0) : 0),
+    0
+  );
+  // Debet visible (untuk footer): semua out
   const totalDebetVisible = filtered.reduce((s, t) => s + (t.type === "out" ? Number(t.amount || 0) : 0), 0);
   const saldoAkhirComputed = openingBalance + totalKreditVisible - totalDebetVisible;
-  // Running balance per baris, dihitung sequential berdasarkan urutan tampilan
+  // Info tambahan: total pemasukan (semua akun) — hanya untuk display, tidak masuk closing
+  const totalPemasukanAll = filtered.reduce((s, t) => s + (t.type === "in" ? Number(t.amount || 0) : 0), 0);
+  // Running balance per baris (KAS rule): +amount hanya jika in && 101, -amount jika out
   const balanceByRowIndex = (() => {
     let running = openingBalance;
     return filtered.map((t) => {
-      if (t.type === "in") running += Number(t.amount || 0);
+      if (t.type === "in" && t.account_code === "101") running += Number(t.amount || 0);
       else if (t.type === "out") running -= Number(t.amount || 0);
       return running;
     });
@@ -508,10 +514,15 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
                 <td className="px-4 py-3" colSpan={4}>
                   <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Saldo Akhir {monthLabel(month)}</span>
                   <div className="text-[10px] font-mono text-zinc-500 mt-0.5">
-                    {formatIDR(openingBalance)} + {formatIDR(totalKreditVisible)} − {formatIDR(totalDebetVisible)}
+                    Rumus Kas: {formatIDR(openingBalance)} + {formatIDR(totalKreditVisible)} (Kredit 101) − {formatIDR(totalDebetVisible)}
+                    {totalPemasukanAll !== totalKreditVisible && (
+                      <span className="ml-2 text-amber-700">
+                        (Pemasukan lain non-101: {formatIDR(totalPemasukanAll - totalKreditVisible)} — tidak masuk kas)
+                      </span>
+                    )}
                   </div>
                 </td>
-                <td className="px-4 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalKreditVisible)}</td>
+                <td className="px-4 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalPemasukanAll)}</td>
                 <td className="px-4 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebetVisible)}</td>
                 <td className="px-4 py-3 text-right font-mono font-bold text-[#002FA7] bg-[#002FA7]/5 text-lg" data-testid="book-saldo-kas-total">{formatIDR(saldoAkhirComputed)}</td>
                 <td className="px-4 py-3"></td>
@@ -1767,6 +1778,45 @@ function DiagnoseSaldoModal({ month, onClose }) {
                     </table>
                   </div>
                 )}
+              </div>
+
+              {/* Cleanup actions — bantu cari duplikat & purge settings ganda */}
+              <div className="p-3 border border-zinc-200 bg-zinc-50">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-zinc-700 mb-2">🔧 Cleanup Data</div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    data-testid="find-duplicate-tx-btn"
+                    onClick={async () => {
+                      try {
+                        const params = mode === "month" ? { month } : {};
+                        const r = await api.get("/cashbook/find-duplicate-tx", { params });
+                        const dg = r.data.duplicate_groups;
+                        if (dg === 0) {
+                          toast.success("Tidak ada transaksi duplikat ditemukan.");
+                        } else {
+                          const sample = r.data.duplicates.slice(0, 3).map(d => `• ${d.date} ${d.description?.slice(0,30)} × ${d.count}`).join("\n");
+                          toast.warning(`${dg} grup duplikat (${r.data.total_extra_txs} tx berlebih).\n\n${sample}`, { duration: 8000 });
+                        }
+                      } catch (e) { toast.error("Gagal cek duplikat"); }
+                    }}
+                    className="text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 border border-amber-500 text-amber-700 bg-white hover:bg-amber-50"
+                  >
+                    Cari Duplikat Tx {mode === "month" ? monthLabel(month) : "All-Time"}
+                  </button>
+                  <button
+                    data-testid="purge-cash-settings-btn"
+                    onClick={async () => {
+                      if (!window.confirm("Hapus dokumen cash_settings ganda? Yg dipertahankan = opening_balance tertinggi.")) return;
+                      try {
+                        const r = await api.post("/cashbook/purge-duplicate-cashbook-settings");
+                        toast.success(`${r.data.deleted} duplicate settings dihapus. Opening tersisa: ${formatIDR(r.data.kept_opening_balance)}`);
+                      } catch (e) { toast.error("Gagal cleanup"); }
+                    }}
+                    className="text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 border border-[#E81123] text-[#E81123] bg-white hover:bg-[#E81123]/5"
+                  >
+                    Cleanup Setting Ganda
+                  </button>
+                </div>
               </div>
 
               {/* Notes */}

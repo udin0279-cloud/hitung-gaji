@@ -490,6 +490,94 @@ def make_router(
         }
 
 
+    @router.get("/cashbook/find-duplicate-tx")
+    async def cash_find_duplicate_tx(
+        user: dict = Depends(require_super_admin),
+        month: Optional[str] = None,
+    ):
+        """Cari transaksi yang terduplikasi berdasarkan (date + account_code + type + amount + description).
+
+        Berguna untuk deteksi entri ganda akibat sync error atau input berulang.
+        Jika `month` diisi (YYYY-MM), filter ke bulan itu saja.
+        """
+        q = {}
+        if month:
+            try:
+                year, m = month.split("-")
+                from calendar import monthrange
+                first = f"{year}-{int(m):02d}-01"
+                last_day = monthrange(int(year), int(m))[1]
+                last = f"{year}-{int(m):02d}-{last_day:02d}"
+                q["date"] = {"$gte": first, "$lte": last}
+            except Exception:
+                raise HTTPException(status_code=400, detail="Format month harus YYYY-MM")
+
+        txs = await db.cash_transactions.find(q, {"_id": 0}).to_list(length=200000)
+        # Kelompokkan berdasarkan signature
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for t in txs:
+            sig = f"{t.get('date')}|{t.get('account_code')}|{t.get('type')}|{t.get('amount')}|{(t.get('description') or '').strip().lower()}"
+            groups.setdefault(sig, []).append(t)
+
+        # Ambil group yg lebih dari 1
+        duplicates = []
+        for sig, items in groups.items():
+            if len(items) > 1:
+                duplicates.append({
+                    "signature": sig,
+                    "count": len(items),
+                    "amount": items[0].get("amount"),
+                    "date": items[0].get("date"),
+                    "account_code": items[0].get("account_code"),
+                    "account_name": items[0].get("account_name"),
+                    "type": items[0].get("type"),
+                    "description": items[0].get("description"),
+                    "items": [{"id": x.get("id"), "reference": x.get("reference"), "created_at": x.get("created_at")} for x in items],
+                })
+        duplicates.sort(key=lambda x: (x["date"] or "", -x["count"]))
+        return {
+            "period": month or "all-time",
+            "duplicate_groups": len(duplicates),
+            "total_extra_txs": sum(d["count"] - 1 for d in duplicates),
+            "duplicates": duplicates,
+        }
+
+
+    @router.post("/cashbook/purge-duplicate-cashbook-settings")
+    async def purge_duplicate_settings(user: dict = Depends(require_super_admin)):
+        """Hapus dokumen cash_settings ganda — sisakan hanya satu dengan `key='main'`.
+
+        Merge value: yang tertinggi opening_balance dipertahankan; sisanya dihapus.
+        """
+        all_settings = await db.cash_settings.find({}, {"_id": 1, "key": 1, "opening_balance": 1, "opening_date": 1}).to_list(length=1000)
+        if len(all_settings) <= 1:
+            return {"ok": True, "action": "no_duplicates", "count_before": len(all_settings)}
+
+        # Pilih dokumen dengan opening_balance tertinggi (asumsi user paling recent = paling benar)
+        best = max(all_settings, key=lambda s: float(s.get("opening_balance", 0)))
+        # Set key='main' & pastikan hanya satu tersisa
+        deleted = 0
+        for s in all_settings:
+            if s["_id"] != best["_id"]:
+                await db.cash_settings.delete_one({"_id": s["_id"]})
+                deleted += 1
+        # Normalize key to 'main'
+        await db.cash_settings.update_one(
+            {"_id": best["_id"]},
+            {"$set": {"key": "main"}},
+        )
+        logger.warning(
+            f"CASHBOOK cleanup cash_settings by {user.get('email')} — kept {best['_id']} (opening={best.get('opening_balance')}), deleted {deleted}"
+        )
+        return {
+            "ok": True,
+            "count_before": len(all_settings),
+            "deleted": deleted,
+            "kept_opening_balance": float(best.get("opening_balance", 0)),
+            "kept_opening_date": best.get("opening_date"),
+        }
+
+
     @router.get("/cashbook/summary")
     async def cash_summary(
         user: dict = Depends(require_super_admin),
@@ -529,16 +617,15 @@ def make_router(
 
         # Transaksi bulan ini
         month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
-        # === RUMUS SEDERHANA (dipakai kartu dashboard & Jurnal Akuntansi, 2026-08-08) ===
-        # Pemasukan = SEMUA type=in (dari akun manapun — 101, 301, 302, dll)
-        # Pengeluaran = SEMUA type=out
-        # Ini konsisten dengan yang tampil di tab Jurnal Akuntansi (semua transaksi non-Kas + Kas).
-        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
+        # === RUMUS KAS (dikembalikan per permintaan user 2026-08-08 sore) ===
+        # Total Pemasukan (KREDIT) — HANYA akun 101 (Kas Utama). Uang masuk ke revenue account
+        # (301/302 dll) TIDAK dihitung karena belum jadi kas fisik.
+        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
+        # Total Pengeluaran (DEBET) — SEMUA akun (semua uang keluar mengurangi kas).
         total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
         closing = opening_of_period + total_in - total_out
-        # KAS-only totals (untuk kartu Saldo Kas Real-time yang tetap pakai kas fisik)
-        total_in_kas_only = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
-        closing_kas_only = opening_of_period + total_in_kas_only - total_out
+        # Total in dari semua akun (untuk info di UI, tidak dipakai closing)
+        total_in_all_accounts = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
 
         # Breakdown per kategori
         breakdown_in: Dict[str, Dict[str, Any]] = {}
@@ -566,8 +653,7 @@ def make_router(
             "total_out": round(total_out, 2),
             "net": round(total_in - total_out, 2),
             "closing_balance": round(closing, 2),
-            "total_in_kas_only": round(total_in_kas_only, 2),
-            "closing_balance_kas_only": round(closing_kas_only, 2),
+            "total_in_all_accounts": round(total_in_all_accounts, 2),
             "tx_count": len(month_tx),
             "breakdown_in": sorted(breakdown_in.values(), key=lambda x: x["amount"], reverse=True),
             "breakdown_out": sorted(breakdown_out.values(), key=lambda x: x["amount"], reverse=True),
