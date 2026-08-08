@@ -529,11 +529,16 @@ def make_router(
 
         # Transaksi bulan ini
         month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
-        # Total Pemasukan (KREDIT) — hanya akun 101
-        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
-        # Total Pengeluaran (DEBET) — semua akun
+        # === RUMUS SEDERHANA (dipakai kartu dashboard & Jurnal Akuntansi, 2026-08-08) ===
+        # Pemasukan = SEMUA type=in (dari akun manapun — 101, 301, 302, dll)
+        # Pengeluaran = SEMUA type=out
+        # Ini konsisten dengan yang tampil di tab Jurnal Akuntansi (semua transaksi non-Kas + Kas).
+        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
         total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
         closing = opening_of_period + total_in - total_out
+        # KAS-only totals (untuk kartu Saldo Kas Real-time yang tetap pakai kas fisik)
+        total_in_kas_only = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
+        closing_kas_only = opening_of_period + total_in_kas_only - total_out
 
         # Breakdown per kategori
         breakdown_in: Dict[str, Dict[str, Any]] = {}
@@ -561,6 +566,8 @@ def make_router(
             "total_out": round(total_out, 2),
             "net": round(total_in - total_out, 2),
             "closing_balance": round(closing, 2),
+            "total_in_kas_only": round(total_in_kas_only, 2),
+            "closing_balance_kas_only": round(closing_kas_only, 2),
             "tx_count": len(month_tx),
             "breakdown_in": sorted(breakdown_in.values(), key=lambda x: x["amount"], reverse=True),
             "breakdown_out": sorted(breakdown_out.values(), key=lambda x: x["amount"], reverse=True),
