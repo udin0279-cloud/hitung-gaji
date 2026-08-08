@@ -385,33 +385,35 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 
 /* ---------- Buku Kas Tab ---------- */
 function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance, kasbonOpen }) {
-  // === RUMUS KAS (dikembalikan 2026-08-08 sore) ===
-  // Saldo Kas per baris = Saldo Awal + Kredit (HANYA akun 101 in) − Debet (semua out) SEQUENTIAL
-  // dari data yg TAMPIL di tab ini (Jurnal Akuntansi = tab utama yang menampilkan SEMUA transaksi).
+  // === RUMUS MATEMATIKA SD (2026-08-08 — permintaan user, FINAL) ===
+  // Saldo Awal + SEMUA Pemasukan (Kredit apapun) − SEMUA Pengeluaran (Debet apapun)
+  // Running balance per baris = sequential top→bottom.
+  // TIDAK ada filter akun 101, TIDAK ada pengurangan kasbon.
   //
-  // === HARDCODE OVERRIDE (2026-08-08 — permintaan user) ===
-  // Saldo Awal Agustus 2026 dipaksa Rp 10.432.636 (Saldo Akhir Juli 10.462.598 − Kasbon Pending).
-  // Angka ini sudah net-of-kasbon, jadi kasbon pending tidak dikurangi lagi agar tidak double-count.
+  // === HARDCODE OPENING BALANCE (permintaan user) ===
+  // Agustus 2026 dipaksa Rp 10.432.636 (net Saldo Akhir Juli setelah Kasbon).
   const FORCED_OPENING = { "2026-08": 10432636 };
   const isForced = Object.prototype.hasOwnProperty.call(FORCED_OPENING, month);
   const rawOpening = Number(txData.opening_balance || 0);
   const openingBalance = isForced ? FORCED_OPENING[month] : rawOpening;
-  const kasbonPendingTotal = isForced ? 0 : Number(kasbonOpen?.total_open || 0);
-  // Kredit visible (untuk footer): HANYA akun 101 in
-  const totalKreditVisible = filtered.reduce(
-    (s, t) => s + (t.type === "in" && t.account_code === "101" ? Number(t.amount || 0) : 0),
+
+  // Total Pemasukan = SEMUA `in` (apapun akunnya)
+  const totalPemasukan = filtered.reduce(
+    (s, t) => s + (t.type === "in" ? Number(t.amount || 0) : 0),
     0
   );
-  // Debet visible (untuk footer): semua out
-  const totalDebetVisible = filtered.reduce((s, t) => s + (t.type === "out" ? Number(t.amount || 0) : 0), 0);
-  const saldoAkhirComputed = openingBalance + totalKreditVisible - totalDebetVisible - kasbonPendingTotal;
-  // Info tambahan: total pemasukan (semua akun) — hanya untuk display, tidak masuk closing
-  const totalPemasukanAll = filtered.reduce((s, t) => s + (t.type === "in" ? Number(t.amount || 0) : 0), 0);
-  // Running balance per baris (KAS rule): +amount hanya jika in && 101, -amount jika out
+  // Total Pengeluaran = SEMUA `out`
+  const totalPengeluaran = filtered.reduce(
+    (s, t) => s + (t.type === "out" ? Number(t.amount || 0) : 0),
+    0
+  );
+  const saldoAkhirComputed = openingBalance + totalPemasukan - totalPengeluaran;
+
+  // Running balance per baris: sequential, ADD semua in, SUBTRACT semua out
   const balanceByRowIndex = (() => {
     let running = openingBalance;
     return filtered.map((t) => {
-      if (t.type === "in" && t.account_code === "101") running += Number(t.amount || 0);
+      if (t.type === "in") running += Number(t.amount || 0);
       else if (t.type === "out") running -= Number(t.amount || 0);
       return running;
     });
@@ -523,19 +525,11 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
                 <td className="px-4 py-3" colSpan={4}>
                   <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Saldo Akhir {monthLabel(month)}</span>
                   <div className="text-[10px] font-mono text-zinc-500 mt-0.5">
-                    Rumus Kas: {formatIDR(openingBalance)} + {formatIDR(totalKreditVisible)} (Kredit 101) − {formatIDR(totalDebetVisible)}
-                    {kasbonPendingTotal > 0 && (
-                      <span className="ml-1 text-[#F97316]"> − {formatIDR(kasbonPendingTotal)} (Kasbon Pending)</span>
-                    )}
-                    {totalPemasukanAll !== totalKreditVisible && (
-                      <span className="ml-2 text-amber-700">
-                        (Pemasukan lain non-101: {formatIDR(totalPemasukanAll - totalKreditVisible)} — tidak masuk kas)
-                      </span>
-                    )}
+                    Rumus: {formatIDR(openingBalance)} (Saldo Awal) + {formatIDR(totalPemasukan)} (Pemasukan) − {formatIDR(totalPengeluaran)} (Pengeluaran) = {formatIDR(saldoAkhirComputed)}
                   </div>
                 </td>
-                <td className="px-4 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalPemasukanAll)}</td>
-                <td className="px-4 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebetVisible)}</td>
+                <td className="px-4 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalPemasukan)}</td>
+                <td className="px-4 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalPengeluaran)}</td>
                 <td className="px-4 py-3 text-right font-mono font-bold text-[#002FA7] bg-[#002FA7]/5 text-lg" data-testid="book-saldo-kas-total">{formatIDR(saldoAkhirComputed)}</td>
                 <td className="px-4 py-3"></td>
               </tr>
