@@ -436,7 +436,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
         </div>
         <div className="flex items-center gap-3">
           <div className="text-xs text-zinc-500 font-mono">
-            {filtered.length} transaksi Non-Kas · <span className="text-zinc-400">(akun 101 Kas ditampilkan di tab Buku Kas)</span>
+            {filtered.length} transaksi
           </div>
           <button
             type="button"
