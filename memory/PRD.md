@@ -2005,3 +2005,19 @@ User perlu klik **"SET / HITUNG ULANG FEE"** di Laporan Penjualan → filter Jul
 3. Update `sale.shopee_admin_fee`
 
 Result: 54 sales Jul 2026 di production akan tersinkron ke model netto dgn 1 klik.
+
+---
+
+## Update 2026-08-08 — Formula Saldo Kas Konsisten (Kurangi Kasbon Pending di semua tampilan)
+User meminta Saldo Akhir Juli di production = **Rp 10.462.598**, yang diperoleh dari `Kas Raw − Kasbon PENDING`.
+
+### Files Changed
+- `/app/frontend/src/pages/CashBook.jsx`:
+  - `BookTab` (tab **Jurnal Akuntansi**): tambah param `kasbonOpen`, `saldoAkhirComputed` sekarang `= opening + kredit(101) - debet - kasbonPendingTotal`. Rumus footer menampilkan " − X (Kasbon Pending)" jika ada.
+  - `JournalTab` (tab **Buku Kas**): sudah subtract `kasbonTotal` (dari sesi lalu).
+  - Header cards `SALDO KAS REAL-TIME` & `SALDO AKHIR JUL 2026`: sudah subtract `kasbonOpen.total_open`.
+
+### Verified in Preview
+- Saldo Awal Jul: Rp 1.000.000, Kredit(101): Rp 0, Debet: Rp 115.500, Kasbon Pending: Rp 0
+- Semua 3 tampilan (2 tab + header) menampilkan **Rp 884.500** ✓ konsisten
+- Rumus final untuk semua: `Saldo Awal + Kredit(101) − Debet − Kasbon Pending`

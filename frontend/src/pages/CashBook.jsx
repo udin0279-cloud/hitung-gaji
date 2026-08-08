@@ -289,6 +289,7 @@ export default function CashBook() {
           <BookTab
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
             txData={txData} filtered={filteredBook} loading={loading}
+            kasbonOpen={kasbonOpen}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
             onAdjustBalance={() => setOpenAdjust(true)}
@@ -383,11 +384,12 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 }
 
 /* ---------- Buku Kas Tab ---------- */
-function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance }) {
+function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance, kasbonOpen }) {
   // === RUMUS KAS (dikembalikan 2026-08-08 sore) ===
   // Saldo Kas per baris = Saldo Awal + Kredit (HANYA akun 101 in) − Debet (semua out) SEQUENTIAL
   // dari data yg TAMPIL di tab ini (Jurnal Akuntansi = tab utama yang menampilkan SEMUA transaksi).
   const openingBalance = Number(txData.opening_balance || 0);
+  const kasbonPendingTotal = Number(kasbonOpen?.total_open || 0);
   // Kredit visible (untuk footer): HANYA akun 101 in
   const totalKreditVisible = filtered.reduce(
     (s, t) => s + (t.type === "in" && t.account_code === "101" ? Number(t.amount || 0) : 0),
@@ -395,7 +397,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
   );
   // Debet visible (untuk footer): semua out
   const totalDebetVisible = filtered.reduce((s, t) => s + (t.type === "out" ? Number(t.amount || 0) : 0), 0);
-  const saldoAkhirComputed = openingBalance + totalKreditVisible - totalDebetVisible;
+  const saldoAkhirComputed = openingBalance + totalKreditVisible - totalDebetVisible - kasbonPendingTotal;
   // Info tambahan: total pemasukan (semua akun) — hanya untuk display, tidak masuk closing
   const totalPemasukanAll = filtered.reduce((s, t) => s + (t.type === "in" ? Number(t.amount || 0) : 0), 0);
   // Running balance per baris (KAS rule): +amount hanya jika in && 101, -amount jika out
@@ -515,6 +517,9 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
                   <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Saldo Akhir {monthLabel(month)}</span>
                   <div className="text-[10px] font-mono text-zinc-500 mt-0.5">
                     Rumus Kas: {formatIDR(openingBalance)} + {formatIDR(totalKreditVisible)} (Kredit 101) − {formatIDR(totalDebetVisible)}
+                    {kasbonPendingTotal > 0 && (
+                      <span className="ml-1 text-[#F97316]"> − {formatIDR(kasbonPendingTotal)} (Kasbon Pending)</span>
+                    )}
                     {totalPemasukanAll !== totalKreditVisible && (
                       <span className="ml-2 text-amber-700">
                         (Pemasukan lain non-101: {formatIDR(totalPemasukanAll - totalKreditVisible)} — tidak masuk kas)
@@ -1007,10 +1012,17 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             <tr className="border-b border-zinc-200 bg-[#002FA7]/5">
               <td colSpan={4} className="px-3 py-2.5">
                 <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Saldo Akhir {prevMonthLabel(month)}</span>
+                {(kasbonOpen?.total_open || 0) > 0 && (
+                  <div className="text-[10px] font-mono text-zinc-500 mt-0.5">
+                    Kas Raw {formatIDR(txData.opening_balance)} − Kasbon Pending {formatIDR(kasbonOpen.total_open)}
+                  </div>
+                )}
               </td>
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5"></td>
-              <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]">{formatIDR(txData.opening_balance)}</td>
+              <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]" data-testid="prev-month-closing">
+                {formatIDR(Number(txData.opening_balance || 0) - Number(kasbonOpen?.total_open || 0))}
+              </td>
               <td className="px-3 py-2.5"></td>
             </tr>
             {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
