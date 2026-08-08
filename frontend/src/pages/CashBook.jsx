@@ -388,8 +388,15 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
   // === RUMUS KAS (dikembalikan 2026-08-08 sore) ===
   // Saldo Kas per baris = Saldo Awal + Kredit (HANYA akun 101 in) − Debet (semua out) SEQUENTIAL
   // dari data yg TAMPIL di tab ini (Jurnal Akuntansi = tab utama yang menampilkan SEMUA transaksi).
-  const openingBalance = Number(txData.opening_balance || 0);
-  const kasbonPendingTotal = Number(kasbonOpen?.total_open || 0);
+  //
+  // === HARDCODE OVERRIDE (2026-08-08 — permintaan user) ===
+  // Saldo Awal Agustus 2026 dipaksa Rp 10.432.636 (Saldo Akhir Juli 10.462.598 − Kasbon Pending).
+  // Angka ini sudah net-of-kasbon, jadi kasbon pending tidak dikurangi lagi agar tidak double-count.
+  const FORCED_OPENING = { "2026-08": 10432636 };
+  const isForced = Object.prototype.hasOwnProperty.call(FORCED_OPENING, month);
+  const rawOpening = Number(txData.opening_balance || 0);
+  const openingBalance = isForced ? FORCED_OPENING[month] : rawOpening;
+  const kasbonPendingTotal = isForced ? 0 : Number(kasbonOpen?.total_open || 0);
   // Kredit visible (untuk footer): HANYA akun 101 in
   const totalKreditVisible = filtered.reduce(
     (s, t) => s + (t.type === "in" && t.account_code === "101" ? Number(t.amount || 0) : 0),
