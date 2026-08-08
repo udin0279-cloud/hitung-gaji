@@ -384,13 +384,23 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 
 /* ---------- Buku Kas Tab ---------- */
 function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance }) {
-  // Kolom SALDO KAS memakai field `balance` dari backend yang sudah dihitung
-  // konsisten dgn tab Buku Kas: opening_balance + Σ(in & akun 101) − Σ(out semua akun).
-  // Formula: Saldo Berjalan = Saldo Sebelumnya + Kredit − Debet.
-  // Row "SALDO AWAL <Bulan>" selalu tampil paling atas sebagai titik awal perhitungan.
+  // === RUMUS SEDERHANA (per permintaan user 2026-08-08) ===
+  // Saldo Kas per baris HANYA dihitung dari transaksi yang TAMPIL di tab ini:
+  //   Saldo Kas = Saldo Awal + Σ(Pemasukan baris sebelumnya) − Σ(Pengeluaran baris sebelumnya)
+  // TIDAK mengambil data dari akun lain atau bulan lain — persis apa yg user lihat.
   const openingBalance = Number(txData.opening_balance || 0);
-  // Backend selalu populate `balance` per-tx; fallback ke opening jika kosong (edge).
-  const balanceFor = (t) => (t.balance !== undefined && t.balance !== null ? Number(t.balance) : openingBalance);
+  const totalKreditVisible = filtered.reduce((s, t) => s + (t.type === "in" ? Number(t.amount || 0) : 0), 0);
+  const totalDebetVisible = filtered.reduce((s, t) => s + (t.type === "out" ? Number(t.amount || 0) : 0), 0);
+  const saldoAkhirComputed = openingBalance + totalKreditVisible - totalDebetVisible;
+  // Running balance per baris, dihitung sequential berdasarkan urutan tampilan
+  const balanceByRowIndex = (() => {
+    let running = openingBalance;
+    return filtered.map((t) => {
+      if (t.type === "in") running += Number(t.amount || 0);
+      else if (t.type === "out") running -= Number(t.amount || 0);
+      return running;
+    });
+  })();
 
   return (
     <div>
@@ -466,7 +476,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             {!loading && filtered.length === 0 && (
               <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi non-Kas bulan ini.</td></tr>
             )}
-            {filtered.map((t) => (
+            {filtered.map((t, idx) => (
               <tr key={t.id} data-testid="cash-tx-row" className={`border-b border-zinc-100 hover:bg-zinc-50/80 ${t.auto ? "bg-amber-50/30" : ""}`}>
                 <td className="px-4 py-2.5 font-mono text-xs whitespace-nowrap">
                   {t.date}
@@ -484,7 +494,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
                 </td>
                 <td className="px-4 py-2.5 text-right font-mono text-xs">{t.type === "in" ? <span className="text-[#008A00] font-bold">{formatIDR(t.amount)}</span> : ""}</td>
                 <td className="px-4 py-2.5 text-right font-mono text-xs">{t.type === "out" ? <span className="text-[#E81123] font-bold">{formatIDR(t.amount)}</span> : ""}</td>
-                <td data-testid="book-saldo-kas-cell" className="px-4 py-2.5 text-right font-mono text-xs font-bold text-[#002FA7] bg-[#002FA7]/5 whitespace-nowrap">{formatIDR(balanceFor(t))}</td>
+                <td data-testid="book-saldo-kas-cell" className="px-4 py-2.5 text-right font-mono text-xs font-bold text-[#002FA7] bg-[#002FA7]/5 whitespace-nowrap">{formatIDR(balanceByRowIndex[idx])}</td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center justify-end gap-1">
                     <button data-testid="edit-tx-button" onClick={() => onEdit(t)} disabled={t.auto} className="p-1.5 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed" title={t.auto ? "Transaksi otomatis — edit di modul sumbernya" : "Edit"}><Pencil className="w-3.5 h-3.5" /></button>
@@ -496,11 +506,14 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             {!loading && filtered.length > 0 && (
               <tr className="border-t-2 border-zinc-900 bg-zinc-50">
                 <td className="px-4 py-3" colSpan={4}>
-                  <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">TOTAL NON-KAS</span>
+                  <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Saldo Akhir {monthLabel(month)}</span>
+                  <div className="text-[10px] font-mono text-zinc-500 mt-0.5">
+                    {formatIDR(openingBalance)} + {formatIDR(totalKreditVisible)} − {formatIDR(totalDebetVisible)}
+                  </div>
                 </td>
-                <td className="px-4 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(filtered.filter(t => t.type === "in").reduce((s, t) => s + Number(t.amount || 0), 0))}</td>
-                <td className="px-4 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(filtered.filter(t => t.type === "out").reduce((s, t) => s + Number(t.amount || 0), 0))}</td>
-                <td className="px-4 py-3 text-right font-mono font-bold text-[#002FA7] bg-[#002FA7]/5" data-testid="book-saldo-kas-total">{formatIDR(currentBalance ?? 0)}</td>
+                <td className="px-4 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalKreditVisible)}</td>
+                <td className="px-4 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebetVisible)}</td>
+                <td className="px-4 py-3 text-right font-mono font-bold text-[#002FA7] bg-[#002FA7]/5 text-lg" data-testid="book-saldo-kas-total">{formatIDR(saldoAkhirComputed)}</td>
                 <td className="px-4 py-3"></td>
               </tr>
             )}
