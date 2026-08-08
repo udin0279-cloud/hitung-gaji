@@ -1584,13 +1584,45 @@ function DiagnoseSaldoModal({ month, onClose }) {
           {err && <div className="p-3 bg-[#E81123]/10 border border-[#E81123]/30 text-[#E81123] text-sm">{err}</div>}
           {data && (
             <>
-              {/* Ringkasan Rumus */}
+              {/* Ringkasan Rumus SEDERHANA (yg user minta) — Opening + SEMUA Kredit − SEMUA Debet */}
+              {data.simple && (
+                <div className="p-4 bg-[#008A00]/5 border-2 border-[#008A00]/50">
+                  <div className="text-[10px] uppercase tracking-widest font-bold text-[#008A00] mb-2">
+                    Rumus Sederhana {mode === "month" ? `Bulan ${monthLabel(month)}` : "(all-time)"}
+                  </div>
+                  <div className="font-mono text-sm text-zinc-800 mb-3">
+                    Saldo Sederhana = {mode === "month" ? "Saldo Awal" : "Opening"} + <b className="text-[#008A00]">Semua Kredit</b> − <b className="text-[#E81123]">Semua Debet</b>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                    <div>
+                      <div className="text-zinc-500 uppercase tracking-widest text-[10px]">
+                        {mode === "month" ? "Saldo Awal" : "Opening"}
+                      </div>
+                      <div className="font-mono font-bold text-zinc-900 mt-1">{formatIDR(data.opening_balance)}</div>
+                    </div>
+                    <div>
+                      <div className="text-zinc-500 uppercase tracking-widest text-[10px]">+ Semua Kredit</div>
+                      <div className="font-mono font-bold text-[#008A00] mt-1">{formatIDR(data.simple.total_in_all)}</div>
+                    </div>
+                    <div>
+                      <div className="text-zinc-500 uppercase tracking-widest text-[10px]">− Semua Debet</div>
+                      <div className="font-mono font-bold text-[#E81123] mt-1">{formatIDR(data.simple.total_out_all)}</div>
+                    </div>
+                    <div className="border-l-2 border-[#008A00] pl-3">
+                      <div className="text-zinc-500 uppercase tracking-widest text-[10px]">= Hasil</div>
+                      <div data-testid="diagnose-simple-balance" className="font-mono font-bold text-lg text-[#008A00] mt-1">{formatIDR(data.simple.balance)}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Ringkasan Rumus KAS (yg dipakai backend untuk Saldo Real-time) */}
               <div className="p-4 bg-[#002FA7]/5 border border-[#002FA7]/30">
                 <div className="text-[10px] uppercase tracking-widest font-bold text-[#002FA7] mb-2">
-                  {mode === "month" ? `Rumus Saldo Akhir ${monthLabel(month)}` : "Rumus Saldo Real-time (all-time)"}
+                  Rumus Kas (dipakai kartu Saldo Real-time) — {mode === "month" ? monthLabel(month) : "all-time"}
                 </div>
                 <div className="font-mono text-sm text-zinc-800 mb-3">
-                  Saldo = {mode === "month" ? "Saldo Awal Bulan" : "Opening"} + Total Kredit (akun 101) − Total Debet (semua akun)
+                  Saldo Kas = {mode === "month" ? "Saldo Awal" : "Opening"} + Kredit (HANYA akun 101) − Semua Debet
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                   <div>
@@ -1600,7 +1632,7 @@ function DiagnoseSaldoModal({ month, onClose }) {
                     <div className="font-mono font-bold text-zinc-900 mt-1">{formatIDR(data.opening_balance)}</div>
                   </div>
                   <div>
-                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">+ Kredit</div>
+                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">+ Kredit (101)</div>
                     <div className="font-mono font-bold text-[#008A00] mt-1">{formatIDR(data.total_in_kas_101)}</div>
                   </div>
                   <div>
@@ -1608,9 +1640,7 @@ function DiagnoseSaldoModal({ month, onClose }) {
                     <div className="font-mono font-bold text-[#E81123] mt-1">{formatIDR(data.total_out_all_accounts)}</div>
                   </div>
                   <div className="border-l-2 border-[#002FA7] pl-3">
-                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">
-                      = {mode === "month" ? `Saldo Akhir ${monthLabel(month)}` : "Saldo Real-time"}
-                    </div>
+                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">= Saldo Kas</div>
                     <div data-testid="diagnose-balance" className="font-mono font-bold text-lg text-[#002FA7] mt-1">{formatIDR(data.balance_calculated)}</div>
                   </div>
                 </div>
@@ -1621,6 +1651,19 @@ function DiagnoseSaldoModal({ month, onClose }) {
                   )}
                 </div>
               </div>
+
+              {/* Delta antara 2 rumus — bantu user mengerti selisih */}
+              {data.simple && Math.abs(data.simple.balance - data.balance_calculated) > 0.01 && (
+                <div className="p-3 bg-amber-50 border border-amber-300 text-xs">
+                  <div className="font-bold text-amber-800 mb-1">
+                    ⚠ Selisih 2 rumus: {formatIDR(data.simple.balance - data.balance_calculated)}
+                  </div>
+                  <div className="text-amber-900">
+                    Perbedaan = {formatIDR(data.ignored_in_non_101.total_amount)} dari <b>{data.ignored_in_non_101.count} transaksi Penjualan/Pemasukan yg masuk akun revenue (301, 302, dll)</b>, bukan akun Kas (101).
+                    Rumus Sederhana menghitung ini sebagai kas masuk, sedangkan Rumus Kas tidak (karena uang belum benar-benar masuk kas fisik — masih di platform Shopee/Bank).
+                  </div>
+                </div>
+              )}
 
               {/* Ignored In (revenue non-101) — biasanya sumber kebingungan */}
               {data.ignored_in_non_101.count > 0 && (

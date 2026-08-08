@@ -421,12 +421,16 @@ def make_router(
         in_by_account = {}
         out_by_account = {}
         ignored_in = []  # type=in tapi bukan akun 101 → TIDAK menambah saldo kas
+        # SEDERHANA totals — semua type=in dan type=out tanpa filter akun
+        simple_total_in = 0.0
+        simple_total_out = 0.0
         for t in txs:
             code = t.get("account_code") or "?"
             name = t.get("account_name") or ""
             amt = float(t.get("amount", 0))
             key = f"{code} · {name}"
             if t["type"] == "in":
+                simple_total_in += amt
                 if code == "101":
                     in_by_account[key] = in_by_account.get(key, {"code": code, "name": name, "count": 0, "total": 0.0})
                     in_by_account[key]["count"] += 1
@@ -435,6 +439,7 @@ def make_router(
                     # Type=in but not 101 — these are revenue accounts (301, 302, dll) yg TIDAK menambah kas fisik
                     ignored_in.append({"code": code, "name": name, "amount": amt, "date": t.get("date"), "desc": t.get("description")})
             elif t["type"] == "out":
+                simple_total_out += amt
                 out_by_account[key] = out_by_account.get(key, {"code": code, "name": name, "count": 0, "total": 0.0})
                 out_by_account[key]["count"] += 1
                 out_by_account[key]["total"] += amt
@@ -443,6 +448,8 @@ def make_router(
         total_out = sum(v["total"] for v in out_by_account.values())
         total_ignored = sum(x["amount"] for x in ignored_in)
         balance = opening_period + total_in_kas - total_out
+        # SEDERHANA balance = Opening + semua type=in − semua type=out (tanpa filter akun)
+        simple_balance = opening_period + simple_total_in - simple_total_out
 
         # Adjustment transactions detection
         adj_count = sum(1 for t in txs if t.get("reference") == "ADJUSTMENT")
@@ -456,6 +463,13 @@ def make_router(
             "total_out_all_accounts": round(total_out, 2),
             "formula": f"Saldo{' Akhir ' + month if month else ' Real-time'} = {opening_period:,.0f} + {total_in_kas:,.0f} − {total_out:,.0f}",
             "balance_calculated": round(balance, 2),
+            # SEDERHANA — Opening + SEMUA type=in − SEMUA type=out (tanpa filter akun)
+            "simple": {
+                "total_in_all": round(simple_total_in, 2),
+                "total_out_all": round(simple_total_out, 2),
+                "balance": round(simple_balance, 2),
+                "formula": f"Saldo Sederhana = {opening_period:,.0f} + {simple_total_in:,.0f} − {simple_total_out:,.0f}",
+            },
             "tx_count_total": len(txs),
             "tx_count_kredit_101": sum(v["count"] for v in in_by_account.values()),
             "tx_count_debet_all": sum(v["count"] for v in out_by_account.values()),
