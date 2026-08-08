@@ -2021,3 +2021,26 @@ User meminta Saldo Akhir Juli di production = **Rp 10.462.598**, yang diperoleh 
 - Saldo Awal Jul: Rp 1.000.000, Kredit(101): Rp 0, Debet: Rp 115.500, Kasbon Pending: Rp 0
 - Semua 3 tampilan (2 tab + header) menampilkan **Rp 884.500** ✓ konsisten
 - Rumus final untuk semua: `Saldo Awal + Kredit(101) − Debet − Kasbon Pending`
+
+---
+
+## Update 2026-08-08 — Sinkronisasi Penjualan Tunai (301 → 101)
+User meminta agar Penjualan Tunai (cash payment_method) langsung menambah Kas 101 supaya header cards Saldo Real-time sinkron dengan tab Jurnal Akuntansi.
+
+### Backend Changes
+- `/app/backend/server.py`:
+  - `PAYMENT_ACCOUNT_MAP["cash"] = "101"` (dari "301")
+  - `_resolve_payment_account("cash", ...)` return `("101", "Penjualan Tunai")`
+- `/app/backend/routers/sales.py`: hardcoded `account_code="301"` di path restore diganti panggilan `_resolve_payment_account()`
+- `/app/backend/routers/cashbook.py`: endpoint baru `POST /cashbook/migrate-cash-sales-to-101` — migrasi historis cash tx `account_code="301"` (payment_method=cash) → `"101"`. Idempotent.
+
+### Frontend Changes
+- `/app/frontend/src/pages/CashBook.jsx`:
+  - Tombol "Sinkron Ulang Kas" sekarang juga trigger migrasi cash-sales-to-101
+  - `filteredBook` tidak lagi mengecualikan akun 101 (agar Penjualan Tunai muncul di Jurnal Akuntansi & menambah saldo)
+
+### Verified in Preview
+- Migrasi berjalan: 1 tx sale historis dipindah 301→101
+- Saldo Kas Real-time (`GET /cashbook/balance`): **Rp 1.884.500** ✓
+- Tab Jurnal Akuntansi menampilkan baris "101 Penjualan Tunai" dengan Saldo Kas naik dari 1jt→2jt
+- 4 header cards + 1 tabel Jurnal semua **konsisten** menunjukkan Saldo Akhir Rp 1.884.500

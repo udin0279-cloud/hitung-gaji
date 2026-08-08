@@ -4358,7 +4358,7 @@ async def products_delete(product_id: str, user: dict = Depends(require_super_ad
 
 
 PAYMENT_ACCOUNT_MAP = {
-    "cash": "301",             # Penjualan Tunai (existing)
+    "cash": "101",             # Penjualan Tunai → langsung masuk Kas Utama (2026-08-08)
     "transfer_bca": "301-BCA", # Transfer BCA
     "transfer_mandiri": "301-MDR",
     "shopee_plaza": "301-SPP",
@@ -4379,9 +4379,11 @@ def _resolve_payment_account(payment_method: str, payment_bank: Optional[str] = 
     if pm == "shopee_kastem":
         return ("301-SPK", "Shopee Kastem")
     if pm in ("cash", "tunai"):
-        return ("301", "Penjualan Tunai")
+        # 2026-08-08: cash sales langsung masuk akun 101 Kas Utama supaya
+        # Saldo Kas Real-time (header) sinkron dengan Jurnal Akuntansi.
+        return ("101", "Penjualan Tunai")
     # Fallback (legacy "tunai" atau lainnya)
-    return ("301", "Penjualan Tunai")
+    return ("101", "Penjualan Tunai")
 
 
 

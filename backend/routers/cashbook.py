@@ -807,6 +807,44 @@ def make_router(
             "sample": sample[:10],
         }
 
+    @router.post("/cashbook/migrate-cash-sales-to-101")
+    async def cash_migrate_cash_sales_to_101(user: dict = Depends(require_super_admin)):
+        """Migrasi historis: Penjualan Tunai (cash) yang sebelumnya tercatat dengan
+        account_code='301' → ubah ke '101' agar masuk ke Kas Utama Real-time.
+
+        Aman dijalankan berkali-kali (idempotent) — hanya menyentuh cash_transactions
+        yang direference oleh sale dgn payment_method='cash' & tercatat 301.
+        """
+        # Ambil semua sale_no dengan payment_method cash/tunai
+        cash_sales_cursor = db.sales.find(
+            {"payment_method": {"$in": ["cash", "tunai"]}},
+            {"_id": 0, "sale_no": 1},
+        )
+        sale_nos = [s.get("sale_no") for s in await cash_sales_cursor.to_list(length=200000) if s.get("sale_no")]
+        if not sale_nos:
+            return {"ok": True, "migrated": 0, "note": "Tidak ada Penjualan Tunai historis."}
+
+        # Update cash_transactions
+        result = await db.cash_transactions.update_many(
+            {
+                "reference": {"$in": sale_nos},
+                "account_code": "301",
+                "type": "in",
+            },
+            {"$set": {"account_code": "101"}},
+        )
+        logger.warning(
+            f"CASH SALES MIGRATE 301→101 by {user.get('email')} — updated {result.modified_count} tx"
+        )
+        return {
+            "ok": True,
+            "migrated": result.modified_count,
+            "sale_count_scanned": len(sale_nos),
+        }
+
+
+
+
 
     @router.get("/cashbook/export")
     async def cash_export(user: dict = Depends(require_super_admin), month: Optional[str] = None):

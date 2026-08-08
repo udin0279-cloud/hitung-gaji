@@ -141,8 +141,10 @@ export default function CashBook() {
       || (t.reference || "").toLowerCase().includes(q);
   };
 
-  // BukuKas: SEMUA akun KECUALI 101 Kas (per request user)
-  const filteredBook = txData.transactions.filter((t) => t.account_code !== "101" && matchesSearch(t));
+  // Jurnal Akuntansi: SEMUA transaksi (termasuk akun 101 Kas Utama)
+  // 2026-08-08: filter `!== "101"` dihapus per permintaan user — semua Pemasukan
+  // wajib menambah saldo, semua Pengeluaran wajib mengurangi (matematika murni).
+  const filteredBook = txData.transactions.filter((t) => matchesSearch(t));
   // Buku Kas (tab === "journal" · JournalTab):
   // - KREDIT (uang masuk, type=in): DIKUNCI hanya akun 101 Kas Utama.
   // - DEBET  (uang keluar, type=out): TIDAK di-filter, terima dari akun mana pun.
@@ -191,25 +193,28 @@ export default function CashBook() {
   const [resyncing, setResyncing] = useState(false);
   const resyncSales = async () => {
     if (!window.confirm(
-      "Sinkron Ulang Kas dari Penjualan + Pembelian?\n\nAksi ini akan:\n• Scan semua transaksi Penjualan (DP + LUNAS + pelunasan)\n• Scan semua PO Pembelian (bandingkan amount_paid vs cash tx tercatat)\n• Insert baris kas yang belum tercatat di Buku Kas\n• Data yang sudah ada akan di-skip (idempotent)\n\nLanjutkan?"
+      "Sinkron Ulang Kas dari Penjualan + Pembelian?\n\nAksi ini akan:\n• Migrasi Penjualan Tunai historis (akun 301 → 101 Kas Utama)\n• Scan semua transaksi Penjualan (DP + LUNAS + pelunasan)\n• Scan semua PO Pembelian (bandingkan amount_paid vs cash tx tercatat)\n• Insert baris kas yang belum tercatat di Buku Kas\n• Data yang sudah ada akan di-skip (idempotent)\n\nLanjutkan?"
     )) return;
     setResyncing(true);
     try {
-      const [salesRes, poRes] = await Promise.all([
+      const [migRes, salesRes, poRes] = await Promise.all([
+        api.post("/cashbook/migrate-cash-sales-to-101"),
         api.post("/cashbook/resync-sales"),
         api.post("/cashbook/resync-purchases"),
       ]);
+      const md = migRes.data;
       const sd = salesRes.data;
       const pd = poRes.data;
       const totalInserted = sd.missing_inserted + pd.missing_inserted;
       const totalAmount = Number(sd.total_inserted_amount) + Number(pd.total_inserted_amount);
+      const migMsg = md.migrated > 0 ? ` · Migrasi 301→101: ${md.migrated} tx` : "";
       if (totalInserted === 0) {
         toast.success(
-          `Sudah sinkron. Penjualan: ${sd.sales_scanned} sales · ${sd.payments_scanned} bayar · PO: ${pd.po_scanned} PO. Tidak ada data hilang.`
+          `Sudah sinkron. Penjualan: ${sd.sales_scanned} sales · ${sd.payments_scanned} bayar · PO: ${pd.po_scanned} PO.${migMsg}`
         );
       } else {
         toast.success(
-          `Berhasil sinkron ${totalInserted} baris (total Rp ${Number(totalAmount).toLocaleString("id-ID")}). Penjualan: ${sd.missing_inserted} · Pembelian: ${pd.missing_inserted}.`
+          `Berhasil sinkron ${totalInserted} baris (total Rp ${Number(totalAmount).toLocaleString("id-ID")}). Penjualan: ${sd.missing_inserted} · Pembelian: ${pd.missing_inserted}.${migMsg}`
         );
       }
       await loadAll();

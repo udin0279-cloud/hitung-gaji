@@ -527,10 +527,14 @@ def make_router(
                     if mat:
                         new_stock = round(float(mat.get("current_stock", 0)) - float(qty), 4)
                         await db.materials.update_one({"id": mid}, {"$set": {"current_stock": new_stock, "updated_at": now_iso}})
-                # Reinsert cash tx
+                # Reinsert cash tx — pakai payment_method untuk resolve akun (cash → 101, transfer → 301-BCA, dll)
+                _ex_acc_code, _ex_acc_label = _resolve_payment_account(
+                    existing.get("payment_method") or "cash",
+                    existing.get("payment_bank"),
+                )
                 await _insert_cash_transaction(
-                    account_code="301",
-                    description=f"Penjualan {existing.get('sale_no')} — {existing.get('customer_name')}",
+                    account_code=_ex_acc_code,
+                    description=f"Penjualan {existing.get('sale_no')} — {existing.get('customer_name')} · {_ex_acc_label}",
                     amount=float(existing.get("total", 0)),
                     reference=existing.get("sale_no"),
                     date_iso=existing.get("date"),
