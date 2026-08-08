@@ -373,20 +373,13 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 
 /* ---------- Buku Kas Tab ---------- */
 function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance }) {
-  // Running Saldo Kas per transaksi — mengikuti aturan Buku Kas:
-  //   • KREDIT (uang masuk) = HANYA type=in & account_code=101 → menambah saldo
-  //   • DEBET  (uang keluar) = type=out dari akun mana pun     → mengurangi saldo
-  // Snapshot per tx.id agar bisa ditampilkan di kolom SALDO KAS pada tabel non-Kas.
-  const kasBalanceByTxId = useMemo(() => {
-    let running = Number(txData.opening_balance || 0);
-    const map = {};
-    for (const t of txData.transactions || []) {
-      if (t.type === "in" && t.account_code === "101") running += Number(t.amount || 0);
-      else if (t.type === "out") running -= Number(t.amount || 0);
-      map[t.id] = running;
-    }
-    return map;
-  }, [txData]);
+  // Kolom SALDO KAS memakai field `balance` dari backend yang sudah dihitung
+  // konsisten dgn tab Buku Kas: opening_balance + Σ(in & akun 101) − Σ(out semua akun).
+  // Formula: Saldo Berjalan = Saldo Sebelumnya + Kredit − Debet.
+  // Row "SALDO AWAL <Bulan>" selalu tampil paling atas sebagai titik awal perhitungan.
+  const openingBalance = Number(txData.opening_balance || 0);
+  // Backend selalu populate `balance` per-tx; fallback ke opening jika kosong (edge).
+  const balanceFor = (t) => (t.balance !== undefined && t.balance !== null ? Number(t.balance) : openingBalance);
 
   return (
     <div>
@@ -445,6 +438,19 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             </tr>
           </thead>
           <tbody>
+            {/* Baris SALDO AWAL — selalu di atas sebagai titik awal perhitungan */}
+            <tr data-testid="book-saldo-awal-row" className="bg-[#002FA7]/5 border-b-2 border-[#002FA7]/30">
+              <td colSpan={6} className="px-4 py-3">
+                <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">
+                  Saldo Awal {monthLabel(month)}
+                </span>
+                <span className="ml-2 text-[10px] text-zinc-500 font-mono">(pindahan bulan sebelumnya)</span>
+              </td>
+              <td className="px-4 py-3 text-right font-mono text-sm font-bold text-[#002FA7] bg-[#002FA7]/10 whitespace-nowrap" data-testid="book-saldo-awal-value">
+                {formatIDR(openingBalance)}
+              </td>
+              <td className="px-4 py-3"></td>
+            </tr>
             {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-400 font-mono text-xs">Memuat…</td></tr>}
             {!loading && filtered.length === 0 && (
               <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400 font-mono text-xs">Belum ada transaksi non-Kas bulan ini.</td></tr>
@@ -467,7 +473,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
                 </td>
                 <td className="px-4 py-2.5 text-right font-mono text-xs">{t.type === "in" ? <span className="text-[#008A00] font-bold">{formatIDR(t.amount)}</span> : ""}</td>
                 <td className="px-4 py-2.5 text-right font-mono text-xs">{t.type === "out" ? <span className="text-[#E81123] font-bold">{formatIDR(t.amount)}</span> : ""}</td>
-                <td data-testid="book-saldo-kas-cell" className="px-4 py-2.5 text-right font-mono text-xs font-bold text-[#002FA7] bg-[#002FA7]/5 whitespace-nowrap">{formatIDR(kasBalanceByTxId[t.id] ?? 0)}</td>
+                <td data-testid="book-saldo-kas-cell" className="px-4 py-2.5 text-right font-mono text-xs font-bold text-[#002FA7] bg-[#002FA7]/5 whitespace-nowrap">{formatIDR(balanceFor(t))}</td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center justify-end gap-1">
                     <button data-testid="edit-tx-button" onClick={() => onEdit(t)} disabled={t.auto} className="p-1.5 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed" title={t.auto ? "Transaksi otomatis — edit di modul sumbernya" : "Edit"}><Pencil className="w-3.5 h-3.5" /></button>
