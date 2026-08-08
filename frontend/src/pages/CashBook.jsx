@@ -145,13 +145,9 @@ export default function CashBook() {
   // 2026-08-08: filter `!== "101"` dihapus per permintaan user — semua Pemasukan
   // wajib menambah saldo, semua Pengeluaran wajib mengurangi (matematika murni).
   const filteredBook = txData.transactions.filter((t) => matchesSearch(t));
-  // Buku Kas (tab === "journal" · JournalTab):
-  // - KREDIT (uang masuk, type=in): DIKUNCI hanya akun 101 Kas Utama.
-  // - DEBET  (uang keluar, type=out): TIDAK di-filter, terima dari akun mana pun.
-  const filteredJournal = txData.transactions.filter((t) =>
-    (t.type === "out" || (t.type === "in" && t.account_code === "101")) &&
-    matchesSearch(t)
-  );
+  // Tab Buku Kas (JournalTab): tampilkan SEMUA transaksi kas
+  // 2026-08-08: filter akun 101 dihapus per matematika murni — semua in menambah kas.
+  const filteredJournal = txData.transactions.filter((t) => matchesSearch(t));
 
   const removeTx = async (t) => {
     if (t.auto) {
@@ -963,7 +959,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Kredit: Akun 101 · Debet: Semua Akun</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Kredit: Semua Akun · Debet: Semua Akun</span>
           {adjustCount > 0 && (
             <>
               <button
@@ -1159,7 +1155,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         </table>
       </div>
       <div className="mt-3 text-[11px] text-zinc-500">
-        <b>Konvensi:</b> Debet = pengeluaran · Kredit = pemasukan akun 101 · <b className="text-[#F97316]">Kasbon</b> = uang muka staff yg belum lunas (kas fisik berkurang meski belum jadi expense resmi). Rumus: <b>Saldo Akhir = Saldo Awal + Kredit − Debet − Kasbon Belum Lunas</b>.
+        <b>Konvensi:</b> Debet = pengeluaran · Kredit = pemasukan (SEMUA akun) · <b className="text-[#F97316]">Kasbon</b> = uang muka staff yg belum lunas (kas fisik berkurang meski belum jadi expense resmi). Rumus: <b>Saldo Akhir = Saldo Awal + Kredit − Debet − Kasbon Belum Lunas</b>.
         Auto-sync dari modul <b>Pembelian</b>, <b>Penjualan/Kasir</b>, <b>Kas Operasional</b>, dan <b>Kasbon Sementara</b>. Kasbon LUNAS tidak ditampilkan — kelola di tab <b>Kasbon Sementara</b>.
       </div>
     </div>

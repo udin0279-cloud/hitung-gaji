@@ -187,14 +187,15 @@ def make_router(
         if account_code:
             q["account_code"] = account_code
         items = await db.cash_transactions.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(length=20000)
-        # Compute running balance — Kas flow: HANYA type=in dari akun 101 menambah, SEMUA type=out mengurangi.
-        # Ini konsisten dengan filter tab Buku Kas di frontend.
+        # Compute running balance — matematika murni (2026-08-08):
+        # SEMUA type=in menambah saldo, SEMUA type=out mengurangi — apapun akunnya.
+        # Konsisten dgn tab Jurnal Akuntansi di frontend.
         setting = await _cash_setting()
         opening_balance = float(setting.get("opening_balance", 0))
         opening_date = setting.get("opening_date")
 
         def _kas_delta(t):
-            if t["type"] == "in" and t.get("account_code") == "101":
+            if t["type"] == "in":
                 return float(t["amount"])
             elif t["type"] == "out":
                 return -float(t["amount"])
@@ -343,12 +344,9 @@ def make_router(
     async def cash_balance(user: dict = Depends(require_super_admin)):
         setting = await _cash_setting()
         txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1}).to_list(length=200000)
-        # KREDIT (uang masuk kas fisik) — HARD FILTER hanya akun 101 (Kas Utama).
-        # Alasan: konsisten dengan tampilan Buku Kas — hanya kas fisik/tunai yang menambah saldo.
-        # Uang masuk ke akun 301-* (revenue penjualan Shopee/Bank Transfer) TIDAK menambah saldo kas fisik
-        # sampai ditarik/disetor ke kas via akun 101.
-        total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
-        # DEBET (uang keluar) — semua akun, tidak difilter.
+        # Matematika murni (2026-08-08): SEMUA type=in menambah, SEMUA type=out mengurangi.
+        # Cash sales, transfer BCA/Mandiri, Shopee — semua berkontribusi ke saldo Kas.
+        total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in")
         total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
         balance = float(setting.get("opening_balance", 0)) + total_in - total_out
         return {
@@ -398,12 +396,13 @@ def make_router(
             period_label = month
 
             # Opening balance per bulan = opening_raw + net semua tx SEBELUM bulan itu
+            # 2026-08-08: matematika murni — SEMUA in menambah, SEMUA out mengurangi.
             prev = await db.cash_transactions.find(
                 {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
             ).to_list(length=200000)
             prev_net = 0.0
             for p in prev:
-                if p["type"] == "in" and p.get("account_code") == "101":
+                if p["type"] == "in":
                     prev_net += float(p["amount"])
                 elif p["type"] == "out":
                     prev_net -= float(p["amount"])
@@ -599,13 +598,13 @@ def make_router(
         opening_date = setting.get("opening_date") or ""
 
         # Opening balance per bulan = opening_balance + NET transaksi sebelum first
-        # KREDIT (in) DIBATASI hanya akun 101; DEBET (out) semua akun — konsisten dengan tab Buku Kas.
+        # 2026-08-08: matematika murni — SEMUA type=in menambah, SEMUA type=out mengurangi.
         prev = await db.cash_transactions.find(
             {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
         ).to_list(length=200000)
         prev_net = 0.0
         for p in prev:
-            if p["type"] == "in" and p.get("account_code") == "101":
+            if p["type"] == "in":
                 prev_net += float(p["amount"])
             elif p["type"] == "out":
                 prev_net -= float(p["amount"])
@@ -617,15 +616,14 @@ def make_router(
 
         # Transaksi bulan ini
         month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
-        # === RUMUS KAS (dikembalikan per permintaan user 2026-08-08 sore) ===
-        # Total Pemasukan (KREDIT) — HANYA akun 101 (Kas Utama). Uang masuk ke revenue account
-        # (301/302 dll) TIDAK dihitung karena belum jadi kas fisik.
-        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
-        # Total Pengeluaran (DEBET) — SEMUA akun (semua uang keluar mengurangi kas).
+        # === RUMUS MATEMATIKA MURNI (2026-08-08) ===
+        # Total Pemasukan = SEMUA type=in (cash, transfer, shopee, adjustment) — semua menambah Kas.
+        # Total Pengeluaran = SEMUA type=out.
+        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
         total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
         closing = opening_of_period + total_in - total_out
-        # Total in dari semua akun (untuk info di UI, tidak dipakai closing)
-        total_in_all_accounts = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
+        # Alias untuk kompatibilitas UI lama
+        total_in_all_accounts = total_in
 
         # Breakdown per kategori
         breakdown_in: Dict[str, Dict[str, Any]] = {}

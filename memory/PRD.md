@@ -2044,3 +2044,25 @@ User meminta agar Penjualan Tunai (cash payment_method) langsung menambah Kas 10
 - Saldo Kas Real-time (`GET /cashbook/balance`): **Rp 1.884.500** ✓
 - Tab Jurnal Akuntansi menampilkan baris "101 Penjualan Tunai" dengan Saldo Kas naik dari 1jt→2jt
 - 4 header cards + 1 tabel Jurnal semua **konsisten** menunjukkan Saldo Akhir Rp 1.884.500
+
+---
+
+## Update 2026-08-08 (part 2) — Semua Payment Method Masuk Kas
+User meminta agar Transfer BCA/Mandiri & Shopee (Plaza/Kastem) juga menambah Kas Real-time, tidak hanya Penjualan Tunai.
+
+### Backend Changes (matematika murni)
+- `/app/backend/routers/cashbook.py`:
+  - `_kas_delta()` di `/cashbook/transactions`: hilangkan filter `account_code == "101"`. Sekarang SEMUA `type=in` menambah, SEMUA `type=out` mengurangi.
+  - `/cashbook/balance`: total_in = sum semua `type=in` (bukan hanya 101).
+  - `/cashbook/summary`: opening_of_period + total_in + total_out gunakan matematika murni.
+- Endpoint `/cashbook/diagnose` tidak diubah (dipakai untuk debugging historis).
+
+### Frontend Changes
+- `/app/frontend/src/pages/CashBook.jsx`:
+  - `filteredJournal` (tab Buku Kas): hilangkan filter `account_code === "101"`. Semua tx tampil.
+  - Chip badge & konvensi footnote diperbarui: "Kredit: SEMUA Akun".
+
+### Impact
+- Saldo Kas Real-time header = Saldo Akhir Jurnal = closing_balance summary — SEMUA konsisten
+- Transfer BCA (301-BCA) & Shopee (301-SPP/SPK) sekarang otomatis menambah Kas begitu tercatat sebagai `type=in`
+- Verified: Preview `/cashbook/balance` return Rp 1.884.500 (opening 1jt + in 1jt − out 115.5k)
