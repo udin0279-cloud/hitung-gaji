@@ -348,6 +348,7 @@ export default function CashBook() {
 
       {openDiagnose && (
         <DiagnoseSaldoModal
+          month={month}
           onClose={() => setOpenDiagnose(false)}
         />
       )}
@@ -1529,21 +1530,24 @@ function AdjustBalanceModal({ currentBalance, onClose, onSaved }) {
    Plus breakdown per akun untuk spot anomali (mis. penjualan yg
    masuk revenue tapi belum tarik ke kas → tidak menambah saldo).
    ================================================================ */
-function DiagnoseSaldoModal({ onClose }) {
+function DiagnoseSaldoModal({ month, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [mode, setMode] = useState("month");  // "month" | "all"
 
   useEffect(() => {
     (async () => {
+      setLoading(true); setErr("");
       try {
-        const res = await api.get("/cashbook/diagnose");
+        const params = mode === "month" ? { month } : {};
+        const res = await api.get("/cashbook/diagnose", { params });
         setData(res.data);
       } catch (e) {
         setErr(formatApiError(e.response?.data?.detail) || "Gagal memuat");
       } finally { setLoading(false); }
     })();
-  }, []);
+  }, [mode, month]);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -1551,9 +1555,28 @@ function DiagnoseSaldoModal({ onClose }) {
         <div className="p-6 border-b border-zinc-200 flex items-center justify-between sticky top-0 bg-white z-10">
           <div>
             <h2 className="text-xl font-bold text-zinc-900">Diagnose Saldo Kas</h2>
-            <p className="text-xs text-zinc-500 mt-1">Verifikasi rumus: Opening + Total Kredit − Total Debet = Saldo Real-time</p>
+            <p className="text-xs text-zinc-500 mt-1">Verifikasi rumus: Opening + Total Kredit − Total Debet = Saldo</p>
           </div>
-          <button data-testid="diagnose-close" onClick={onClose} className="text-zinc-500 hover:text-zinc-900 text-2xl leading-none">×</button>
+          <div className="flex items-center gap-2">
+            {/* Toggle mode: Bulan ini vs All-time */}
+            <div className="inline-flex border border-zinc-300 text-[10px] font-bold uppercase tracking-widest">
+              <button
+                data-testid="diagnose-mode-month"
+                onClick={() => setMode("month")}
+                className={`px-3 py-1.5 ${mode === "month" ? "bg-[#002FA7] text-white" : "bg-white text-zinc-700 hover:bg-zinc-50"}`}
+              >
+                {monthLabel(month)}
+              </button>
+              <button
+                data-testid="diagnose-mode-all"
+                onClick={() => setMode("all")}
+                className={`px-3 py-1.5 border-l border-zinc-300 ${mode === "all" ? "bg-[#002FA7] text-white" : "bg-white text-zinc-700 hover:bg-zinc-50"}`}
+              >
+                All-Time
+              </button>
+            </div>
+            <button data-testid="diagnose-close" onClick={onClose} className="text-zinc-500 hover:text-zinc-900 text-2xl leading-none">×</button>
+          </div>
         </div>
 
         <div className="p-6 space-y-6">
@@ -1563,13 +1586,17 @@ function DiagnoseSaldoModal({ onClose }) {
             <>
               {/* Ringkasan Rumus */}
               <div className="p-4 bg-[#002FA7]/5 border border-[#002FA7]/30">
-                <div className="text-[10px] uppercase tracking-widest font-bold text-[#002FA7] mb-2">Rumus Saldo Real-time</div>
+                <div className="text-[10px] uppercase tracking-widest font-bold text-[#002FA7] mb-2">
+                  {mode === "month" ? `Rumus Saldo Akhir ${monthLabel(month)}` : "Rumus Saldo Real-time (all-time)"}
+                </div>
                 <div className="font-mono text-sm text-zinc-800 mb-3">
-                  Saldo = Opening + Total Kredit (akun 101) − Total Debet (semua akun)
+                  Saldo = {mode === "month" ? "Saldo Awal Bulan" : "Opening"} + Total Kredit (akun 101) − Total Debet (semua akun)
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                   <div>
-                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">Opening</div>
+                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">
+                      {mode === "month" ? "Saldo Awal" : "Opening"}
+                    </div>
                     <div className="font-mono font-bold text-zinc-900 mt-1">{formatIDR(data.opening_balance)}</div>
                   </div>
                   <div>
@@ -1581,12 +1608,14 @@ function DiagnoseSaldoModal({ onClose }) {
                     <div className="font-mono font-bold text-[#E81123] mt-1">{formatIDR(data.total_out_all_accounts)}</div>
                   </div>
                   <div className="border-l-2 border-[#002FA7] pl-3">
-                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">= Saldo Real-time</div>
+                    <div className="text-zinc-500 uppercase tracking-widest text-[10px]">
+                      = {mode === "month" ? `Saldo Akhir ${monthLabel(month)}` : "Saldo Real-time"}
+                    </div>
                     <div data-testid="diagnose-balance" className="font-mono font-bold text-lg text-[#002FA7] mt-1">{formatIDR(data.balance_calculated)}</div>
                   </div>
                 </div>
                 <div className="mt-3 text-[10px] text-zinc-500 font-mono">
-                  {data.tx_count_total} transaksi total · {data.tx_count_kredit_101} kredit ke 101 · {data.tx_count_debet_all} debet
+                  {data.tx_count_total} transaksi{mode === "month" ? " di bulan ini" : " total"} · {data.tx_count_kredit_101} kredit ke 101 · {data.tx_count_debet_all} debet
                   {data.adjustment_count > 0 && (
                     <> · <span className="text-[#E81123] font-bold">{data.adjustment_count} jurnal ADJUSTMENT</span></>
                   )}

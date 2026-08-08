@@ -362,16 +362,59 @@ def make_router(
 
 
     @router.get("/cashbook/diagnose")
-    async def cash_diagnose(user: dict = Depends(require_super_admin)):
+    async def cash_diagnose(
+        user: dict = Depends(require_super_admin),
+        month: Optional[str] = None,  # YYYY-MM — jika diisi, filter transaksi ke bulan itu saja
+    ):
         """Diagnostik saldo kas dengan breakdown per akun.
 
-        Bantu user verifikasi angka: Saldo Awal + Total Kredit − Total Debet = Saldo Real-time.
+        Bantu user verifikasi angka: Saldo Awal + Total Kredit − Total Debet = Saldo.
         Menunjukkan detail semua transaksi in/out per akun untuk deteksi anomali.
+
+        Jika `month` diisi (YYYY-MM):
+          - Opening = saldo awal bulan itu (= opening_balance + net txns sebelum bulan)
+          - Kredit/Debet = HANYA transaksi di bulan itu
+          - Saldo = Saldo Akhir bulan itu
+        Jika `month` kosong: mode all-time (default), Opening = raw dari settings.
         """
         setting = await _cash_setting()
-        opening = float(setting.get("opening_balance", 0))
+        opening_raw = float(setting.get("opening_balance", 0))
+        opening_date = setting.get("opening_date")
+
+        # ------ Build query berdasarkan mode (bulanan / all-time) ------
+        q: Dict[str, Any] = {}
+        opening_period = opening_raw
+        period_label = "all-time"
+        if month:
+            try:
+                year, m = month.split("-")
+                from calendar import monthrange
+                first = f"{year}-{int(m):02d}-01"
+                last_day = monthrange(int(year), int(m))[1]
+                last = f"{year}-{int(m):02d}-{last_day:02d}"
+            except Exception:
+                raise HTTPException(status_code=400, detail="Format month harus YYYY-MM")
+            q["date"] = {"$gte": first, "$lte": last}
+            period_label = month
+
+            # Opening balance per bulan = opening_raw + net semua tx SEBELUM bulan itu
+            prev = await db.cash_transactions.find(
+                {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
+            ).to_list(length=200000)
+            prev_net = 0.0
+            for p in prev:
+                if p["type"] == "in" and p.get("account_code") == "101":
+                    prev_net += float(p["amount"])
+                elif p["type"] == "out":
+                    prev_net -= float(p["amount"])
+            if opening_date and opening_date > last:
+                opening_period = 0.0
+            else:
+                opening_period = opening_raw
+            opening_period += prev_net
+
         txs = await db.cash_transactions.find(
-            {}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1, "account_name": 1, "date": 1, "description": 1, "reference": 1},
+            q, {"_id": 0, "type": 1, "amount": 1, "account_code": 1, "account_name": 1, "date": 1, "description": 1, "reference": 1},
         ).to_list(length=200000)
 
         # Breakdown per akun (in dan out)
@@ -399,17 +442,19 @@ def make_router(
         total_in_kas = sum(v["total"] for v in in_by_account.values())
         total_out = sum(v["total"] for v in out_by_account.values())
         total_ignored = sum(x["amount"] for x in ignored_in)
-        balance = opening + total_in_kas - total_out
+        balance = opening_period + total_in_kas - total_out
 
         # Adjustment transactions detection
         adj_count = sum(1 for t in txs if t.get("reference") == "ADJUSTMENT")
 
         return {
-            "opening_balance": round(opening, 2),
-            "opening_date": setting.get("opening_date"),
+            "period": period_label,
+            "opening_balance": round(opening_period, 2),
+            "opening_balance_raw_setting": round(opening_raw, 2),
+            "opening_date": opening_date,
             "total_in_kas_101": round(total_in_kas, 2),
             "total_out_all_accounts": round(total_out, 2),
-            "formula": f"Saldo Real-time = {opening:,.0f} + {total_in_kas:,.0f} − {total_out:,.0f}",
+            "formula": f"Saldo{' Akhir ' + month if month else ' Real-time'} = {opening_period:,.0f} + {total_in_kas:,.0f} − {total_out:,.0f}",
             "balance_calculated": round(balance, 2),
             "tx_count_total": len(txs),
             "tx_count_kredit_101": sum(v["count"] for v in in_by_account.values()),
@@ -424,7 +469,8 @@ def make_router(
             },
             "adjustment_count": adj_count,
             "notes": [
-                "Formula: Saldo Real-time = Opening + Σ(type=in & account=101) − Σ(type=out semua akun)",
+                f"Mode: {'BULAN ' + month if month else 'ALL-TIME (total sejak awal)'}",
+                "Formula: Saldo = Opening (bulan) + Σ(type=in & account=101) − Σ(type=out semua akun)",
                 "Jika saldo tidak sesuai ekspektasi: (1) Cek Opening Balance, (2) Cek transaksi 'ignored_in' — mungkin ada penjualan yg belum masuk kas, (3) Cek 'adjustment_count' — hapus via tombol Hapus Semua Penyesuaian jika perlu.",
             ],
         }
