@@ -144,10 +144,12 @@ export default function CashBook() {
   // Jurnal Akuntansi: SEMUA akun KECUALI 101 Kas (per request user)
   // Akun 101 dikelola di tab Buku Kas — tidak boleh muncul di Jurnal Akuntansi.
   const filteredBook = txData.transactions.filter((t) => t.account_code !== "101" && matchesSearch(t));
-  // Tab Buku Kas (JournalTab): STRICT — HANYA account_code === "101".
-  // Kredit & Debet keduanya wajib akun 101. Akun lain (301/201/dll) tidak muncul.
+  // Tab Buku Kas (JournalTab):
+  // - KREDIT (uang masuk, type=in): HANYA akun 101 Kas Utama.
+  // - DEBET  (uang keluar, type=out): SEMUA akun.
   const filteredJournal = txData.transactions.filter((t) =>
-    t.account_code === "101" && matchesSearch(t)
+    (t.type === "out" || (t.type === "in" && t.account_code === "101")) &&
+    matchesSearch(t)
   );
 
   const removeTx = async (t) => {
@@ -960,7 +962,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Strict: Hanya Akun 101 Kas</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Kredit: Akun 101 · Debet: Semua Akun</span>
           {adjustCount > 0 && (
             <>
               <button
