@@ -1035,7 +1035,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               <tr key={t.id} data-testid="journal-row" data-adjustment={isAdjustment ? "true" : "false"} className={`border-b border-zinc-100 hover:bg-zinc-50 ${rowBg}`}>
                 <td className="px-3 py-2.5 font-mono text-xs font-bold text-zinc-700 whitespace-nowrap">{t.account_code}</td>
                 <td className="px-3 py-2.5 text-xs">
-                  {t.account_name}
+                  {t.account_code === "101" ? "Kas" : t.account_name}
                   {t.auto && <span className="ml-2 text-[9px] uppercase tracking-widest font-bold text-amber-700 inline-flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Auto</span>}
                   {isAdjustment && (
                     <span className={`ml-2 text-[9px] uppercase tracking-widest font-bold inline-flex items-center gap-1 px-1.5 py-0.5 border ${
