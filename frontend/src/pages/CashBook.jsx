@@ -141,16 +141,8 @@ export default function CashBook() {
       || (t.reference || "").toLowerCase().includes(q);
   };
 
-  // Jurnal Akuntansi: SEMUA akun KECUALI 101 Kas (per request user)
-  // Akun 101 dikelola di tab Buku Kas — tidak boleh muncul di Jurnal Akuntansi.
-  const filteredBook = txData.transactions.filter((t) => t.account_code !== "101" && matchesSearch(t));
-  // Tab Buku Kas (JournalTab):
-  // - KREDIT (uang masuk, type=in): HANYA akun 101 Kas Utama.
-  // - DEBET  (uang keluar, type=out): SEMUA akun.
-  const filteredJournal = txData.transactions.filter((t) =>
-    (t.type === "out" || (t.type === "in" && t.account_code === "101")) &&
-    matchesSearch(t)
-  );
+  const filteredBook = txData.transactions.filter(t => t.account_code !== "101");
+  const filteredJournal = txData.transactions.filter(t => t.account_code === "101");
 
   const removeTx = async (t) => {
     if (t.auto) {
