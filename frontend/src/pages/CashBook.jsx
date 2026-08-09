@@ -141,10 +141,9 @@ export default function CashBook() {
       || (t.reference || "").toLowerCase().includes(q);
   };
 
-  // Jurnal Akuntansi: SEMUA transaksi (termasuk akun 101 Kas Utama)
-  // 2026-08-08: filter `!== "101"` dihapus per permintaan user — semua Pemasukan
-  // wajib menambah saldo, semua Pengeluaran wajib mengurangi (matematika murni).
-  const filteredBook = txData.transactions.filter((t) => matchesSearch(t));
+  // Jurnal Akuntansi: SEMUA akun KECUALI 101 Kas (per request user)
+  // Akun 101 dikelola di tab Buku Kas — tidak boleh muncul di Jurnal Akuntansi.
+  const filteredBook = txData.transactions.filter((t) => t.account_code !== "101" && matchesSearch(t));
   // Tab Buku Kas (JournalTab):
   // - KREDIT (uang masuk, type=in): HANYA akun 101 Kas Utama.
   // - DEBET  (uang keluar, type=out): SEMUA akun.
