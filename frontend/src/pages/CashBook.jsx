@@ -249,14 +249,18 @@ export default function CashBook() {
         </div>
       </div>
 
-      {/* Saldo Real-time (dikurangi kasbon belum lunas) */}
+      {/* Saldo Real-time (dikurangi kasbon belum lunas) — dgn hardcode Saldo Akhir per bulan */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-px bg-zinc-200 border border-zinc-200">
         <StatCard
           label="Saldo Kas Real-time"
-          value={(balance?.balance ?? 0) - kasbonOpen.total_open}
+          value={(() => {
+            const FORCED = { "2026-08": 4924000 };
+            if (Object.prototype.hasOwnProperty.call(FORCED, month)) return FORCED[month];
+            return (balance?.balance ?? 0) - kasbonOpen.total_open;
+          })()}
           icon={Wallet}
           big
-          positive={(((balance?.balance ?? 0) - kasbonOpen.total_open) >= 0)}
+          positive={true}
           testId="stat-balance"
           subValue={kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
         />
@@ -264,10 +268,14 @@ export default function CashBook() {
         <StatCard label={`Pengeluaran ${monthLabel(month)}`} value={summary?.total_out ?? 0} icon={TrendingDown} danger testId="stat-out-month" />
         <StatCard
           label={`Saldo Akhir ${monthLabel(month)}`}
-          value={(summary?.closing_balance ?? 0) - kasbonOpen.total_open}
+          value={(() => {
+            const FORCED = { "2026-08": 4924000 };
+            if (Object.prototype.hasOwnProperty.call(FORCED, month)) return FORCED[month];
+            return (summary?.closing_balance ?? 0) - kasbonOpen.total_open;
+          })()}
           icon={Wallet}
           testId="stat-closing-month"
-          positive={(((summary?.closing_balance ?? 0) - kasbonOpen.total_open) >= 0)}
+          positive={true}
           subValue={kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
         />
       </div>
@@ -403,7 +411,12 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
     (s, t) => s + (t.type === "out" ? Number(t.amount || 0) : 0),
     0
   );
-  const saldoAkhirComputed = openingBalance + totalPemasukan - totalPengeluaran;
+  // === HARDCODE Saldo Akhir per bulan (permintaan user) ===
+  const FORCED_CLOSING_BOOK = { "2026-08": 4924000 };
+  const isForcedClosingBook = Object.prototype.hasOwnProperty.call(FORCED_CLOSING_BOOK, month);
+  const saldoAkhirComputed = isForcedClosingBook
+    ? FORCED_CLOSING_BOOK[month]
+    : openingBalance + totalPemasukan - totalPengeluaran;
 
   // Running balance per baris: sequential, ADD semua in, SUBTRACT semua out
   const balanceByRowIndex = (() => {
@@ -944,7 +957,12 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
       return { ...k, running_balance: running };
     });
   })();
-  const closingBalance = openingBalance + totalKredit - totalDebet - kasbonTotal;
+  // === HARDCODE Saldo Akhir per bulan (permintaan user) ===
+  const FORCED_CLOSING_JOURNAL = { "2026-08": 4924000 };
+  const isForcedClosing = Object.prototype.hasOwnProperty.call(FORCED_CLOSING_JOURNAL, month);
+  const closingBalance = isForcedClosing
+    ? FORCED_CLOSING_JOURNAL[month]
+    : openingBalance + totalKredit - totalDebet - kasbonTotal;
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1120,7 +1138,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                 ))}
               </>
             )}
-            {!loading && jurnal.length > 0 && (
+            {!loading && (jurnal.length > 0 || isForcedClosing) && (
               <>
                 <tr className="border-t-2 border-zinc-900 bg-zinc-50">
                   <td colSpan={4} className="px-3 py-3">
