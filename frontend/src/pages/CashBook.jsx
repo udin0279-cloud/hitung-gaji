@@ -891,6 +891,11 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
   const [showAdjustOnly, setShowAdjustOnly] = useState(false);
   // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
   const kasTxAll = filtered;
+  // === HARDCODE OPENING BALANCE (permintaan user) ===
+  // Agustus 2026 dipaksa Rp 10.462.598 (Saldo Akhir Juli sebelum pengurang kasbon).
+  const FORCED_OPENING_JOURNAL = { "2026-08": 10462598 };
+  const isForcedJournal = Object.prototype.hasOwnProperty.call(FORCED_OPENING_JOURNAL, month);
+  const openingBalance = isForcedJournal ? FORCED_OPENING_JOURNAL[month] : Number(txData.opening_balance || 0);
   const adjustCount = kasTxAll.filter((t) => t.reference === "ADJUSTMENT").length;
 
   // Purge ALL adjustment transactions — nuclear cleanup.
@@ -917,7 +922,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
   // NOTE: Saldo dihitung dari FULL kasTxAll (bukan filtered) supaya angka Saldo tetap akurat
   //       ketika user filter "Adjustment Only".
   const jurnalAll = (() => {
-    let running = Number(txData.opening_balance || 0);
+    let running = openingBalance;
     return kasTxAll.map((t) => {
       running = t.type === "in" ? running + Number(t.amount || 0) : running - Number(t.amount || 0);
       return { ...t, balance: running };
@@ -931,7 +936,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
   // Kasbon LUNAS/PAID otomatis tersembunyi — hanya BELUM LUNAS yang tampil di sini.
   const kasbonList = (kasbonOpen?.items || []).filter(isOpenKasbon).slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   const kasbonTotal = kasbonList.reduce((s, k) => s + Number(k.amount || 0), 0);
-  const runningAfterTx = jurnal.length > 0 ? jurnal[jurnal.length - 1].balance : Number(txData.opening_balance || 0);
+  const runningAfterTx = jurnal.length > 0 ? jurnal[jurnal.length - 1].balance : openingBalance;
   const kasbonRows = (() => {
     let running = runningAfterTx;
     return kasbonList.map((k) => {
@@ -939,7 +944,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
       return { ...k, running_balance: running };
     });
   })();
-  const closingBalance = Number(txData.opening_balance || 0) + totalKredit - totalDebet - kasbonTotal;
+  const closingBalance = openingBalance + totalKredit - totalDebet - kasbonTotal;
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1011,14 +1016,14 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                 <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Saldo Akhir {prevMonthLabel(month)}</span>
                 {(kasbonOpen?.total_open || 0) > 0 && (
                   <div className="text-[10px] font-mono text-zinc-500 mt-0.5">
-                    Kas Raw {formatIDR(txData.opening_balance)} − Kasbon Pending {formatIDR(kasbonOpen.total_open)}
+                    Kas Raw {formatIDR(openingBalance)} − Kasbon Pending {formatIDR(kasbonOpen.total_open)}
                   </div>
                 )}
               </td>
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]" data-testid="prev-month-closing">
-                {formatIDR(Number(txData.opening_balance || 0) - Number(kasbonOpen?.total_open || 0))}
+                {formatIDR(openingBalance - Number(kasbonOpen?.total_open || 0))}
               </td>
               <td className="px-3 py-2.5"></td>
             </tr>
@@ -1123,7 +1128,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                   </td>
                   <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebet)}</td>
                   <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalKredit)}</td>
-                  <td className="px-3 py-3 text-right font-mono font-bold text-zinc-900">{formatIDR(Number(txData.opening_balance || 0) + totalKredit - totalDebet)}</td>
+                  <td className="px-3 py-3 text-right font-mono font-bold text-zinc-900">{formatIDR(openingBalance + totalKredit - totalDebet)}</td>
                   <td className="px-3 py-3"></td>
                 </tr>
                 {kasbonTotal > 0 && (
