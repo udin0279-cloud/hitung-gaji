@@ -1140,14 +1140,21 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                 ))}
               </>
             )}
-            {!loading && jurnal.length > 0 && (
+            {!loading && (jurnal.length > 0 || isForcedOpening) && (
               <>
                 <tr className="border-t-2 border-zinc-900 bg-zinc-50">
                   <td colSpan={4} className="px-3 py-3">
                     <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total Kas Utama (sebelum Kasbon)</span>
                   </td>
                   <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebet)}</td>
-                  <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalKredit)}</td>
+                  <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">
+                    {formatIDR(totalKredit + (isForcedOpening ? openingBalance : 0))}
+                    {isForcedOpening && (
+                      <div className="text-[10px] font-normal text-zinc-500 mt-0.5">
+                        (Kredit {formatIDR(totalKredit)} + Saldo Awal {formatIDR(openingBalance)})
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-3 text-right font-mono font-bold text-zinc-900">
                     {formatIDR(openingBalance + totalKredit - totalDebet)}
                   </td>
