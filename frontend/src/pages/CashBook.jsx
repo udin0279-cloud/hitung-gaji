@@ -1028,16 +1028,11 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             <tr className="border-b border-zinc-200 bg-[#002FA7]/5">
               <td colSpan={4} className="px-3 py-2.5">
                 <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Saldo Akhir {prevMonthLabel(month)}</span>
-                {!isForcedOpening && (kasbonOpen?.total_open || 0) > 0 && (
-                  <div className="text-[10px] font-mono text-zinc-500 mt-0.5">
-                    Kas Raw {formatIDR(openingBalance)} − Kasbon Pending {formatIDR(kasbonOpen.total_open)}
-                  </div>
-                )}
               </td>
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]" data-testid="prev-month-closing">
-                {formatIDR(isForcedOpening ? openingBalance : (openingBalance - Number(kasbonOpen?.total_open || 0)))}
+                {formatIDR(openingBalance)}
               </td>
               <td className="px-3 py-2.5"></td>
             </tr>
