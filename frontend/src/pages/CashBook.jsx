@@ -142,7 +142,16 @@ export default function CashBook() {
   };
 
   const filteredBook = txData.transactions.filter(t => t.account_code !== "101");
-  const filteredJournal = txData.transactions.filter(t => t.account_code === "101");
+  // Tab Buku Kas (JournalTab):
+  // - KREDIT: HANYA akun 101 DAN description tidak mengandung "Penjualan"
+  // - DEBET: SEMUA uang keluar (kas fisik berkurang, apapun akunnya)
+  const filteredJournal = txData.transactions.filter(t => {
+    if (t.type === "in") {
+      return t.account_code === "101"
+        && !(t.description || "").toLowerCase().includes("penjualan");
+    }
+    return t.type === "out";
+  });
 
   const removeTx = async (t) => {
     if (t.auto) {
