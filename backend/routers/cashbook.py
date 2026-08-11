@@ -107,13 +107,14 @@ def make_router(
         return None
 
     async def _get_effective_opening(month: str, opening_setting: float, opening_date: Optional[str]) -> float:
-        """Auto Carry-Over + Override untuk BUKU KAS:
+        """Linear Cascade BUKU KAS (akun 101 murni):
         1. Jika bulan `month` punya override langsung → pakai itu.
-        2. Jika tidak, cari override TERAKHIR sebelum `month` → opening = override + net(tx dari bulan itu s/d sebelum `month`).
-        3. Jika tidak ada override sama sekali → fallback ke cash_settings.opening_balance + net(all prev tx).
-        Rumus KAS (matches Buku Kas frontend rule):
-        - Kredit (in): HANYA akun 101 Kas Utama menambah saldo.
-        - Debet (out): SEMUA akun mengurangi saldo (uang keluar mengurangi kas apapun kategorinya).
+        2. Jika tidak, cari override TERAKHIR sebelum `month` → opening = override + net_101(tx dari bulan itu s/d sebelum `month`).
+        3. Jika tidak ada override sama sekali → fallback ke cash_settings.opening_balance + net_101(all prev tx).
+        Rumus KAS 101 murni:
+          Kredit (in): HANYA akun 101 menambah saldo.
+          Debet (out): HANYA akun 101 mengurangi saldo.
+        Saldo Awal Bulan(n) = Saldo Akhir Bulan(n-1) — cascade otomatis.
         """
         # Case 1: direct override
         direct = await _get_month_opening_override(month)
@@ -125,10 +126,11 @@ def make_router(
         def _net(tx_list):
             n = 0.0
             for t in tx_list:
-                if t["type"] == "in" and t.get("account_code") == "101":
-                    n += float(t["amount"])
-                elif t["type"] == "out":
-                    n -= float(t["amount"])
+                if t.get("account_code") == "101":
+                    if t["type"] == "in":
+                        n += float(t["amount"])
+                    elif t["type"] == "out":
+                        n -= float(t["amount"])
             return n
 
         # Case 2: latest override before this month
@@ -290,10 +292,11 @@ def make_router(
         opening_date = setting.get("opening_date")
 
         def _kas_delta(t):
-            if t["type"] == "in" and t.get("account_code") == "101":
-                return float(t["amount"])
-            elif t["type"] == "out":
-                return -float(t["amount"])
+            if t.get("account_code") == "101":
+                if t["type"] == "in":
+                    return float(t["amount"])
+                elif t["type"] == "out":
+                    return -float(t["amount"])
             return 0.0
 
         # Kalau filter bulan, hitung saldo awal bulan dari transaksi sebelumnya + opening
@@ -432,11 +435,24 @@ def make_router(
     @router.get("/cashbook/balance")
     async def cash_balance(user: dict = Depends(require_super_admin)):
         setting = await _cash_setting()
-        txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1}).to_list(length=200000)
-        # RUMUS KAS: Kredit HANYA akun 101, Debet SEMUA akun.
-        total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
-        total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
-        balance = float(setting.get("opening_balance", 0)) + total_in - total_out
+        # Cascade: kalau ada monthly_openings lock, pakai lock terbaru + net_101 sesudahnya.
+        latest_lock = await db.monthly_openings.find_one(
+            {}, {"_id": 0, "month": 1, "opening_balance": 1}, sort=[("month", -1)]
+        )
+        if latest_lock:
+            latest_first = f"{latest_lock['month']}-01"
+            txs = await db.cash_transactions.find(
+                {"date": {"$gte": latest_first}},
+                {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
+            ).to_list(length=200000)
+            total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
+            total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out" and t.get("account_code") == "101")
+            balance = float(latest_lock["opening_balance"]) + total_in - total_out
+        else:
+            txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1}).to_list(length=200000)
+            total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
+            total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out" and t.get("account_code") == "101")
+            balance = float(setting.get("opening_balance", 0)) + total_in - total_out
         return {
             "opening_balance": round(float(setting.get("opening_balance", 0)), 2),
             "opening_date": setting.get("opening_date"),
@@ -690,11 +706,11 @@ def make_router(
 
         # Transaksi bulan ini
         month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
-        # === RUMUS KAS (matches frontend Buku Kas: Kredit=101, Debet=Semua) ===
-        # Total Pemasukan Kas: HANYA type=in dari akun 101 (kas fisik masuk).
-        # Total Pengeluaran: SEMUA type=out (uang keluar mengurangi kas apapun kategorinya).
+        # === RUMUS KAS 101 MURNI (Linear Cascade) ===
+        # Kredit: HANYA akun 101. Debet: HANYA akun 101.
+        # Saldo Akhir = Saldo Awal + Kredit_101 − Debet_101.
         total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
-        total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
+        total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out" and t.get("account_code") == "101")
         closing = opening_of_period + total_in - total_out
         # Total pemasukan semua akun (untuk info)
         total_in_all_accounts = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
