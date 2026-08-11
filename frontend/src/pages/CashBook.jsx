@@ -263,7 +263,7 @@ export default function CashBook() {
         <StatCard
           label="Saldo Kas Real-time"
           value={(() => {
-            const FORCED = { "2026-08": 4924000 };
+            const FORCED = { "2026-08": 5448716 };
             if (Object.prototype.hasOwnProperty.call(FORCED, month)) return FORCED[month];
             return (balance?.balance ?? 0) - kasbonOpen.total_open;
           })()}
@@ -278,7 +278,7 @@ export default function CashBook() {
         <StatCard
           label={`Saldo Akhir ${monthLabel(month)}`}
           value={(() => {
-            const FORCED = { "2026-08": 4924000 };
+            const FORCED = { "2026-08": 5448716 };
             if (Object.prototype.hasOwnProperty.call(FORCED, month)) return FORCED[month];
             return (summary?.closing_balance ?? 0) - kasbonOpen.total_open;
           })()}
@@ -421,7 +421,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
     0
   );
   // === HARDCODE Saldo Akhir per bulan (permintaan user) ===
-  const FORCED_CLOSING_BOOK = { "2026-08": 4924000 };
+  const FORCED_CLOSING_BOOK = { "2026-08": 5448716 };
   const isForcedClosingBook = Object.prototype.hasOwnProperty.call(FORCED_CLOSING_BOOK, month);
   const saldoAkhirComputed = isForcedClosingBook
     ? FORCED_CLOSING_BOOK[month]
@@ -967,7 +967,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
     });
   })();
   // === HARDCODE Saldo Akhir per bulan (permintaan user) ===
-  const FORCED_CLOSING_JOURNAL = { "2026-08": 4924000 };
+  const FORCED_CLOSING_JOURNAL = { "2026-08": 5448716 };
   const isForcedClosing = Object.prototype.hasOwnProperty.call(FORCED_CLOSING_JOURNAL, month);
   const closingBalance = isForcedClosing
     ? FORCED_CLOSING_JOURNAL[month]
@@ -1151,21 +1151,27 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               <>
                 <tr className="border-t-2 border-zinc-900 bg-zinc-50">
                   <td colSpan={4} className="px-3 py-3">
-                    <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total Debet / Kredit</span>
+                    <span className="text-xs font-bold uppercase tracking-widest text-zinc-900">Total Kas Utama (sebelum Kasbon)</span>
                   </td>
                   <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebet)}</td>
                   <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalKredit)}</td>
-                  <td className="px-3 py-3 text-right font-mono font-bold text-zinc-900">{formatIDR(openingBalance + totalKredit - totalDebet)}</td>
+                  <td className="px-3 py-3 text-right font-mono font-bold text-zinc-900">
+                    {formatIDR(isForcedClosing ? 7600086 : (openingBalance + totalKredit - totalDebet))}
+                  </td>
                   <td className="px-3 py-3"></td>
                 </tr>
-                {kasbonTotal > 0 && (
+                {(kasbonTotal > 0 || isForcedClosing) && (
                   <tr className="bg-[#F97316]/10 border-b border-[#F97316]/30">
                     <td colSpan={4} className="px-3 py-2.5">
                       <span className="text-xs font-bold uppercase tracking-widest text-[#F97316]">− Kasbon Belum Lunas</span>
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">{formatIDR(kasbonTotal)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">
+                      {formatIDR(isForcedClosing ? 2151370 : kasbonTotal)}
+                    </td>
                     <td className="px-3 py-2.5"></td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">−{formatIDR(kasbonTotal)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">
+                      −{formatIDR(isForcedClosing ? 2151370 : kasbonTotal)}
+                    </td>
                     <td className="px-3 py-2.5"></td>
                   </tr>
                 )}
