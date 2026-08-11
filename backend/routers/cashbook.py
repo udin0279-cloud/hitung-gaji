@@ -127,6 +127,9 @@ def make_router(
             n = 0.0
             for t in tx_list:
                 if t["type"] == "in" and t.get("account_code") == "101":
+                    desc = (t.get("description") or "").lower()
+                    if "penjualan" in desc:
+                        continue
                     n += float(t["amount"])
                 elif t["type"] == "out":
                     n -= float(t["amount"])
@@ -142,14 +145,14 @@ def make_router(
             latest_first = f"{latest['month']}-01"
             txs = await db.cash_transactions.find(
                 {"date": {"$gte": latest_first, "$lt": first_of_month}},
-                {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
+                {"_id": 0, "type": 1, "amount": 1, "account_code": 1, "description": 1},
             ).to_list(length=200000)
             return float(latest["opening_balance"]) + _net(txs)
 
         # Case 3: fallback — cash_settings + net all prev
         txs = await db.cash_transactions.find(
             {"date": {"$lt": first_of_month}},
-            {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
+            {"_id": 0, "type": 1, "amount": 1, "account_code": 1, "description": 1},
         ).to_list(length=200000)
         base = 0.0 if (opening_date and opening_date > f"{month}-31") else float(opening_setting)
         return base + _net(txs)
@@ -291,7 +294,11 @@ def make_router(
         opening_date = setting.get("opening_date")
 
         def _kas_delta(t):
+            # RUMUS KAS: Kredit=akun 101 tanpa "penjualan", Debet=SEMUA akun.
             if t["type"] == "in" and t.get("account_code") == "101":
+                desc = (t.get("description") or "").lower()
+                if "penjualan" in desc:
+                    return 0.0
                 return float(t["amount"])
             elif t["type"] == "out":
                 return -float(t["amount"])
@@ -437,19 +444,26 @@ def make_router(
         latest_lock = await db.monthly_openings.find_one(
             {}, {"_id": 0, "month": 1, "opening_balance": 1}, sort=[("month", -1)]
         )
-        # RUMUS KAS: Kredit HANYA akun 101, Debet SEMUA akun.
+        # RUMUS KAS: Kredit HANYA akun 101 tanpa "penjualan", Debet SEMUA akun.
+        def _is_penjualan(t): return "penjualan" in (t.get("description") or "").lower()
         if latest_lock:
             latest_first = f"{latest_lock['month']}-01"
             txs = await db.cash_transactions.find(
                 {"date": {"$gte": latest_first}},
-                {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
+                {"_id": 0, "type": 1, "amount": 1, "account_code": 1, "description": 1},
             ).to_list(length=200000)
-            total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
+            total_in = sum(
+                float(t["amount"]) for t in txs
+                if t["type"] == "in" and t.get("account_code") == "101" and not _is_penjualan(t)
+            )
             total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
             balance = float(latest_lock["opening_balance"]) + total_in - total_out
         else:
-            txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1}).to_list(length=200000)
-            total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
+            txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1, "description": 1}).to_list(length=200000)
+            total_in = sum(
+                float(t["amount"]) for t in txs
+                if t["type"] == "in" and t.get("account_code") == "101" and not _is_penjualan(t)
+            )
             total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
             balance = float(setting.get("opening_balance", 0)) + total_in - total_out
         return {
@@ -705,12 +719,17 @@ def make_router(
 
         # Transaksi bulan ini
         month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
-        # === RUMUS KAS (Kredit=101, Debet=Semua) ===
-        # Saldo Akhir = Saldo Awal + Kredit_101 − Debet_Semua.
-        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
+        # === RUMUS KAS FINAL (identik dgn frontend Buku Kas) ===
+        # Kredit: akun 101 tanpa keyword "penjualan" (biar tidak double dgn revenue akuntansi)
+        # Debet: SEMUA type=out
+        # Cascade: Saldo Awal(n) = Saldo Akhir(n-1)
+        def _is_penjualan(t): return "penjualan" in (t.get("description") or "").lower()
+        total_in = sum(
+            float(t["amount"]) for t in month_tx
+            if t["type"] == "in" and t.get("account_code") == "101" and not _is_penjualan(t)
+        )
         total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
         closing = opening_of_period + total_in - total_out
-        # Total pemasukan semua akun (untuk info)
         total_in_all_accounts = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
 
         # Breakdown per kategori
