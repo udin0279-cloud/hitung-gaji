@@ -905,7 +905,10 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
   const [showAdjustOnly, setShowAdjustOnly] = useState(false);
   // === HARDCODE Saldo Awal per bulan (permintaan user) ===
   // Angka ini menjadi baseline/starting point untuk running balance.
-  const FORCED_OPENING_JOURNAL = { "2026-08": 8311228 };
+  const FORCED_OPENING_JOURNAL = {
+    "2026-07": 3607224,
+    "2026-08": 8311228,
+  };
   const isForcedOpening = Object.prototype.hasOwnProperty.call(FORCED_OPENING_JOURNAL, month);
   // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
   const kasTxAll = filtered;
