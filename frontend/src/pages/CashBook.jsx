@@ -903,10 +903,34 @@ function Field({ label, hint, children }) {
    ================================================================ */
 function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, kasbonOpen, onCashChanged }) {
   const [showAdjustOnly, setShowAdjustOnly] = useState(false);
+  // === SALDO PINDAHAN (virtual credit row per bulan) ===
+  // Bulan yang punya "saldo pindahan" akan mendapat baris virtual di paling atas
+  // sebagai KREDIT (type=in, account=101) dengan opening_balance dipaksa 0.
+  const CARRY_OVER = {
+    "2026-08": { amount: 8311228, description: "Saldo Pindahan Juli 2026" },
+  };
+  const carryOver = CARRY_OVER[month];
   // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
-  const kasTxAll = filtered;
-  // Saldo Awal diambil dari backend (dgn kunci override per bulan bila ada).
-  const openingBalance = Number(txData.opening_balance || 0);
+  // Prepend virtual "Saldo Pindahan" row jika bulan ini punya carry over.
+  const kasTxAll = carryOver
+    ? [
+        {
+          id: `_carryover_${month}`,
+          date: `${month}-01`,
+          account_code: "101",
+          account_name: "Kas",
+          type: "in",
+          amount: carryOver.amount,
+          description: carryOver.description,
+          reference: "CARRY_OVER",
+          auto: true,
+          _virtual: true, // flag agar tidak bisa di-edit/hapus
+        },
+        ...filtered,
+      ]
+    : filtered;
+  // Jika ada carry over, opening dipaksa 0 (baseline sudah masuk sebagai kredit).
+  const openingBalance = carryOver ? 0 : Number(txData.opening_balance || 0);
   const adjustCount = kasTxAll.filter((t) => t.reference === "ADJUSTMENT").length;
 
   // Purge ALL adjustment transactions — nuclear cleanup.
@@ -1077,22 +1101,28 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                 <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-zinc-900">{formatIDR(t.balance)}</td>
                 <td className="px-3 py-2.5 whitespace-nowrap">
                   <div className="flex items-center justify-center gap-1">
-                    <button
-                      data-testid={`journal-edit-${t.id}`}
-                      onClick={() => onEdit && onEdit(t)}
-                      title={t.auto ? "Transaksi otomatis — edit tidak disarankan" : "Edit transaksi"}
-                      className="p-1.5 hover:bg-[#002FA7]/10 text-[#002FA7]"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      data-testid={`journal-del-${t.id}`}
-                      onClick={() => onRemove && onRemove(t)}
-                      title="Hapus transaksi"
-                      className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {t._virtual ? (
+                      <span className="text-[10px] uppercase tracking-widest text-zinc-400 italic px-2">Sistem</span>
+                    ) : (
+                      <>
+                        <button
+                          data-testid={`journal-edit-${t.id}`}
+                          onClick={() => onEdit && onEdit(t)}
+                          title={t.auto ? "Transaksi otomatis — edit tidak disarankan" : "Edit transaksi"}
+                          className="p-1.5 hover:bg-[#002FA7]/10 text-[#002FA7]"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          data-testid={`journal-del-${t.id}`}
+                          onClick={() => onRemove && onRemove(t)}
+                          title="Hapus transaksi"
+                          className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>
