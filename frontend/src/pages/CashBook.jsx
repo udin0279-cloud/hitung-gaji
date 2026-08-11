@@ -903,34 +903,13 @@ function Field({ label, hint, children }) {
    ================================================================ */
 function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, kasbonOpen, onCashChanged }) {
   const [showAdjustOnly, setShowAdjustOnly] = useState(false);
-  // === SALDO PINDAHAN (virtual credit row per bulan) ===
-  // Bulan yang punya "saldo pindahan" akan mendapat baris virtual di paling atas
-  // sebagai KREDIT (type=in, account=101) dengan opening_balance dipaksa 0.
-  const CARRY_OVER = {
-    "2026-08": { amount: 8311228, description: "Saldo Pindahan Juli 2026" },
-  };
-  const carryOver = CARRY_OVER[month];
+  // === HARDCODE Saldo Awal per bulan (permintaan user) ===
+  // Angka ini menjadi baseline/starting point untuk running balance.
+  const FORCED_OPENING_JOURNAL = { "2026-08": 8311228 };
+  const isForcedOpening = Object.prototype.hasOwnProperty.call(FORCED_OPENING_JOURNAL, month);
   // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
-  // Prepend virtual "Saldo Pindahan" row jika bulan ini punya carry over.
-  const kasTxAll = carryOver
-    ? [
-        {
-          id: `_carryover_${month}`,
-          date: `${month}-01`,
-          account_code: "101",
-          account_name: "Kas",
-          type: "in",
-          amount: carryOver.amount,
-          description: carryOver.description,
-          reference: "CARRY_OVER",
-          auto: true,
-          _virtual: true, // flag agar tidak bisa di-edit/hapus
-        },
-        ...filtered,
-      ]
-    : filtered;
-  // Jika ada carry over, opening dipaksa 0 (baseline sudah masuk sebagai kredit).
-  const openingBalance = carryOver ? 0 : Number(txData.opening_balance || 0);
+  const kasTxAll = filtered;
+  const openingBalance = isForcedOpening ? FORCED_OPENING_JOURNAL[month] : Number(txData.opening_balance || 0);
   const adjustCount = kasTxAll.filter((t) => t.reference === "ADJUSTMENT").length;
 
   // Purge ALL adjustment transactions — nuclear cleanup.
@@ -1049,7 +1028,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             <tr className="border-b border-zinc-200 bg-[#002FA7]/5">
               <td colSpan={4} className="px-3 py-2.5">
                 <span className="text-xs font-bold uppercase tracking-widest text-[#002FA7]">Saldo Akhir {prevMonthLabel(month)}</span>
-                {(kasbonOpen?.total_open || 0) > 0 && (
+                {!isForcedOpening && (kasbonOpen?.total_open || 0) > 0 && (
                   <div className="text-[10px] font-mono text-zinc-500 mt-0.5">
                     Kas Raw {formatIDR(openingBalance)} − Kasbon Pending {formatIDR(kasbonOpen.total_open)}
                   </div>
@@ -1058,7 +1037,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5"></td>
               <td className="px-3 py-2.5 text-right font-mono font-bold text-[#002FA7]" data-testid="prev-month-closing">
-                {formatIDR(openingBalance - Number(kasbonOpen?.total_open || 0))}
+                {formatIDR(isForcedOpening ? openingBalance : (openingBalance - Number(kasbonOpen?.total_open || 0)))}
               </td>
               <td className="px-3 py-2.5"></td>
             </tr>
