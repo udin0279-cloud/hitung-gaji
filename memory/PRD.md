@@ -2066,3 +2066,35 @@ User meminta agar Transfer BCA/Mandiri & Shopee (Plaza/Kastem) juga menambah Kas
 - Saldo Kas Real-time header = Saldo Akhir Jurnal = closing_balance summary — SEMUA konsisten
 - Transfer BCA (301-BCA) & Shopee (301-SPP/SPK) sekarang otomatis menambah Kas begitu tercatat sebagai `type=in`
 - Verified: Preview `/cashbook/balance` return Rp 1.884.500 (opening 1jt + in 1jt − out 115.5k)
+
+---
+
+## Update 2026-08-11 — Menu "Kunci Saldo Awal Bulan" (Reset Semua Hardcode)
+Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola user langsung.
+
+### Backend
+- Collection baru: `monthly_openings` — `{month: "YYYY-MM", opening_balance, updated_at, updated_by}`
+- Model: `MonthlyOpeningIn`
+- Helper: `_get_month_opening_override(month)` — cek override sebelum hitung dari data
+- Endpoints (`/app/backend/routers/cashbook.py`):
+  - `GET  /api/cashbook/monthly-openings` — list semua override
+  - `PUT  /api/cashbook/monthly-openings/{month}` — set/update
+  - `DELETE /api/cashbook/monthly-openings/{month}` — hapus (kembali auto)
+- Modifikasi `/cashbook/transactions` & `/cashbook/summary`: cek override sebelum hitung `opening_of_period` dari data historis
+
+### Frontend
+- Tombol baru: **"Kunci Saldo Bulan"** di header Kas Operasional (oranye, ikon Lock)
+- Dialog `MonthlyLockDialog`:
+  - Input Bulan + Nominal
+  - Tombol "Kunci Saldo Awal <Bulan>"
+  - Daftar bulan terkunci + tombol Hapus
+- **SEMUA hardcode dihapus**:
+  - `FORCED_OPENING = { "2026-08": 10432636 }` — DIHAPUS
+  - `FORCED_CLOSING_BOOK = { "2026-08": 5448716 }` — DIHAPUS
+  - `FORCED_OPENING_JOURNAL = { "2026-08": 10462598 }` — DIHAPUS
+  - `FORCED_CLOSING_JOURNAL = { "2026-08": 5448716 }` — DIHAPUS
+  - Hardcoded `7600086`, `2151370`, `5448716` di header cards & Buku Kas footer — DIHAPUS
+
+### Verified
+- Backend: Aug 2026 dgn lock 10.462.598 → summary opening = 10.462.598 ✓, Sep tanpa lock = 1.884.500 (auto) ✓
+- Frontend: Dialog tampil, list menampilkan bulan terkunci, save/delete berfungsi

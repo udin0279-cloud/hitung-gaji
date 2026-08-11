@@ -101,6 +101,7 @@ export default function CashBook() {
   const [openAccounts, setOpenAccounts] = useState(false);
   const [openAdjust, setOpenAdjust] = useState(false);
   const [openDiagnose, setOpenDiagnose] = useState(false);
+  const [openMonthlyLock, setOpenMonthlyLock] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -237,6 +238,9 @@ export default function CashBook() {
           <button data-testid="cash-setting-button" onClick={() => setOpenSetting(true)} className="rounded-none bg-white text-zinc-900 border border-zinc-300 px-4 py-2.5 text-sm hover:bg-zinc-50 inline-flex items-center gap-2" title="Saldo Awal">
             <Settings className="w-3.5 h-3.5" /> Saldo Awal
           </button>
+          <button data-testid="cash-monthly-lock-button" onClick={() => setOpenMonthlyLock(true)} className="rounded-none bg-white text-[#F97316] border border-[#F97316]/40 px-4 py-2.5 text-sm hover:bg-[#F97316]/5 inline-flex items-center gap-2" title="Kunci Saldo Awal Bulan tertentu — override angka otomatis dengan angka pencatatan manual Anda">
+            <Lock className="w-3.5 h-3.5" /> Kunci Saldo Bulan
+          </button>
           <button data-testid="cash-diagnose-button" onClick={() => setOpenDiagnose(true)} className="rounded-none bg-white text-[#002FA7] border border-[#002FA7]/40 px-4 py-2.5 text-sm hover:bg-[#002FA7]/5 inline-flex items-center gap-2" title="Verifikasi rumus saldo — breakdown per akun untuk deteksi anomali">
             <Target className="w-3.5 h-3.5" /> Diagnose Saldo
           </button>
@@ -258,18 +262,14 @@ export default function CashBook() {
         </div>
       </div>
 
-      {/* Saldo Real-time (dikurangi kasbon belum lunas) — dgn hardcode Saldo Akhir per bulan */}
+      {/* Saldo Real-time (dikurangi kasbon belum lunas) */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-px bg-zinc-200 border border-zinc-200">
         <StatCard
           label="Saldo Kas Real-time"
-          value={(() => {
-            const FORCED = { "2026-08": 5448716 };
-            if (Object.prototype.hasOwnProperty.call(FORCED, month)) return FORCED[month];
-            return (balance?.balance ?? 0) - kasbonOpen.total_open;
-          })()}
+          value={(balance?.balance ?? 0) - kasbonOpen.total_open}
           icon={Wallet}
           big
-          positive={true}
+          positive={(((balance?.balance ?? 0) - kasbonOpen.total_open) >= 0)}
           testId="stat-balance"
           subValue={kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
         />
@@ -277,14 +277,10 @@ export default function CashBook() {
         <StatCard label={`Pengeluaran ${monthLabel(month)}`} value={summary?.total_out ?? 0} icon={TrendingDown} danger testId="stat-out-month" />
         <StatCard
           label={`Saldo Akhir ${monthLabel(month)}`}
-          value={(() => {
-            const FORCED = { "2026-08": 5448716 };
-            if (Object.prototype.hasOwnProperty.call(FORCED, month)) return FORCED[month];
-            return (summary?.closing_balance ?? 0) - kasbonOpen.total_open;
-          })()}
+          value={(summary?.closing_balance ?? 0) - kasbonOpen.total_open}
           icon={Wallet}
           testId="stat-closing-month"
-          positive={true}
+          positive={(((summary?.closing_balance ?? 0) - kasbonOpen.total_open) >= 0)}
           subValue={kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
         />
       </div>
@@ -366,6 +362,14 @@ export default function CashBook() {
           onClose={() => setOpenDiagnose(false)}
         />
       )}
+
+      {openMonthlyLock && (
+        <MonthlyLockDialog
+          currentMonth={month}
+          onClose={() => setOpenMonthlyLock(false)}
+          onSaved={async () => { await loadAll(); }}
+        />
+      )}
     </div>
   );
 }
@@ -398,17 +402,10 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 
 /* ---------- Buku Kas Tab ---------- */
 function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance, kasbonOpen }) {
-  // === RUMUS MATEMATIKA SD (2026-08-08 — permintaan user, FINAL) ===
-  // Saldo Awal + SEMUA Pemasukan (Kredit apapun) − SEMUA Pengeluaran (Debet apapun)
-  // Running balance per baris = sequential top→bottom.
-  // TIDAK ada filter akun 101, TIDAK ada pengurangan kasbon.
-  //
-  // === HARDCODE OPENING BALANCE (permintaan user) ===
-  // Agustus 2026 dipaksa Rp 10.432.636 (net Saldo Akhir Juli setelah Kasbon).
-  const FORCED_OPENING = { "2026-08": 10432636 };
-  const isForced = Object.prototype.hasOwnProperty.call(FORCED_OPENING, month);
-  const rawOpening = Number(txData.opening_balance || 0);
-  const openingBalance = isForced ? FORCED_OPENING[month] : rawOpening;
+  // === RUMUS MATEMATIKA MURNI ===
+  // Saldo Awal + SEMUA Pemasukan − SEMUA Pengeluaran. Running balance sequential.
+  // Saldo Awal diambil dari backend (dgn kunci override per bulan bila ada).
+  const openingBalance = Number(txData.opening_balance || 0);
 
   // Total Pemasukan = SEMUA `in` (apapun akunnya)
   const totalPemasukan = filtered.reduce(
@@ -420,12 +417,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
     (s, t) => s + (t.type === "out" ? Number(t.amount || 0) : 0),
     0
   );
-  // === HARDCODE Saldo Akhir per bulan (permintaan user) ===
-  const FORCED_CLOSING_BOOK = { "2026-08": 5448716 };
-  const isForcedClosingBook = Object.prototype.hasOwnProperty.call(FORCED_CLOSING_BOOK, month);
-  const saldoAkhirComputed = isForcedClosingBook
-    ? FORCED_CLOSING_BOOK[month]
-    : openingBalance + totalPemasukan - totalPengeluaran;
+  const saldoAkhirComputed = openingBalance + totalPemasukan - totalPengeluaran;
 
   // Running balance per baris: sequential, ADD semua in, SUBTRACT semua out
   const balanceByRowIndex = (() => {
@@ -913,11 +905,8 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
   const [showAdjustOnly, setShowAdjustOnly] = useState(false);
   // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
   const kasTxAll = filtered;
-  // === HARDCODE OPENING BALANCE (permintaan user) ===
-  // Agustus 2026 dipaksa Rp 10.462.598 (Saldo Akhir Juli sebelum pengurang kasbon).
-  const FORCED_OPENING_JOURNAL = { "2026-08": 10462598 };
-  const isForcedJournal = Object.prototype.hasOwnProperty.call(FORCED_OPENING_JOURNAL, month);
-  const openingBalance = isForcedJournal ? FORCED_OPENING_JOURNAL[month] : Number(txData.opening_balance || 0);
+  // Saldo Awal diambil dari backend (dgn kunci override per bulan bila ada).
+  const openingBalance = Number(txData.opening_balance || 0);
   const adjustCount = kasTxAll.filter((t) => t.reference === "ADJUSTMENT").length;
 
   // Purge ALL adjustment transactions — nuclear cleanup.
@@ -966,12 +955,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
       return { ...k, running_balance: running };
     });
   })();
-  // === HARDCODE Saldo Akhir per bulan (permintaan user) ===
-  const FORCED_CLOSING_JOURNAL = { "2026-08": 5448716 };
-  const isForcedClosing = Object.prototype.hasOwnProperty.call(FORCED_CLOSING_JOURNAL, month);
-  const closingBalance = isForcedClosing
-    ? FORCED_CLOSING_JOURNAL[month]
-    : openingBalance + totalKredit - totalDebet - kasbonTotal;
+  const closingBalance = openingBalance + totalKredit - totalDebet - kasbonTotal;
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1147,7 +1131,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                 ))}
               </>
             )}
-            {!loading && (jurnal.length > 0 || isForcedClosing) && (
+            {!loading && jurnal.length > 0 && (
               <>
                 <tr className="border-t-2 border-zinc-900 bg-zinc-50">
                   <td colSpan={4} className="px-3 py-3">
@@ -1156,22 +1140,18 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                   <td className="px-3 py-3 text-right font-mono font-bold text-[#E81123]">{formatIDR(totalDebet)}</td>
                   <td className="px-3 py-3 text-right font-mono font-bold text-[#008A00]">{formatIDR(totalKredit)}</td>
                   <td className="px-3 py-3 text-right font-mono font-bold text-zinc-900">
-                    {formatIDR(isForcedClosing ? 7600086 : (openingBalance + totalKredit - totalDebet))}
+                    {formatIDR(openingBalance + totalKredit - totalDebet)}
                   </td>
                   <td className="px-3 py-3"></td>
                 </tr>
-                {(kasbonTotal > 0 || isForcedClosing) && (
+                {kasbonTotal > 0 && (
                   <tr className="bg-[#F97316]/10 border-b border-[#F97316]/30">
                     <td colSpan={4} className="px-3 py-2.5">
                       <span className="text-xs font-bold uppercase tracking-widest text-[#F97316]">− Kasbon Belum Lunas</span>
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">
-                      {formatIDR(isForcedClosing ? 2151370 : kasbonTotal)}
-                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">{formatIDR(kasbonTotal)}</td>
                     <td className="px-3 py-2.5"></td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">
-                      −{formatIDR(isForcedClosing ? 2151370 : kasbonTotal)}
-                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold text-[#F97316]">−{formatIDR(kasbonTotal)}</td>
                     <td className="px-3 py-2.5"></td>
                   </tr>
                 )}
@@ -1877,3 +1857,150 @@ function DiagnoseSaldoModal({ month, onClose }) {
     </div>
   );
 }
+
+function MonthlyLockDialog({ currentMonth, onClose, onSaved }) {
+  const [items, setItems] = useState([]);
+  const [month, setMonth] = useState(currentMonth);
+  const [amount, setAmount] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get("/cashbook/monthly-openings");
+      setItems(res.data.items || []);
+      // Prefill amount jika bulan aktif sudah punya lock
+      const existing = (res.data.items || []).find((x) => x.month === month);
+      if (existing) setAmount(String(existing.opening_balance));
+      else setAmount("");
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Gagal load kunci saldo");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    const existing = items.find((x) => x.month === month);
+    setAmount(existing ? String(existing.opening_balance) : "");
+  }, [month, items]);
+
+  const save = async () => {
+    const num = Number(String(amount).replace(/[^\d.-]/g, ""));
+    if (!month || Number.isNaN(num)) {
+      toast.error("Bulan dan Nominal wajib diisi");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`/cashbook/monthly-openings/${month}`, { opening_balance: num });
+      toast.success(`Saldo Awal ${monthLabel(month)} dikunci ke ${formatIDR(num)}`);
+      await load();
+      await onSaved?.();
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Gagal menyimpan");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (m) => {
+    if (!window.confirm(`Hapus kunci Saldo Awal ${monthLabel(m)}? Sistem akan kembali menghitung otomatis dari data.`)) return;
+    try {
+      await api.delete(`/cashbook/monthly-openings/${m}`);
+      toast.success("Kunci dihapus. Sistem hitung otomatis.");
+      await load();
+      await onSaved?.();
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Gagal hapus");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-2xl border border-zinc-900 shadow-2xl" data-testid="monthly-lock-dialog">
+        <div className="border-b border-zinc-200 px-6 py-4 flex items-center justify-between bg-[#F97316]/5">
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-[#F97316]">Override Saldo Awal</div>
+            <h2 className="font-heading text-xl font-bold text-zinc-900 mt-0.5">Kunci Saldo Awal per Bulan</h2>
+            <p className="text-xs text-zinc-500 mt-1">Angka ini akan dipakai sebagai Saldo Awal bulan itu. Pemasukan/Pengeluaran/Kasbon dihitung otomatis dari transaksi.</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-900" data-testid="monthly-lock-close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field label="Bulan (YYYY-MM)">
+              <input
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                data-testid="monthly-lock-month-input"
+                className="w-full border border-zinc-300 rounded-none px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#F97316]"
+              />
+            </Field>
+            <Field label="Nominal Saldo Awal (Rp)">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="10462598"
+                data-testid="monthly-lock-amount-input"
+                className="w-full border border-zinc-300 rounded-none px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#F97316]"
+              />
+            </Field>
+          </div>
+          <button
+            onClick={save}
+            disabled={saving}
+            data-testid="monthly-lock-save-button"
+            className="w-full bg-[#F97316] text-white px-4 py-3 text-sm font-bold uppercase tracking-wider hover:bg-[#EA6A0F] disabled:opacity-50 inline-flex items-center justify-center gap-2"
+          >
+            <Lock className="w-4 h-4" /> {saving ? "Menyimpan…" : `Kunci Saldo Awal ${monthLabel(month)}`}
+          </button>
+
+          <div className="border-t border-zinc-200 pt-4">
+            <div className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-3">Daftar Bulan Terkunci</div>
+            {loading ? (
+              <div className="text-sm text-zinc-500">Loading…</div>
+            ) : items.length === 0 ? (
+              <div className="text-sm text-zinc-500 italic">Belum ada bulan yang dikunci. Sistem menghitung otomatis dari data.</div>
+            ) : (
+              <table className="w-full text-sm" data-testid="monthly-lock-list">
+                <thead className="text-[10px] uppercase tracking-widest text-zinc-500 border-b border-zinc-200">
+                  <tr>
+                    <th className="text-left py-2">Bulan</th>
+                    <th className="text-right py-2">Saldo Awal</th>
+                    <th className="text-left py-2 pl-4">Update Terakhir</th>
+                    <th className="text-right py-2">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it) => (
+                    <tr key={it.month} className="border-b border-zinc-100">
+                      <td className="py-2.5 font-mono font-semibold">{monthLabel(it.month)} <span className="text-zinc-400">({it.month})</span></td>
+                      <td className="py-2.5 text-right font-mono font-bold text-[#002FA7]">{formatIDR(it.opening_balance)}</td>
+                      <td className="py-2.5 pl-4 text-[11px] text-zinc-500 font-mono">
+                        {it.updated_at ? new Date(it.updated_at).toLocaleString("id-ID") : "-"}
+                        {it.updated_by && <div className="text-zinc-400">oleh {it.updated_by}</div>}
+                      </td>
+                      <td className="py-2.5 text-right">
+                        <button onClick={() => remove(it.month)} data-testid={`monthly-lock-delete-${it.month}`} className="text-[#E81123] hover:underline text-xs font-semibold">Hapus</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+

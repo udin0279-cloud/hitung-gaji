@@ -56,6 +56,10 @@ class CashSettingIn(BaseModel):
     opening_date: Optional[str] = None
 
 
+class MonthlyOpeningIn(BaseModel):
+    opening_balance: float
+
+
 class KasbonIn(BaseModel):
     date: str  # YYYY-MM-DD
     name: str
@@ -91,7 +95,51 @@ def make_router(
             return default
         return doc
 
+    async def _get_month_opening_override(month: Optional[str]) -> Optional[float]:
+        """Cek apakah user telah mengunci Saldo Awal untuk bulan ini.
+        Return angka override jika ada, None jika tidak.
+        """
+        if not month:
+            return None
+        doc = await db.monthly_openings.find_one({"month": month}, {"_id": 0, "opening_balance": 1})
+        if doc and "opening_balance" in doc:
+            return float(doc["opening_balance"])
+        return None
+
     # ---------- Endpoints ----------
+    @router.get("/cashbook/monthly-openings")
+    async def list_monthly_openings(user: dict = Depends(require_super_admin)):
+        """Daftar semua Saldo Awal yang dikunci per bulan."""
+        items = await db.monthly_openings.find({}, {"_id": 0}).sort("month", -1).to_list(length=500)
+        return {"items": items}
+
+    @router.put("/cashbook/monthly-openings/{month}")
+    async def set_monthly_opening(
+        month: str,
+        payload: MonthlyOpeningIn,
+        user: dict = Depends(require_super_admin),
+    ):
+        """Kunci Saldo Awal untuk bulan tertentu (YYYY-MM). Idempotent (upsert)."""
+        try:
+            y, m = month.split("-")
+            int(y); int(m)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+        doc = {
+            "month": month,
+            "opening_balance": round(float(payload.opening_balance), 2),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": user.get("email"),
+        }
+        await db.monthly_openings.update_one({"month": month}, {"$set": doc}, upsert=True)
+        return {"ok": True, "month": month, "opening_balance": doc["opening_balance"]}
+
+    @router.delete("/cashbook/monthly-openings/{month}")
+    async def delete_monthly_opening(month: str, user: dict = Depends(require_super_admin)):
+        """Hapus kunci Saldo Awal — sistem kembali menghitung otomatis dari data."""
+        result = await db.monthly_openings.delete_one({"month": month})
+        return {"ok": True, "deleted": result.deleted_count}
+
     @router.get("/cashbook/accounts")
     async def cash_accounts_list(user: dict = Depends(require_super_admin)):
         await _ensure_cash_accounts()
@@ -205,17 +253,23 @@ def make_router(
         if month:
             first_of_month = q["date"]["$gte"]
             last_of_month = q["date"]["$lte"]
-            prev = await db.cash_transactions.find(
-                {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
-            ).to_list(length=100000)
-            # Include opening_balance selama opening_date jatuh <= akhir periode
-            if opening_date and opening_date > last_of_month:
-                balance = 0.0
+            # Cek override Saldo Awal per bulan
+            override = await _get_month_opening_override(month)
+            if override is not None:
+                opening_of_period = round(override, 2)
+                balance = override
             else:
-                balance = opening_balance
-            for p in prev:
-                balance += _kas_delta(p)
-            opening_of_period = round(balance, 2)
+                prev = await db.cash_transactions.find(
+                    {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
+                ).to_list(length=100000)
+                # Include opening_balance selama opening_date jatuh <= akhir periode
+                if opening_date and opening_date > last_of_month:
+                    balance = 0.0
+                else:
+                    balance = opening_balance
+                for p in prev:
+                    balance += _kas_delta(p)
+                opening_of_period = round(balance, 2)
         else:
             opening_of_period = opening_balance
             balance = opening_balance
@@ -598,21 +652,25 @@ def make_router(
         opening_date = setting.get("opening_date") or ""
 
         # Opening balance per bulan = opening_balance + NET transaksi sebelum first
-        # 2026-08-08: matematika murni — SEMUA type=in menambah, SEMUA type=out mengurangi.
-        prev = await db.cash_transactions.find(
-            {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
-        ).to_list(length=200000)
-        prev_net = 0.0
-        for p in prev:
-            if p["type"] == "in":
-                prev_net += float(p["amount"])
-            elif p["type"] == "out":
-                prev_net -= float(p["amount"])
-        if opening_date and opening_date > last:
-            opening_of_period = 0.0
+        # (kecuali user telah "mengunci" Saldo Awal bulan ini via override).
+        override = await _get_month_opening_override(month)
+        if override is not None:
+            opening_of_period = float(override)
         else:
-            opening_of_period = opening_balance
-        opening_of_period += prev_net
+            prev = await db.cash_transactions.find(
+                {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
+            ).to_list(length=200000)
+            prev_net = 0.0
+            for p in prev:
+                if p["type"] == "in":
+                    prev_net += float(p["amount"])
+                elif p["type"] == "out":
+                    prev_net -= float(p["amount"])
+            if opening_date and opening_date > last:
+                opening_of_period = 0.0
+            else:
+                opening_of_period = opening_balance
+            opening_of_period += prev_net
 
         # Transaksi bulan ini
         month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
