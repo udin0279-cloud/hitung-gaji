@@ -903,16 +903,13 @@ function Field({ label, hint, children }) {
    ================================================================ */
 function JournalTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, kasbonOpen, onCashChanged }) {
   const [showAdjustOnly, setShowAdjustOnly] = useState(false);
-  // === HARDCODE Saldo Awal per bulan (permintaan user) ===
-  // Angka ini menjadi baseline/starting point untuk running balance.
-  const FORCED_OPENING_JOURNAL = {
-    "2026-07": 3607224,
-    "2026-08": 8311228,
-  };
-  const isForcedOpening = Object.prototype.hasOwnProperty.call(FORCED_OPENING_JOURNAL, month);
+  // Saldo Awal diambil dari backend (auto carry-over + override via menu "Kunci Saldo Bulan").
+  // Kalau ada override langsung untuk bulan ini → pakai itu.
+  // Kalau tidak → cascade otomatis dari closing bulan sebelumnya.
+  const isForcedOpening = false; // dipertahankan untuk backward-compat rendering
   // Buku Kas (tab): HARD FILTER — hanya transaksi akun 101 Kas Utama.
   const kasTxAll = filtered;
-  const openingBalance = isForcedOpening ? FORCED_OPENING_JOURNAL[month] : Number(txData.opening_balance || 0);
+  const openingBalance = Number(txData.opening_balance || 0);
   const adjustCount = kasTxAll.filter((t) => t.reference === "ADJUSTMENT").length;
 
   // Purge ALL adjustment transactions — nuclear cleanup.

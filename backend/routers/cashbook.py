@@ -106,6 +106,55 @@ def make_router(
             return float(doc["opening_balance"])
         return None
 
+    async def _get_effective_opening(month: str, opening_setting: float, opening_date: Optional[str]) -> float:
+        """Auto Carry-Over + Override:
+        1. Jika bulan `month` punya override langsung → pakai itu.
+        2. Jika tidak, cari override TERAKHIR sebelum `month` → opening = override + net(tx dari bulan itu s/d sebelum `month`).
+        3. Jika tidak ada override sama sekali → fallback ke cash_settings.opening_balance + net(all prev tx).
+        Semua net memakai matematika murni: +in / -out apapun akun.
+        """
+        # Case 1: direct override
+        direct = await _get_month_opening_override(month)
+        if direct is not None:
+            return float(direct)
+
+        first_of_month = f"{month}-01"
+        # Case 2: latest override before this month
+        latest = await db.monthly_openings.find_one(
+            {"month": {"$lt": month}},
+            {"_id": 0, "month": 1, "opening_balance": 1},
+            sort=[("month", -1)],
+        )
+        if latest:
+            latest_first = f"{latest['month']}-01"
+            # Sum tx dari latest_first (inclusive) s/d first_of_month (exclusive)
+            txs = await db.cash_transactions.find(
+                {"date": {"$gte": latest_first, "$lt": first_of_month}},
+                {"_id": 0, "type": 1, "amount": 1},
+            ).to_list(length=200000)
+            net = 0.0
+            for t in txs:
+                if t["type"] == "in":
+                    net += float(t["amount"])
+                elif t["type"] == "out":
+                    net -= float(t["amount"])
+            return float(latest["opening_balance"]) + net
+
+        # Case 3: fallback — cash_settings + net all prev
+        txs = await db.cash_transactions.find(
+            {"date": {"$lt": first_of_month}},
+            {"_id": 0, "type": 1, "amount": 1},
+        ).to_list(length=200000)
+        net = 0.0
+        for t in txs:
+            if t["type"] == "in":
+                net += float(t["amount"])
+            elif t["type"] == "out":
+                net -= float(t["amount"])
+        if opening_date and opening_date > f"{month}-31":
+            return net
+        return float(opening_setting) + net
+
     # ---------- Endpoints ----------
     @router.get("/cashbook/monthly-openings")
     async def list_monthly_openings(user: dict = Depends(require_super_admin)):
@@ -253,23 +302,11 @@ def make_router(
         if month:
             first_of_month = q["date"]["$gte"]
             last_of_month = q["date"]["$lte"]
-            # Cek override Saldo Awal per bulan
-            override = await _get_month_opening_override(month)
-            if override is not None:
-                opening_of_period = round(override, 2)
-                balance = override
-            else:
-                prev = await db.cash_transactions.find(
-                    {"date": {"$lt": first_of_month}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
-                ).to_list(length=100000)
-                # Include opening_balance selama opening_date jatuh <= akhir periode
-                if opening_date and opening_date > last_of_month:
-                    balance = 0.0
-                else:
-                    balance = opening_balance
-                for p in prev:
-                    balance += _kas_delta(p)
-                opening_of_period = round(balance, 2)
+            # Auto Carry-Over + Override — cascade dari override sebelumnya bila ada.
+            opening_of_period = round(
+                await _get_effective_opening(month, opening_balance, opening_date), 2
+            )
+            balance = opening_of_period
         else:
             opening_of_period = opening_balance
             balance = opening_balance
@@ -651,26 +688,8 @@ def make_router(
         opening_balance = float(setting.get("opening_balance", 0))
         opening_date = setting.get("opening_date") or ""
 
-        # Opening balance per bulan = opening_balance + NET transaksi sebelum first
-        # (kecuali user telah "mengunci" Saldo Awal bulan ini via override).
-        override = await _get_month_opening_override(month)
-        if override is not None:
-            opening_of_period = float(override)
-        else:
-            prev = await db.cash_transactions.find(
-                {"date": {"$lt": first}}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
-            ).to_list(length=200000)
-            prev_net = 0.0
-            for p in prev:
-                if p["type"] == "in":
-                    prev_net += float(p["amount"])
-                elif p["type"] == "out":
-                    prev_net -= float(p["amount"])
-            if opening_date and opening_date > last:
-                opening_of_period = 0.0
-            else:
-                opening_of_period = opening_balance
-            opening_of_period += prev_net
+        # Auto Carry-Over + Override — cascade dari override sebelumnya bila ada.
+        opening_of_period = await _get_effective_opening(month, opening_balance, opening_date)
 
         # Transaksi bulan ini
         month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
