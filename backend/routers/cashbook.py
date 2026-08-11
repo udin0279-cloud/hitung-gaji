@@ -107,11 +107,13 @@ def make_router(
         return None
 
     async def _get_effective_opening(month: str, opening_setting: float, opening_date: Optional[str]) -> float:
-        """Auto Carry-Over + Override:
+        """Auto Carry-Over + Override untuk BUKU KAS:
         1. Jika bulan `month` punya override langsung → pakai itu.
         2. Jika tidak, cari override TERAKHIR sebelum `month` → opening = override + net(tx dari bulan itu s/d sebelum `month`).
         3. Jika tidak ada override sama sekali → fallback ke cash_settings.opening_balance + net(all prev tx).
-        Semua net memakai matematika murni: +in / -out apapun akun.
+        Rumus KAS (matches Buku Kas frontend rule):
+        - Kredit (in): HANYA akun 101 Kas Utama menambah saldo.
+        - Debet (out): SEMUA akun mengurangi saldo (uang keluar mengurangi kas apapun kategorinya).
         """
         # Case 1: direct override
         direct = await _get_month_opening_override(month)
@@ -119,6 +121,16 @@ def make_router(
             return float(direct)
 
         first_of_month = f"{month}-01"
+
+        def _net(tx_list):
+            n = 0.0
+            for t in tx_list:
+                if t["type"] == "in" and t.get("account_code") == "101":
+                    n += float(t["amount"])
+                elif t["type"] == "out":
+                    n -= float(t["amount"])
+            return n
+
         # Case 2: latest override before this month
         latest = await db.monthly_openings.find_one(
             {"month": {"$lt": month}},
@@ -127,33 +139,19 @@ def make_router(
         )
         if latest:
             latest_first = f"{latest['month']}-01"
-            # Sum tx dari latest_first (inclusive) s/d first_of_month (exclusive)
             txs = await db.cash_transactions.find(
                 {"date": {"$gte": latest_first, "$lt": first_of_month}},
-                {"_id": 0, "type": 1, "amount": 1},
+                {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
             ).to_list(length=200000)
-            net = 0.0
-            for t in txs:
-                if t["type"] == "in":
-                    net += float(t["amount"])
-                elif t["type"] == "out":
-                    net -= float(t["amount"])
-            return float(latest["opening_balance"]) + net
+            return float(latest["opening_balance"]) + _net(txs)
 
         # Case 3: fallback — cash_settings + net all prev
         txs = await db.cash_transactions.find(
             {"date": {"$lt": first_of_month}},
-            {"_id": 0, "type": 1, "amount": 1},
+            {"_id": 0, "type": 1, "amount": 1, "account_code": 1},
         ).to_list(length=200000)
-        net = 0.0
-        for t in txs:
-            if t["type"] == "in":
-                net += float(t["amount"])
-            elif t["type"] == "out":
-                net -= float(t["amount"])
-        if opening_date and opening_date > f"{month}-31":
-            return net
-        return float(opening_setting) + net
+        base = 0.0 if (opening_date and opening_date > f"{month}-31") else float(opening_setting)
+        return base + _net(txs)
 
     # ---------- Endpoints ----------
     @router.get("/cashbook/monthly-openings")
@@ -285,14 +283,14 @@ def make_router(
             q["account_code"] = account_code
         items = await db.cash_transactions.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(length=20000)
         # Compute running balance — matematika murni (2026-08-08):
-        # SEMUA type=in menambah saldo, SEMUA type=out mengurangi — apapun akunnya.
-        # Konsisten dgn tab Jurnal Akuntansi di frontend.
+        # RUMUS KAS: Kredit HANYA akun 101, Debet SEMUA akun.
+        # Konsisten dgn tab Buku Kas di frontend.
         setting = await _cash_setting()
         opening_balance = float(setting.get("opening_balance", 0))
         opening_date = setting.get("opening_date")
 
         def _kas_delta(t):
-            if t["type"] == "in":
+            if t["type"] == "in" and t.get("account_code") == "101":
                 return float(t["amount"])
             elif t["type"] == "out":
                 return -float(t["amount"])
@@ -435,9 +433,8 @@ def make_router(
     async def cash_balance(user: dict = Depends(require_super_admin)):
         setting = await _cash_setting()
         txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1}).to_list(length=200000)
-        # Matematika murni (2026-08-08): SEMUA type=in menambah, SEMUA type=out mengurangi.
-        # Cash sales, transfer BCA/Mandiri, Shopee — semua berkontribusi ke saldo Kas.
-        total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in")
+        # RUMUS KAS: Kredit HANYA akun 101, Debet SEMUA akun.
+        total_in = sum(float(t["amount"]) for t in txs if t["type"] == "in" and t.get("account_code") == "101")
         total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
         balance = float(setting.get("opening_balance", 0)) + total_in - total_out
         return {
@@ -693,14 +690,14 @@ def make_router(
 
         # Transaksi bulan ini
         month_tx = await db.cash_transactions.find({"date": {"$gte": first, "$lte": last}}, {"_id": 0}).to_list(length=50000)
-        # === RUMUS MATEMATIKA MURNI (2026-08-08) ===
-        # Total Pemasukan = SEMUA type=in (cash, transfer, shopee, adjustment) — semua menambah Kas.
-        # Total Pengeluaran = SEMUA type=out.
-        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
+        # === RUMUS KAS (matches frontend Buku Kas: Kredit=101, Debet=Semua) ===
+        # Total Pemasukan Kas: HANYA type=in dari akun 101 (kas fisik masuk).
+        # Total Pengeluaran: SEMUA type=out (uang keluar mengurangi kas apapun kategorinya).
+        total_in = sum(float(t["amount"]) for t in month_tx if t["type"] == "in" and t.get("account_code") == "101")
         total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
         closing = opening_of_period + total_in - total_out
-        # Alias untuk kompatibilitas UI lama
-        total_in_all_accounts = total_in
+        # Total pemasukan semua akun (untuk info)
+        total_in_all_accounts = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
 
         # Breakdown per kategori
         breakdown_in: Dict[str, Dict[str, Any]] = {}
