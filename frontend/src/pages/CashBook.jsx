@@ -143,13 +143,15 @@ export default function CashBook() {
   };
 
   const filteredBook = txData.transactions.filter(t => t.account_code !== "101");
-  // Tab Buku Kas (JournalTab) — Linear Cascade rule (2026-08-11):
-  // - KREDIT: akun 101 AND description tidak mengandung "penjualan"
-  // - DEBET: HANYA akun 101
+  // Tab Buku Kas (JournalTab):
+  // - KREDIT: HANYA akun 101 (kas fisik masuk), + description tanpa keyword "penjualan"
+  // - DEBET: SEMUA type=out (dari akun mana pun — semua uang keluar mengurangi kas)
   const filteredJournal = txData.transactions.filter(t => {
-    if (t.account_code !== "101") return false;
-    if (t.type === "in" && (t.description || "").toLowerCase().includes("penjualan")) return false;
-    return true;
+    if (t.type === "in") {
+      return t.account_code === "101"
+        && !(t.description || "").toLowerCase().includes("penjualan");
+    }
+    return t.type === "out";
   });
 
   const removeTx = async (t) => {
@@ -971,7 +973,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Kredit: Akun 101 · Debet: Akun 101</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Kredit: Akun 101 · Debet: Semua Akun</span>
           {adjustCount > 0 && (
             <>
               <button
