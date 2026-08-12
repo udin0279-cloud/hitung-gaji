@@ -3532,6 +3532,36 @@ async def product_margin_report(period: str, user: dict = Depends(require_super_
     }
 
 
+@api_router.get("/reports/profit-loss-latest-period")
+async def profit_loss_latest_period(user: dict = Depends(require_super_admin)):
+    """Return bulan (YYYY-MM) TERBARU yang punya data P&L (order aktif, waste, atau payroll).
+
+    Dipakai oleh halaman Laporan Laba/Rugi untuk set default period ke bulan yg realistis
+    (bukan bulan kalender kosong). Fallback ke bulan sekarang jika DB kosong total.
+    """
+    today = datetime.now(timezone.utc).date()
+    fallback = f"{today.year:04d}-{today.month:02d}"
+
+    # Sumber data terbaru: max start_date job_orders aktif, max date waste, max period payroll_runs
+    latest_dates: List[str] = []
+    order = await db.job_orders.find_one(
+        {"status": {"$ne": "batal"}, "start_date": {"$exists": True, "$ne": None}},
+        {"_id": 0, "start_date": 1},
+        sort=[("start_date", -1)],
+    )
+    if order and order.get("start_date"):
+        latest_dates.append(str(order["start_date"])[:7])
+    waste_doc = await db.waste.find_one({"date": {"$exists": True, "$ne": None}}, {"_id": 0, "date": 1}, sort=[("date", -1)])
+    if waste_doc and waste_doc.get("date"):
+        latest_dates.append(str(waste_doc["date"])[:7])
+    payroll_run = await db.payroll_runs.find_one({"period": {"$exists": True, "$ne": None}}, {"_id": 0, "period": 1}, sort=[("period", -1)])
+    if payroll_run and payroll_run.get("period"):
+        latest_dates.append(str(payroll_run["period"])[:7])
+
+    period = max(latest_dates) if latest_dates else fallback
+    return {"period": period, "fallback_used": not bool(latest_dates)}
+
+
 @api_router.get("/reports/profit-loss/{period}")
 async def profit_loss_report(period: str, user: dict = Depends(require_super_admin)):
     """P&L bulanan: Revenue (orders selesai/aktif) − COGS − Waste − Gaji = Net Profit."""

@@ -5,6 +5,7 @@ import { Download, TrendingUp, TrendingDown, Wallet, Package as PackageIcon, Arr
 
 export default function Reports() {
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const [periodInitialized, setPeriodInitialized] = useState(false);
   const [report, setReport] = useState(null);
   const [margins, setMargins] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -26,9 +27,33 @@ export default function Reports() {
     }
   };
 
-  useEffect(() => { load(period); /* eslint-disable-next-line */ }, [period]);
+  // Default period = bulan terakhir yg ada datanya (bukan bulan kalender sekarang).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get("/reports/profit-loss-latest-period");
+        if (!cancelled && res.data?.period) {
+          setPeriod(res.data.period);
+        }
+      } catch {
+        /* fallback ke bulan sekarang */
+      } finally {
+        if (!cancelled) setPeriodInitialized(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!periodInitialized) return;
+    load(period);
+    /* eslint-disable-next-line */
+  }, [period, periodInitialized]);
 
   const isPositive = (report?.net_profit || 0) >= 0;
+  // "Belum ada data" = tidak ada order aktif, tidak ada waste, dan tidak ada biaya gaji.
+  const hasNoData = report && report.order_count === 0 && report.waste_records === 0 && (report.payroll_cost || 0) === 0;
 
   return (
     <div className="px-4 sm:px-6 lg:px-10 py-6 sm:py-8 max-w-7xl">
@@ -60,6 +85,19 @@ export default function Reports() {
 
       {loading || !report ? (
         <div className="py-12 text-center text-zinc-400 font-mono text-xs">Memuat…</div>
+      ) : hasNoData ? (
+        <div data-testid="pl-empty-state" className="mt-10 border border-dashed border-zinc-300 bg-zinc-50/40 py-16 px-6 text-center">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-zinc-100 mb-4">
+            <TrendingUp className="w-6 h-6 text-zinc-400" />
+          </div>
+          <div className="font-heading text-xl font-bold text-zinc-900">Belum ada data untuk periode ini</div>
+          <div className="text-sm text-zinc-500 mt-2 font-mono">
+            Periode {period} belum punya penjualan aktif, waste, atau biaya gaji.
+          </div>
+          <div className="text-xs text-zinc-400 mt-4">
+            Coba pilih bulan lain di kanan atas, atau input transaksi baru dulu.
+          </div>
+        </div>
       ) : (
         <>
           {/* Hero card — Net profit */}

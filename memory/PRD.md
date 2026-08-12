@@ -2155,3 +2155,20 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓ (Buku Kas UNTOUCHED)
 
+
+## Update 2026-08-12 (part 4) — Laporan Laba/Rugi: Smart Default + Empty State
+**Problem**: Halaman `/reports` default ke bulan kalender sekarang (yang seringkali kosong) sehingga user bingung melihat semua angka Rp 0.
+
+**Fix**:
+- Backend `/app/backend/server.py`: Endpoint baru `GET /api/reports/profit-loss-latest-period` — return `{ period: "YYYY-MM", fallback_used: bool }` dari max(job_orders.start_date, waste.date, payroll_runs.period). Route diletakkan SEBELUM `/reports/profit-loss/{period}` supaya tidak tertangkap parametric route.
+- Frontend `/app/frontend/src/pages/Reports.jsx`:
+  - `useEffect` pertama fetch `/profit-loss-latest-period` sekali & set `period` sebelum data-load pertama (guarded dgn `periodInitialized`).
+  - Compute `hasNoData = order_count===0 && waste_records===0 && payroll_cost===0`. Jika true → render empty state card (dashed border) "Belum ada data untuk periode ini" + petunjuk pilih bulan lain, bukan angka Rp 0.
+
+**Verifikasi**:
+- API `/profit-loss-latest-period` → `{period: "2026-07"}` ✓
+- UI default page load → period auto-set 2026-07, tampilkan full P&L (Laba Bersih -34.913.119) ✓
+- Pilih 2024-01 (kosong) → empty state muncul dengan pesan "Periode 2024-01 belum punya penjualan aktif, waste, atau biaya gaji." ✓
+
+**Status**: DONE ✓
+
