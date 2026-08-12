@@ -154,6 +154,26 @@ export default function CashBook() {
     return t.type === "out";
   });
 
+  // === Kartu Ringkasan DINAMIS mengikuti tab aktif ===
+  // Buku Kas: totals dari filteredJournal (akun 101 in + all out)
+  // Jurnal Akuntansi: totals dari filteredBook (akun non-101)
+  const _sumIn = (arr) => arr.reduce((s, t) => s + (t.type === "in" ? Number(t.amount || 0) : 0), 0);
+  const _sumOut = (arr) => arr.reduce((s, t) => s + (t.type === "out" ? Number(t.amount || 0) : 0), 0);
+  const FORCED_OPENING_BOOK_CARD = { "2026-08": -27850601 };
+  const bukuKasIn = _sumIn(filteredJournal);
+  const bukuKasOut = _sumOut(filteredJournal);
+  const bukuKasOpening = Number(txData.opening_balance || 0);
+  const bukuKasClosing = bukuKasOpening + bukuKasIn - bukuKasOut;
+  const jurnalIn = _sumIn(filteredBook);
+  const jurnalOut = _sumOut(filteredBook);
+  const jurnalOpening = Object.prototype.hasOwnProperty.call(FORCED_OPENING_BOOK_CARD, month)
+    ? FORCED_OPENING_BOOK_CARD[month]
+    : Number(txData.opening_balance || 0);
+  const jurnalClosing = jurnalOpening + jurnalIn - jurnalOut;
+  const cardData = tab === "book"
+    ? { in: jurnalIn, out: jurnalOut, closing: jurnalClosing, realtime: jurnalClosing, showKasbon: false }
+    : { in: bukuKasIn, out: bukuKasOut, closing: bukuKasClosing, realtime: (balance?.balance ?? 0), showKasbon: true };
+
   const removeTx = async (t) => {
     if (t.auto) {
       // Cek dulu apakah orphan (sumber PO/Sale sudah dihapus)
@@ -262,26 +282,28 @@ export default function CashBook() {
         </div>
       </div>
 
-      {/* Saldo Real-time (dikurangi kasbon belum lunas) */}
+      {/* Kartu Ringkasan — DINAMIS mengikuti tab aktif.
+          Tab "Buku Kas" (journal): angka dari filteredJournal (Akun 101 + semua OUT). Real-time = saldo kas fisik dari backend.
+          Tab "Jurnal Akuntansi" (book): angka dari filteredBook (Non-101). Real-time = closing bulan berjalan (tanpa balance API). */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-px bg-zinc-200 border border-zinc-200">
         <StatCard
-          label="Saldo Kas Real-time"
-          value={(balance?.balance ?? 0) - kasbonOpen.total_open}
+          label={tab === "book" ? "Saldo Non-Kas Real-time" : "Saldo Kas Real-time"}
+          value={cardData.showKasbon ? (cardData.realtime - kasbonOpen.total_open) : cardData.realtime}
           icon={Wallet}
           big
-          positive={(((balance?.balance ?? 0) - kasbonOpen.total_open) >= 0)}
+          positive={((cardData.showKasbon ? (cardData.realtime - kasbonOpen.total_open) : cardData.realtime) >= 0)}
           testId="stat-balance"
-          subValue={kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
+          subValue={cardData.showKasbon && kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
         />
-        <StatCard label={`Pemasukan ${monthLabel(month)}`} value={summary?.total_in ?? 0} icon={TrendingUp} positive testId="stat-in-month" />
-        <StatCard label={`Pengeluaran ${monthLabel(month)}`} value={summary?.total_out ?? 0} icon={TrendingDown} danger testId="stat-out-month" />
+        <StatCard label={`Pemasukan ${monthLabel(month)}`} value={cardData.in} icon={TrendingUp} positive testId="stat-in-month" />
+        <StatCard label={`Pengeluaran ${monthLabel(month)}`} value={cardData.out} icon={TrendingDown} danger testId="stat-out-month" />
         <StatCard
           label={`Saldo Akhir ${monthLabel(month)}`}
-          value={(summary?.closing_balance ?? 0) - kasbonOpen.total_open}
+          value={cardData.showKasbon ? (cardData.closing - kasbonOpen.total_open) : cardData.closing}
           icon={Wallet}
           testId="stat-closing-month"
-          positive={(((summary?.closing_balance ?? 0) - kasbonOpen.total_open) >= 0)}
-          subValue={kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
+          positive={((cardData.showKasbon ? (cardData.closing - kasbonOpen.total_open) : cardData.closing) >= 0)}
+          subValue={cardData.showKasbon && kasbonOpen.total_open > 0 ? `− Kasbon: ${formatIDR(kasbonOpen.total_open)}` : null}
         />
       </div>
 

@@ -2098,3 +2098,20 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 ### Verified
 - Backend: Aug 2026 dgn lock 10.462.598 → summary opening = 10.462.598 ✓, Sep tanpa lock = 1.884.500 (auto) ✓
 - Frontend: Dialog tampil, list menampilkan bulan terkunci, save/delete berfungsi
+
+## Update 2026-08-12 — Kartu Ringkasan DINAMIS Sinkron dengan Tab Aktif (P0)
+**Problem**: Header StatCards di `/cashbook` menampilkan angka global dari `summary`/`balance` API, tidak berubah saat user berpindah tab. Akibatnya angka Ringkasan tidak sesuai dengan tabel yang sedang ditampilkan (101 vs Non-101).
+
+**Fix**:
+- `/app/frontend/src/pages/CashBook.jsx` lines 285-307: Refactor StatCards agar konsumsi variabel `cardData` (sebelumnya dideklarasikan tapi tidak dipakai).
+- Tab "Buku Kas" (internal `tab === "journal"`): Label "Saldo Kas Real-time", value dari `filteredJournal` (akun 101 in + semua out), real-time = balance API, kasbon dikurangkan.
+- Tab "Jurnal Akuntansi" (internal `tab === "book"`): Label "Saldo Non-Kas Real-time", value dari `filteredBook` (Non-101), real-time = closing bulan berjalan tanpa kasbon.
+- Hardcode `FORCED_OPENING_BOOK_CARD["2026-08"] = -27.850.601` tetap dihormati untuk tab Jurnal Akuntansi.
+
+**Verifikasi (screenshot tool)**:
+- Tab Jurnal Akuntansi: `Rp -27.850.601` (Saldo Non-Kas & Saldo Akhir), Pemasukan/Pengeluaran `Rp 0`.
+- Tab Buku Kas: `Rp 10.805.718` (Saldo Kas & Saldo Akhir), Pemasukan/Pengeluaran `Rp 0`.
+- Label berubah `SALDO KAS ↔ SALDO NON-KAS` saat pindah tab.
+
+**Status**: DONE ✓
+
