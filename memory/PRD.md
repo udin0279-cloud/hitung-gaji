@@ -2115,3 +2115,23 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-12 (part 2) — Akun Piutang Perusahaan 102-PTP (KHUSUS Jurnal Akuntansi)
+**Problem**: User butuh akun untuk menyeimbangkan saldo minus di Jurnal Akuntansi tanpa mempengaruhi Buku Kas (Akun 101).
+
+**Fix**:
+- Backend `/app/backend/server.py` `DEFAULT_CASH_ACCOUNTS`: Tambah akun baru `{code: "102-PTP", name: "Piutang Perusahaan", type: "in", system: True}`. Auto-seed idempotent lewat `_ensure_cash_accounts()`.
+- Frontend `/app/frontend/src/pages/CashBook.jsx`:
+  - `filteredJournal` (tab Buku Kas): exclude `account_code === "102-PTP"` semua tipe (in/out).
+  - `filteredBook` (tab Jurnal Akuntansi): sudah otomatis include (kondisi `account_code !== "101"`).
+  - Tambah `totalPiutangBulan` = net (in − out) transaksi 102-PTP bulan berjalan.
+  - Prop `totalPiutang` ke `BookTab` → render card baru `TOTAL PIUTANG PERUSAHAAN (AKUN 102-PTP)` di atas tabel Jurnal.
+  - Prop `currentTab` ke `TxModal` → `102-PTP` disembunyikan dari account picker jika tab aktif ≠ Jurnal Akuntansi.
+
+**Verifikasi (screenshot + eval)**:
+- Jurnal picker options: `['101 — Kas', '102-PTP — Piutang Perusahaan', ...]` ✓
+- Buku Kas picker options: `102-PTP` tidak ada ✓
+- Card Piutang muncul di Jurnal Akuntansi, sembunyi di Buku Kas ✓
+
+**Status**: DONE ✓
+

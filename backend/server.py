@@ -4411,6 +4411,10 @@ DEFAULT_CASH_ACCOUNTS = [
     {"code": "304", "name": "Pendapatan Lain-lain", "type": "in", "system": False},
     # Kode Akun Akuntansi Standar (Assets & Expense) — permintaan user
     {"code": "101", "name": "Kas", "type": "in", "system": False},
+    # 102-PTP: Piutang Perusahaan — KHUSUS Jurnal Akuntansi.
+    # Dipakai untuk menyeimbangkan saldo minus di Jurnal (transfer dari akun minus).
+    # DILARANG muncul di Buku Kas — di-filter di frontend (filteredJournal).
+    {"code": "102-PTP", "name": "Piutang Perusahaan", "type": "in", "system": True},
     {"code": "103", "name": "Persediaan Barang", "type": "out", "system": False},
     {"code": "103-01", "name": "Bahan Baku Mesin", "type": "out", "system": False},
     {"code": "104", "name": "Perlengkapan Kantor", "type": "out", "system": False},

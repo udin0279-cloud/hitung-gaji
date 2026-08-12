@@ -146,13 +146,20 @@ export default function CashBook() {
   // Tab Buku Kas (JournalTab):
   // - KREDIT: HANYA akun 101 (kas fisik masuk), + description tanpa keyword "penjualan"
   // - DEBET: SEMUA type=out (dari akun mana pun — semua uang keluar mengurangi kas)
+  // - Akun 102-PTP (Piutang Perusahaan) DILARANG muncul di Buku Kas (khusus Jurnal Akuntansi).
   const filteredJournal = txData.transactions.filter(t => {
+    if (t.account_code === "102-PTP") return false;
     if (t.type === "in") {
       return t.account_code === "101"
         && !(t.description || "").toLowerCase().includes("penjualan");
     }
     return t.type === "out";
   });
+
+  // Total Piutang Perusahaan (akun 102-PTP) — akumulatif dari semua transaksi bulan ini.
+  const totalPiutangBulan = txData.transactions
+    .filter(t => t.account_code === "102-PTP")
+    .reduce((s, t) => s + (t.type === "in" ? Number(t.amount || 0) : -Number(t.amount || 0)), 0);
 
   // === Kartu Ringkasan DINAMIS mengikuti tab aktif ===
   // Buku Kas: totals dari filteredJournal (akun 101 in + all out)
@@ -321,6 +328,7 @@ export default function CashBook() {
             month={month} setMonth={setMonth} search={search} setSearch={setSearch}
             txData={txData} filtered={filteredBook} loading={loading}
             kasbonOpen={kasbonOpen}
+            totalPiutang={totalPiutangBulan}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
             onAdjustBalance={() => setOpenAdjust(true)}
@@ -349,6 +357,7 @@ export default function CashBook() {
         <TxModal
           initial={editingTx}
           accounts={accounts}
+          currentTab={tab}
           onClose={() => { setOpenTx(false); setEditingTx(null); }}
           onSaved={async () => { setOpenTx(false); setEditingTx(null); await loadAll(); }}
         />
@@ -423,7 +432,7 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 }
 
 /* ---------- Buku Kas Tab ---------- */
-function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance, kasbonOpen }) {
+function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance, kasbonOpen, totalPiutang = 0 }) {
   // === RUMUS MATEMATIKA MURNI ===
   // Saldo Awal + SEMUA Pemasukan − SEMUA Pengeluaran. Running balance sequential.
   //
@@ -484,6 +493,17 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             <Target className="w-3.5 h-3.5" />
             Update Saldo Kas Terakhir
           </button>
+        </div>
+      </div>
+
+      {/* Ringkasan Piutang Perusahaan (khusus Jurnal Akuntansi) */}
+      <div data-testid="jurnal-piutang-card" className="mb-4 border border-[#002FA7]/20 bg-[#002FA7]/[0.03] px-4 py-3 flex items-center justify-between">
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-[#002FA7]/80 font-bold">Total Piutang Perusahaan (Akun 102-PTP)</div>
+          <div className="text-[10px] font-mono text-zinc-500 mt-0.5">Akumulasi net (in − out) transaksi bulan {monthLabel(month)}. Khusus Jurnal Akuntansi.</div>
+        </div>
+        <div data-testid="jurnal-piutang-value" className={`font-mono text-2xl font-bold ${totalPiutang >= 0 ? "text-[#002FA7]" : "text-[#E81123]"}`}>
+          {formatIDR(totalPiutang)}
         </div>
       </div>
 
@@ -642,10 +662,17 @@ function SummaryStat({ label, value, positive, negative, big }) {
 }
 
 /* ---------- Transaction Modal ---------- */
-function TxModal({ initial, accounts, onClose, onSaved }) {
+function TxModal({ initial, accounts, currentTab, onClose, onSaved }) {
   const isEdit = initial && initial.id;
   const forcedType = initial?.type;
-  const eligible = accounts.filter((a) => a.active !== false && a.type === forcedType);
+  // Akun 102-PTP (Piutang Perusahaan) HANYA boleh dipakai saat tab aktif = Jurnal Akuntansi (tab==="book").
+  // Di tab Buku Kas (tab==="journal") atau tab lain, sembunyikan dari picker.
+  const eligible = accounts.filter((a) => {
+    if (a.active === false) return false;
+    if (a.type !== forcedType) return false;
+    if (a.code === "102-PTP" && currentTab !== "book") return false;
+    return true;
+  });
   const [form, setForm] = useState({
     date: initial?.date || todayISO(),
     account_code: initial?.account_code || (eligible[0]?.code || ""),
