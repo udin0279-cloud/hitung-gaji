@@ -404,8 +404,12 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance, kasbonOpen }) {
   // === RUMUS MATEMATIKA MURNI ===
   // Saldo Awal + SEMUA Pemasukan − SEMUA Pengeluaran. Running balance sequential.
-  // Saldo Awal diambil dari backend (dgn kunci override per bulan bila ada).
-  const openingBalance = Number(txData.opening_balance || 0);
+  //
+  // === HARDCODE OPENING JURNAL AKUNTANSI (permintaan user 2026-08-11) ===
+  // Variabel INI ONLY untuk BookTab (Jurnal Akuntansi). Tidak menyentuh Buku Kas.
+  const FORCED_OPENING_BOOK = { "2026-08": -27850601 };
+  const isForcedBook = Object.prototype.hasOwnProperty.call(FORCED_OPENING_BOOK, month);
+  const openingBalance = isForcedBook ? FORCED_OPENING_BOOK[month] : Number(txData.opening_balance || 0);
 
   // Total Pemasukan = SEMUA `in` (apapun akunnya)
   const totalPemasukan = filtered.reduce(
