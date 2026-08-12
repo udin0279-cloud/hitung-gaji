@@ -2135,3 +2135,23 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-12 (part 3) — Fitur Bayar Piutang (PROTECTED, khusus Jurnal Akuntansi)
+**Problem**: User butuh fitur pelunasan piutang untuk akun 102-PTP. STRICT: hanya boleh menambah 1 baris transaksi DB. DILARANG mengubah filter/rumus/logic Buku Kas.
+
+**Fix**:
+- Backend `/app/backend/routers/cashbook.py`:
+  - Endpoint baru `POST /api/cashbook/piutang/bayar` (payload: date/amount/description/reference) → insert TUNGGAL 1 baris `cash_transactions` dengan `account_code="102-PTP"` dan `type="out"`. Tidak lewat `_insert_cash_transaction` (yang memaksa `type=acc.type=in`).
+  - Fix Buku Kas isolation (`_kas_delta`, `_net`, `/cashbook/balance`, `/cashbook/summary`): tambah exclusion `account_code != "102-PTP"` pada semua `total_out` kalkulasi Kas. Rumus Buku Kas TETAP `opening + kas_in − kas_out`, hanya menegaskan bahwa 102-PTP bukan kas_out.
+- Frontend `/app/frontend/src/pages/CashBook.jsx`:
+  - Tombol `BAYAR PIUTANG` (biru) di dalam Piutang card — hanya render di tab Jurnal Akuntansi (via `BookTab`).
+  - Komponen baru `PiutangBayarModal` dengan input tanggal/jumlah/keterangan/referensi. Submit → POST endpoint di atas → toast + `loadAll()`.
+
+**Verifikasi curl + UI**:
+- Sebelum Bayar Piutang: `/cashbook/balance` → 10.805.718
+- Sesudah Bayar Piutang Rp 750.000: `/cashbook/balance` → 10.805.718 (**SAMA** ✓)
+- Total Piutang di Jurnal Akuntansi: -750.000, muncul di card & tabel `type=out` ✓
+- Tab Buku Kas: 0 jurnal, Debet 0, Kredit 0 ✓ (102-PTP invisible di Buku Kas)
+
+**Status**: DONE ✓ (Buku Kas UNTOUCHED)
+

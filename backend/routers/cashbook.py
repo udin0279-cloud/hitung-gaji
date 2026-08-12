@@ -60,6 +60,19 @@ class MonthlyOpeningIn(BaseModel):
     opening_balance: float
 
 
+class PiutangBayarIn(BaseModel):
+    """Payload untuk endpoint Bayar Piutang (khusus akun 102-PTP di Jurnal Akuntansi).
+
+    Endpoint ini SENGAJA dibuat terpisah agar SATU-satunya efek adalah insert 1 baris
+    cash_transactions dengan account_code=102-PTP dan type='out'. Tidak menyentuh
+    logic Buku Kas, tidak mengubah filter, tidak mengubah rumus saldo.
+    """
+    date: str  # YYYY-MM-DD
+    amount: float
+    description: Optional[str] = None
+    reference: Optional[str] = None
+
+
 class KasbonIn(BaseModel):
     date: str  # YYYY-MM-DD
     name: str
@@ -131,7 +144,9 @@ def make_router(
                     if "penjualan" in desc:
                         continue
                     n += float(t["amount"])
-                elif t["type"] == "out":
+                elif t["type"] == "out" and t.get("account_code") != "102-PTP":
+                    # 102-PTP (Piutang Perusahaan) HANYA akun Jurnal Akuntansi.
+                    # Tidak boleh mengurangi saldo Buku Kas fisik.
                     n -= float(t["amount"])
             return n
 
@@ -294,13 +309,14 @@ def make_router(
         opening_date = setting.get("opening_date")
 
         def _kas_delta(t):
-            # RUMUS KAS: Kredit=akun 101 tanpa "penjualan", Debet=SEMUA akun.
+            # RUMUS KAS: Kredit=akun 101 tanpa "penjualan", Debet=SEMUA akun kecuali 102-PTP.
+            # (102-PTP = Piutang Perusahaan, khusus Jurnal Akuntansi — tidak menyentuh kas fisik.)
             if t["type"] == "in" and t.get("account_code") == "101":
                 desc = (t.get("description") or "").lower()
                 if "penjualan" in desc:
                     return 0.0
                 return float(t["amount"])
-            elif t["type"] == "out":
+            elif t["type"] == "out" and t.get("account_code") != "102-PTP":
                 return -float(t["amount"])
             return 0.0
 
@@ -342,6 +358,44 @@ def make_router(
             auto=False,
             created_by=user.get("email"),
         )
+        return doc
+
+
+    @router.post("/cashbook/piutang/bayar")
+    async def cash_piutang_bayar(payload: PiutangBayarIn, user: dict = Depends(require_super_admin)):
+        """Bayar Piutang Perusahaan (akun 102-PTP) — KHUSUS Jurnal Akuntansi.
+
+        EFEK TUNGGAL: insert 1 baris cash_transactions (account_code=102-PTP, type='out').
+        TIDAK menyentuh logic Buku Kas: akun 102-PTP di-exclude di filter frontend
+        `filteredJournal` sehingga tx ini TIDAK pernah muncul di tab Buku Kas.
+
+        Alasan tidak reuse `_insert_cash_transaction`: fungsi tsb memaksa
+        `type = acc.type` (master 102-PTP = 'in'), padahal pelunasan piutang WAJIB
+        `type='out'` supaya net piutang berkurang di ringkasan Jurnal Akuntansi.
+        """
+        await _ensure_cash_accounts()
+        acc = await db.cash_accounts.find_one({"code": "102-PTP"}, {"_id": 0})
+        if not acc:
+            raise HTTPException(status_code=404, detail="Akun 102-PTP tidak ditemukan. Restart backend untuk auto-seed.")
+        amt = float(payload.amount or 0)
+        if amt <= 0:
+            raise HTTPException(status_code=400, detail="Jumlah pelunasan harus > 0")
+        desc = (payload.description or "Pelunasan Piutang Perusahaan").strip()
+        doc = {
+            "id": str(uuid.uuid4()),
+            "date": payload.date or datetime.now(timezone.utc).date().isoformat(),
+            "account_code": "102-PTP",
+            "account_name": acc["name"],
+            "type": "out",  # <-- INI KUNCI: pelunasan = uang piutang berkurang
+            "description": desc,
+            "amount": round(amt, 2),
+            "reference": payload.reference,
+            "auto": False,
+            "created_by": user.get("email"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.cash_transactions.insert_one(doc)
+        doc.pop("_id", None)
         return doc
 
 
@@ -456,7 +510,8 @@ def make_router(
                 float(t["amount"]) for t in txs
                 if t["type"] == "in" and t.get("account_code") == "101" and not _is_penjualan(t)
             )
-            total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
+            # 102-PTP di-exclude — akun Jurnal Akuntansi murni, tidak mengurangi kas fisik.
+            total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out" and t.get("account_code") != "102-PTP")
             balance = float(latest_lock["opening_balance"]) + total_in - total_out
         else:
             txs = await db.cash_transactions.find({}, {"_id": 0, "type": 1, "amount": 1, "account_code": 1, "description": 1}).to_list(length=200000)
@@ -464,7 +519,7 @@ def make_router(
                 float(t["amount"]) for t in txs
                 if t["type"] == "in" and t.get("account_code") == "101" and not _is_penjualan(t)
             )
-            total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out")
+            total_out = sum(float(t["amount"]) for t in txs if t["type"] == "out" and t.get("account_code") != "102-PTP")
             balance = float(setting.get("opening_balance", 0)) + total_in - total_out
         return {
             "opening_balance": round(float(setting.get("opening_balance", 0)), 2),
@@ -728,7 +783,8 @@ def make_router(
             float(t["amount"]) for t in month_tx
             if t["type"] == "in" and t.get("account_code") == "101" and not _is_penjualan(t)
         )
-        total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out")
+        # 102-PTP (Piutang Perusahaan) khusus Jurnal Akuntansi → tidak boleh mengurangi kas fisik di summary Buku Kas.
+        total_out = sum(float(t["amount"]) for t in month_tx if t["type"] == "out" and t.get("account_code") != "102-PTP")
         closing = opening_of_period + total_in - total_out
         total_in_all_accounts = sum(float(t["amount"]) for t in month_tx if t["type"] == "in")
 

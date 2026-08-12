@@ -329,6 +329,7 @@ export default function CashBook() {
             txData={txData} filtered={filteredBook} loading={loading}
             kasbonOpen={kasbonOpen}
             totalPiutang={totalPiutangBulan}
+            onChanged={loadAll}
             onEdit={(t) => { setEditingTx(t); setOpenTx(true); }}
             onRemove={removeTx}
             onAdjustBalance={() => setOpenAdjust(true)}
@@ -432,7 +433,8 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 }
 
 /* ---------- Buku Kas Tab ---------- */
-function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance, kasbonOpen, totalPiutang = 0 }) {
+function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance, kasbonOpen, totalPiutang = 0, onChanged }) {
+  const [openBayarPiutang, setOpenBayarPiutang] = useState(false);
   // === RUMUS MATEMATIKA MURNI ===
   // Saldo Awal + SEMUA Pemasukan − SEMUA Pengeluaran. Running balance sequential.
   //
@@ -497,15 +499,33 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
       </div>
 
       {/* Ringkasan Piutang Perusahaan (khusus Jurnal Akuntansi) */}
-      <div data-testid="jurnal-piutang-card" className="mb-4 border border-[#002FA7]/20 bg-[#002FA7]/[0.03] px-4 py-3 flex items-center justify-between">
+      <div data-testid="jurnal-piutang-card" className="mb-4 border border-[#002FA7]/20 bg-[#002FA7]/[0.03] px-4 py-3 flex items-center justify-between gap-3">
         <div>
           <div className="text-[10px] uppercase tracking-widest text-[#002FA7]/80 font-bold">Total Piutang Perusahaan (Akun 102-PTP)</div>
           <div className="text-[10px] font-mono text-zinc-500 mt-0.5">Akumulasi net (in − out) transaksi bulan {monthLabel(month)}. Khusus Jurnal Akuntansi.</div>
         </div>
-        <div data-testid="jurnal-piutang-value" className={`font-mono text-2xl font-bold ${totalPiutang >= 0 ? "text-[#002FA7]" : "text-[#E81123]"}`}>
-          {formatIDR(totalPiutang)}
+        <div className="flex items-center gap-4">
+          <div data-testid="jurnal-piutang-value" className={`font-mono text-2xl font-bold ${totalPiutang >= 0 ? "text-[#002FA7]" : "text-[#E81123]"}`}>
+            {formatIDR(totalPiutang)}
+          </div>
+          <button
+            type="button"
+            data-testid="btn-bayar-piutang"
+            onClick={() => setOpenBayarPiutang(true)}
+            className="rounded-none bg-[#002FA7] text-white px-4 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#001F7A] inline-flex items-center gap-2"
+            title="Catat pelunasan piutang perusahaan. Insert 1 baris transaksi type=out ke akun 102-PTP. Tidak menyentuh Buku Kas."
+          >
+            <ArrowDownCircle className="w-3.5 h-3.5" /> Bayar Piutang
+          </button>
         </div>
       </div>
+
+      {openBayarPiutang && (
+        <PiutangBayarModal
+          onClose={() => setOpenBayarPiutang(false)}
+          onSaved={async () => { setOpenBayarPiutang(false); if (onChanged) await onChanged(); }}
+        />
+      )}
 
       <div className="border border-zinc-200 bg-white overflow-x-auto">
         <table className="w-full text-left text-sm table-fixed">
@@ -757,6 +777,113 @@ function TxModal({ initial, accounts, currentTab, onClose, onSaved }) {
     </div>
   );
 }
+
+/* ---------- Piutang Bayar Modal (KHUSUS Jurnal Akuntansi — akun 102-PTP) ---------- */
+/* SATU-satunya efek: POST /cashbook/piutang/bayar → insert 1 baris tx type=out di akun 102-PTP.
+   TIDAK menyentuh logic Buku Kas. Filter Buku Kas (`filteredJournal`) sudah exclude 102-PTP.  */
+function PiutangBayarModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({
+    date: todayISO(),
+    amount: 0,
+    description: "",
+    reference: "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (Number(form.amount) <= 0) { toast.error("Jumlah pelunasan harus > 0"); return; }
+    setSaving(true);
+    try {
+      await api.post("/cashbook/piutang/bayar", {
+        date: form.date,
+        amount: Number(form.amount),
+        description: form.description.trim() || "Pelunasan Piutang Perusahaan",
+        reference: form.reference.trim() || null,
+      });
+      toast.success("Pelunasan piutang tercatat");
+      await onSaved();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Gagal menyimpan pelunasan");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-zinc-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white border border-zinc-300 w-full max-w-lg" data-testid="piutang-bayar-modal">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-200">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 flex items-center justify-center bg-[#002FA7]">
+              <ArrowDownCircle className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Jurnal Akuntansi</div>
+              <div className="font-heading text-xl font-bold text-zinc-900">Bayar Piutang Perusahaan</div>
+            </div>
+          </div>
+          <button onClick={onClose} data-testid="close-piutang-bayar-modal" className="p-1.5 hover:bg-zinc-100"><X className="w-4 h-4" /></button>
+        </div>
+        <form onSubmit={submit} className="p-5 space-y-4">
+          <div className="text-[11px] font-mono text-zinc-500 bg-zinc-50 border border-zinc-200 p-2.5">
+            <b className="text-zinc-900">102-PTP · Piutang Perusahaan</b><br/>
+            Aksi ini insert 1 baris transaksi <b>type=out</b> ke akun ini. Menurunkan total piutang di Jurnal Akuntansi. Tidak muncul di Buku Kas.
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-semibold mb-1">Tanggal</label>
+              <input
+                type="date"
+                value={form.date}
+                onChange={(e) => setForm({ ...form, date: e.target.value })}
+                data-testid="piutang-bayar-date"
+                className="w-full rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-semibold mb-1">Jumlah (Rp)</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={form.amount}
+                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                data-testid="piutang-bayar-amount"
+                className="w-full rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm font-mono focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-semibold mb-1">Keterangan</label>
+            <input
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="Pelunasan Piutang Perusahaan"
+              data-testid="piutang-bayar-desc"
+              className="w-full rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest text-zinc-500 font-semibold mb-1">Referensi (opsional)</label>
+            <input
+              value={form.reference}
+              onChange={(e) => setForm({ ...form, reference: e.target.value })}
+              placeholder="No. nota, no. bukti, dsb."
+              data-testid="piutang-bayar-ref"
+              className="w-full rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="rounded-none border border-zinc-300 bg-white text-zinc-700 px-4 py-2 text-sm hover:bg-zinc-50" data-testid="piutang-bayar-cancel">Batal</button>
+            <button type="submit" disabled={saving} className="rounded-none bg-[#002FA7] text-white px-4 py-2 text-sm font-bold uppercase tracking-wider hover:bg-[#001F7A] disabled:opacity-50" data-testid="piutang-bayar-submit">
+              {saving ? "Menyimpan…" : "Simpan"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 
 /* ---------- Setting Modal (Saldo Awal) ---------- */
 function SettingModal({ initial, onClose, onSaved }) {
