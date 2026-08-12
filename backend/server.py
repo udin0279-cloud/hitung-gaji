@@ -3439,11 +3439,12 @@ async def _payroll_cost_for_month(period: str) -> tuple:
 @api_router.get("/reports/product-margin/{period}")
 async def product_margin_report(period: str, user: dict = Depends(require_super_admin)):
     """Ranking margin per produk untuk periode YYYY-MM.
-    Data source: db.sales items. Cost = sum(component.consumption × material.purchase_price).
+    Data source: db.sales items dengan status ∈ ["paid","dp"].
+    Cost = sum(component.consumption × material.purchase_price).
     """
     start, end, _year, _month = _parse_month(period)
     sales = await db.sales.find(
-        {"date": {"$gte": start, "$lte": end}}, {"_id": 0},
+        {"date": {"$gte": start, "$lte": end}, "status": {"$in": ["paid", "dp"]}}, {"_id": 0},
     ).to_list(length=50000)
 
     # Cache materials untuk lookup purchase_price
@@ -3534,7 +3535,7 @@ async def product_margin_report(period: str, user: dict = Depends(require_super_
 
 @api_router.get("/reports/profit-loss-latest-period")
 async def profit_loss_latest_period(user: dict = Depends(require_super_admin)):
-    """Return bulan (YYYY-MM) TERBARU yang punya data P&L (order aktif, waste, atau payroll).
+    """Return bulan (YYYY-MM) TERBARU yang punya data P&L (sales paid/dp, waste, atau payroll).
 
     Dipakai oleh halaman Laporan Laba/Rugi untuk set default period ke bulan yg realistis
     (bukan bulan kalender kosong). Fallback ke bulan sekarang jika DB kosong total.
@@ -3542,15 +3543,15 @@ async def profit_loss_latest_period(user: dict = Depends(require_super_admin)):
     today = datetime.now(timezone.utc).date()
     fallback = f"{today.year:04d}-{today.month:02d}"
 
-    # Sumber data terbaru: max start_date job_orders aktif, max date waste, max period payroll_runs
+    # Sumber data terbaru: max sales.date (paid/dp), max waste.date, max payroll_runs.period
     latest_dates: List[str] = []
-    order = await db.job_orders.find_one(
-        {"status": {"$ne": "batal"}, "start_date": {"$exists": True, "$ne": None}},
-        {"_id": 0, "start_date": 1},
-        sort=[("start_date", -1)],
+    sale = await db.sales.find_one(
+        {"status": {"$in": ["paid", "dp"]}, "date": {"$exists": True, "$ne": None}},
+        {"_id": 0, "date": 1},
+        sort=[("date", -1)],
     )
-    if order and order.get("start_date"):
-        latest_dates.append(str(order["start_date"])[:7])
+    if sale and sale.get("date"):
+        latest_dates.append(str(sale["date"])[:7])
     waste_doc = await db.waste.find_one({"date": {"$exists": True, "$ne": None}}, {"_id": 0, "date": 1}, sort=[("date", -1)])
     if waste_doc and waste_doc.get("date"):
         latest_dates.append(str(waste_doc["date"])[:7])
@@ -3564,15 +3565,61 @@ async def profit_loss_latest_period(user: dict = Depends(require_super_admin)):
 
 @api_router.get("/reports/profit-loss/{period}")
 async def profit_loss_report(period: str, user: dict = Depends(require_super_admin)):
-    """P&L bulanan: Revenue (orders selesai/aktif) − COGS − Waste − Gaji = Net Profit."""
+    """P&L bulanan: Revenue (sales paid/dp) − COGS (BOM) − Waste − Gaji = Net Profit.
+
+    Data source Revenue & COGS: db.sales dengan status ∈ ["paid","dp"].
+    COGS = sum(item.components[].consumption × material.purchase_price) — konsisten
+    dengan product_margin_report.
+    """
     start, end, year, month = _parse_month(period)
-    # Orders (revenue & material cost) — exclude batal
-    orders = await db.job_orders.find({
-        "start_date": {"$gte": start, "$lte": end},
-        "status": {"$ne": "batal"},
-    }, {"_id": 0}).to_list(length=5000)
-    revenue = sum(float(o.get("total_price", 0)) for o in orders)
-    cogs = sum(float(o.get("total_material_cost", 0)) for o in orders)
+
+    # Sales (revenue & COGS BOM) — hanya paid + dp
+    sales = await db.sales.find(
+        {"date": {"$gte": start, "$lte": end}, "status": {"$in": ["paid", "dp"]}},
+        {"_id": 0},
+    ).to_list(length=50000)
+
+    # Material lookup cache
+    material_cache: Dict[str, Dict[str, Any]] = {}
+    async def _mat(mid: Optional[str]):
+        if not mid:
+            return {}
+        if mid in material_cache:
+            return material_cache[mid]
+        m = await db.materials.find_one({"id": mid}, {"_id": 0, "purchase_price": 1}) or {}
+        material_cache[mid] = m
+        return m
+
+    revenue = 0.0
+    cogs = 0.0
+    cust_agg: Dict[str, Dict[str, Any]] = {}
+    for s in sales:
+        sale_revenue = 0.0
+        sale_cogs = 0.0
+        for it in (s.get("items") or []):
+            # Revenue = subtotal per item (konsisten dengan product_margin_report)
+            sale_revenue += float(it.get("subtotal", 0) or 0)
+            comps = it.get("components") or []
+            if comps:
+                for c in comps:
+                    m = await _mat(c.get("material_id"))
+                    sale_cogs += float(c.get("consumption", 0) or 0) * float(m.get("purchase_price", 0) or 0)
+            else:
+                # Legacy: material_id + area_total
+                mid = it.get("material_id")
+                if mid:
+                    m = await _mat(mid)
+                    sale_cogs += float(it.get("area_total", 0) or 0) * float(m.get("purchase_price", 0) or 0)
+        revenue += sale_revenue
+        cogs += sale_cogs
+
+        # Top customer aggregate
+        key = (s.get("customer_name") or "-").strip() or "-"
+        row = cust_agg.setdefault(key, {"customer": key, "orders": 0, "revenue": 0.0, "material_cost": 0.0})
+        row["orders"] += 1
+        row["revenue"] += sale_revenue
+        row["material_cost"] += sale_cogs
+
     gross_profit = revenue - cogs
     # Waste
     waste_docs = await db.waste.find({"date": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(length=5000)
@@ -3582,16 +3629,7 @@ async def profit_loss_report(period: str, user: dict = Depends(require_super_adm
     # Total expenses
     total_expenses = waste_loss + payroll_cost
     net_profit = gross_profit - total_expenses
-    # Breakdown top customer
-    cust_agg: Dict[str, Dict[str, Any]] = {}
-    for o in orders:
-        key = (o.get("customer") or "-").strip()
-        if not key:
-            key = "-"
-        row = cust_agg.setdefault(key, {"customer": key, "orders": 0, "revenue": 0.0, "material_cost": 0.0})
-        row["orders"] += 1
-        row["revenue"] += float(o.get("total_price", 0))
-        row["material_cost"] += float(o.get("total_material_cost", 0))
+    # Top customer sorting
     top_customers = sorted(cust_agg.values(), key=lambda r: r["revenue"], reverse=True)[:10]
     for r in top_customers:
         r["revenue"] = round(r["revenue"], 2)
@@ -3609,7 +3647,7 @@ async def profit_loss_report(period: str, user: dict = Depends(require_super_adm
         "total_expenses": round(total_expenses, 2),
         "net_profit": round(net_profit, 2),
         "net_margin_pct": round((net_profit / revenue * 100) if revenue > 0 else 0, 2),
-        "order_count": len(orders),
+        "order_count": len(sales),
         "waste_records": len(waste_docs),
         "top_customers": top_customers,
     }
@@ -3639,12 +3677,30 @@ async def profit_loss_trend(months: int = 12, user: dict = Depends(require_super
 
     async def _summary(period: str):
         start, end, _, _ = _parse_month(period)
-        orders = await db.job_orders.find({
-            "start_date": {"$gte": start, "$lte": end},
-            "status": {"$ne": "batal"},
-        }, {"_id": 0, "total_price": 1, "total_material_cost": 1}).to_list(length=5000)
-        revenue = sum(float(o.get("total_price", 0)) for o in orders)
-        cogs = sum(float(o.get("total_material_cost", 0)) for o in orders)
+        # Sales paid/dp — revenue & COGS via BOM (konsisten dgn profit_loss_report)
+        sales = await db.sales.find(
+            {"date": {"$gte": start, "$lte": end}, "status": {"$in": ["paid", "dp"]}},
+            {"_id": 0, "total": 1, "items": 1},
+        ).to_list(length=50000)
+        revenue = 0.0
+        cogs = 0.0
+        _mcache: Dict[str, Dict[str, Any]] = {}
+        async def _mp(mid: Optional[str]):
+            if not mid: return 0.0
+            if mid in _mcache:
+                return float(_mcache[mid].get("purchase_price", 0) or 0)
+            m = await db.materials.find_one({"id": mid}, {"_id": 0, "purchase_price": 1}) or {}
+            _mcache[mid] = m
+            return float(m.get("purchase_price", 0) or 0)
+        for s in sales:
+            for it in (s.get("items") or []):
+                revenue += float(it.get("subtotal", 0) or 0)
+                comps = it.get("components") or []
+                if comps:
+                    for c in comps:
+                        cogs += float(c.get("consumption", 0) or 0) * await _mp(c.get("material_id"))
+                elif it.get("material_id"):
+                    cogs += float(it.get("area_total", 0) or 0) * await _mp(it.get("material_id"))
         waste_docs = await db.waste.find({"date": {"$gte": start, "$lte": end}}, {"_id": 0, "estimated_loss": 1}).to_list(length=5000)
         waste_loss = sum(float(w.get("estimated_loss", 0)) for w in waste_docs)
         payroll_cost, _ = await _payroll_cost_for_month(period)
@@ -3658,7 +3714,7 @@ async def profit_loss_trend(months: int = 12, user: dict = Depends(require_super
             "payroll_cost": round(payroll_cost, 2),
             "gross_profit": round(gross, 2),
             "net_profit": round(net, 2),
-            "order_count": len(orders),
+            "order_count": len(sales),
         }
 
     # Fetch parallel

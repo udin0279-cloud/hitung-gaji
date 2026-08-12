@@ -2172,3 +2172,20 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-12 (part 5) — P&L Revenue & COGS berbasis Sales (bukan Job Orders)
+**Problem**: Halaman Laba/Rugi menghitung Revenue & COGS dari `job_orders`, tidak konsisten dengan `product_margin_report` yang menggunakan `sales`. Angka tidak match antara P&L dan analytics margin.
+
+**Fix** — `/app/backend/server.py`:
+- `profit_loss_report` (`GET /api/reports/profit-loss/{period}`): switch data source → `db.sales` dengan filter `status ∈ ["paid","dp"]`. Revenue = `Σ items[].subtotal`. COGS = `Σ items[].components[].consumption × material.purchase_price` (fallback ke `area_total × material.purchase_price` untuk legacy items). Top customer aggregated by `customer_name` dari sales.
+- `profit_loss_trend._summary`: same refactor untuk data trend 12 bulan.
+- `profit_loss_latest_period`: max date sekarang mengambil `sales(status ∈ paid/dp).date` (bukan `job_orders.start_date`).
+- `product_margin_report`: tambah filter `status ∈ ["paid","dp"]` biar konsisten dengan P&L.
+
+**Verifikasi**:
+- `GET /reports/profit-loss/2026-07`: revenue=1.050.000, cogs=1.440.000, gross=-390.000, top_customer=[Bu Ani].
+- `GET /reports/product-margin/2026-07`: total_revenue=1.050.000, total_cost=1.440.000 (**MATCH** dgn P&L ✓).
+- `GET /reports/profit-loss-trend?months=3`: bulan 2026-07 muncul dgn rev=1.050.000 ✓.
+
+**Status**: DONE ✓
+
