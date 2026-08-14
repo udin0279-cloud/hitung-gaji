@@ -2290,3 +2290,25 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-14 (part 7) — Ringkasan Kategori PEMASUKAN: STRICT Whitelist 5 Baris
+**Aturan mutlak dari user (TIDAK BOLEH DIUBAH)**:
+- PEMASUKAN hanya boleh menampilkan 5 baris:
+  1. `301-SPP` 2. `301-BCA` 3. `301-MDR` 4. `301-SPK` 5. **Cash Plaza** (dari koleksi sales)
+- Hapus permanen section "DI LUAR TOTAL" (baris 101 dihilangkan).
+- Hapus baris "Shopee (Plaza + Kastem)" synthetic (double-count dgn 301-SPP + 301-SPK).
+- Total = jumlah 5 baris di atas.
+
+**Implementasi** — `/app/frontend/src/pages/CashBook.jsx`:
+- State kembali ke `cashPlaza = {amount, count}` (drop `paymentMix`).
+- `SummaryTab.inMain` = **whitelist**: iterasi `ALLOWED_CODES=["301-SPP","301-BCA","301-MDR","301-SPK"]` pick dari `summary.breakdown_in`, kemudian append baris `CASH-PLAZA · Cash Plaza` jika amount > 0.
+- Remove prop `standaloneRows` dari `BreakdownCard` invocation → section "Di Luar Total" tidak dirender.
+
+**Verifikasi (Jul 2026 dgn dummy cash_plaza Rp 1.000.000)**:
+- Baris di Pemasukan: hanya `CASH-PLAZA · Cash Plaza · Rp 1.000.000` (301-* tidak ada karena data belum ada) ✓
+- Section "Di Luar Total" tidak muncul ✓
+- Total Pemasukan Rp 1.000.000 ✓
+- Bottom stat konsisten Rp 1.000.000 ✓
+
+**Status**: DONE ✓
+

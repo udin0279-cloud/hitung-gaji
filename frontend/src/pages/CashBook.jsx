@@ -93,12 +93,7 @@ export default function CashBook() {
   const [setting, setSetting] = useState(null);
   // Kasbon open (semua waktu) — dipakai untuk mengurangi Saldo Kas Real-time & Saldo Akhir bulan.
   const [kasbonOpen, setKasbonOpen] = useState({ items: [], total_open: 0 });
-  const [paymentMix, setPaymentMix] = useState({
-    cash_plaza: { amount: 0, count: 0 },
-    bca:        { amount: 0, count: 0 },
-    mandiri:    { amount: 0, count: 0 },
-    shopee:     { amount: 0, count: 0 },
-  });
+  const [cashPlaza, setCashPlaza] = useState({ amount: 0, count: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [openTx, setOpenTx] = useState(false);
@@ -139,28 +134,18 @@ export default function CashBook() {
       const openTotal = openItems.reduce((sum, k) => sum + Number(k.amount || 0), 0);
       setKasbonOpen({ items: openItems, total_open: openTotal });
 
-      // Payment method mix — group sales by family (cash_plaza / bca / mandiri / shopee).
-      // Sales dgn status ∈ paid/dp ditotalkan per family (plaza + kastem digabung).
+      // Cash Plaza only — dari koleksi sales (payment_method='cash_plaza', status paid/dp).
       const salesRaw = Array.isArray(sl.data) ? sl.data : (sl.data.items || []);
-      const buckets = {
-        cash_plaza: { amount: 0, count: 0 },
-        bca:        { amount: 0, count: 0 },
-        mandiri:    { amount: 0, count: 0 },
-        shopee:     { amount: 0, count: 0 },
-      };
+      let cpAmount = 0, cpCount = 0;
       for (const x of salesRaw) {
         const status = (x.status || "").toLowerCase();
-        if (!["paid", "dp"].includes(status)) continue;
         const method = (x.payment_method || "").toLowerCase();
-        const total = Number(x.total || 0);
-        let key = null;
-        if (method === "cash_plaza") key = "cash_plaza";
-        else if (method.startsWith("bca")) key = "bca";
-        else if (method.startsWith("mandiri")) key = "mandiri";
-        else if (method.startsWith("shopee")) key = "shopee";
-        if (key) { buckets[key].amount += total; buckets[key].count += 1; }
+        if (method === "cash_plaza" && (status === "paid" || status === "dp")) {
+          cpAmount += Number(x.total || 0);
+          cpCount += 1;
+        }
       }
-      setPaymentMix(buckets);
+      setCashPlaza({ amount: cpAmount, count: cpCount });
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
     } finally { setLoading(false); }
@@ -385,7 +370,7 @@ export default function CashBook() {
           <KasbonTab month={month} setMonth={setMonth} onCashChanged={loadAll} />
         )}
         {tab === "summary" && (
-          <SummaryTab summary={summary} month={month} setMonth={setMonth} paymentMix={paymentMix} />
+          <SummaryTab summary={summary} month={month} setMonth={setMonth} cashPlaza={cashPlaza} />
         )}
       </div>
 
@@ -650,27 +635,25 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
 }
 
 /* ---------- Summary Tab (Breakdown per Kategori) ---------- */
-function SummaryTab({ summary, month, setMonth, paymentMix }) {
+function SummaryTab({ summary, month, setMonth, cashPlaza = { amount: 0, count: 0 } }) {
   if (!summary) return <div className="text-zinc-400 text-sm">Memuat…</div>;
-  const inRows = summary.breakdown_in || [];
-  const inMain = inRows.filter((r) => r.account_code !== "101");
-  const inStandalone = inRows.filter((r) => r.account_code === "101");
 
-  // Inject baris per metode pembayaran dari koleksi sales (paid/dp).
-  // IKUT dijumlahkan ke Total Pemasukan. Row hanya muncul bila amount > 0.
-  const METHOD_ROWS = [
-    { key: "cash_plaza", code: "CASH-PLAZA", label: "Cash Plaza" },
-    { key: "bca",        code: "BCA",         label: "BCA (Plaza + Kastem)" },
-    { key: "mandiri",    code: "MANDIRI",     label: "Mandiri (Plaza + Kastem)" },
-    { key: "shopee",     code: "SHOPEE",      label: "Shopee (Plaza + Kastem)" },
-  ];
-  if (paymentMix) {
-    for (const m of METHOD_ROWS) {
-      const b = paymentMix[m.key];
-      if (b && b.amount > 0) {
-        inMain.push({ account_code: m.code, account_name: m.label, amount: b.amount, count: b.count });
-      }
-    }
+  // ATURAN MUTLAK (permintaan user 2026-08-14, TIDAK BOLEH DIUBAH):
+  //   PEMASUKAN hanya berisi 5 baris: 301-SPP, 301-BCA, 301-MDR, 301-SPK, Cash Plaza.
+  //   Tidak ada baris "Di Luar Total". Tidak ada baris 101. Tidak ada BCA/Mandiri/Shopee family synthetic.
+  //   Total Pemasukan = jumlah dari kelima baris tsb.
+  const ALLOWED_CODES = ["301-SPP", "301-BCA", "301-MDR", "301-SPK"];
+  const byCode = Object.fromEntries((summary.breakdown_in || []).map((r) => [r.account_code, r]));
+  const inMain = ALLOWED_CODES
+    .map((code) => byCode[code])
+    .filter(Boolean);
+  if (cashPlaza && cashPlaza.amount > 0) {
+    inMain.push({
+      account_code: "CASH-PLAZA",
+      account_name: "Cash Plaza",
+      amount: Number(cashPlaza.amount || 0),
+      count: Number(cashPlaza.count || 0),
+    });
   }
   const totalInAdjusted = inMain.reduce((s, r) => s + Number(r.amount || 0), 0);
   const maxIn = Math.max(...inMain.map((r) => r.amount), 1);
@@ -688,8 +671,6 @@ function SummaryTab({ summary, month, setMonth, paymentMix }) {
           rows={inMain}
           total={totalInAdjusted}
           max={maxIn}
-          standaloneRows={inStandalone}
-          standaloneNote="Baris di luar Total Pemasukan (kas fisik masuk — bukan bagian Ringkasan Kategori pendapatan)."
         />
         <BreakdownCard title="Pengeluaran" color="#E81123" rows={summary.breakdown_out || []} total={summary.total_out} max={maxOut} />
       </div>
