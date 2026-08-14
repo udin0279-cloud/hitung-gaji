@@ -162,20 +162,19 @@ export default function CashBook() {
     .reduce((s, t) => s + (t.type === "in" ? Number(t.amount || 0) : -Number(t.amount || 0)), 0);
 
   // === Kartu Ringkasan DINAMIS mengikuti tab aktif ===
-  // Buku Kas: totals dari filteredJournal (akun 101 in + all out)
-  // Jurnal Akuntansi: totals dari filteredBook (akun non-101)
+  // Buku Kas: totals dari filteredJournal (akun 101 in + all out). Opening = cascade dari backend.
+  // Jurnal Akuntansi: totals dari filteredBook (akun non-101). Opening PAKSA = Rp 0 (permintaan user 2026-08-12).
+  //   Rationale: Non-Kas / Jurnal Akuntansi tidak boleh cascade dari bulan sebelumnya —
+  //   setiap bulan mulai bersih dari Rp 0.
   const _sumIn = (arr) => arr.reduce((s, t) => s + (t.type === "in" ? Number(t.amount || 0) : 0), 0);
   const _sumOut = (arr) => arr.reduce((s, t) => s + (t.type === "out" ? Number(t.amount || 0) : 0), 0);
-  const FORCED_OPENING_BOOK_CARD = { "2026-08": -27850601 };
   const bukuKasIn = _sumIn(filteredJournal);
   const bukuKasOut = _sumOut(filteredJournal);
   const bukuKasOpening = Number(txData.opening_balance || 0);
   const bukuKasClosing = bukuKasOpening + bukuKasIn - bukuKasOut;
   const jurnalIn = _sumIn(filteredBook);
   const jurnalOut = _sumOut(filteredBook);
-  const jurnalOpening = Object.prototype.hasOwnProperty.call(FORCED_OPENING_BOOK_CARD, month)
-    ? FORCED_OPENING_BOOK_CARD[month]
-    : Number(txData.opening_balance || 0);
+  const jurnalOpening = 0; // Selalu Rp 0 di Jurnal Akuntansi — tidak cascade.
   const jurnalClosing = jurnalOpening + jurnalIn - jurnalOut;
   const cardData = tab === "book"
     ? { in: jurnalIn, out: jurnalOut, closing: jurnalClosing, realtime: jurnalClosing, showKasbon: false }
@@ -435,14 +434,11 @@ function StatCard({ label, value, icon: Icon, positive, danger, testId, big, sub
 /* ---------- Buku Kas Tab ---------- */
 function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading, onEdit, onRemove, onAdjustBalance, currentBalance, kasbonOpen, totalPiutang = 0, onChanged }) {
   const [openBayarPiutang, setOpenBayarPiutang] = useState(false);
-  // === RUMUS MATEMATIKA MURNI ===
-  // Saldo Awal + SEMUA Pemasukan − SEMUA Pengeluaran. Running balance sequential.
-  //
-  // === HARDCODE OPENING JURNAL AKUNTANSI (permintaan user 2026-08-11) ===
-  // Variabel INI ONLY untuk BookTab (Jurnal Akuntansi). Tidak menyentuh Buku Kas.
-  const FORCED_OPENING_BOOK = { "2026-08": -27850601 };
-  const isForcedBook = Object.prototype.hasOwnProperty.call(FORCED_OPENING_BOOK, month);
-  const openingBalance = isForcedBook ? FORCED_OPENING_BOOK[month] : Number(txData.opening_balance || 0);
+  // === RUMUS MATEMATIKA MURNI (Jurnal Akuntansi) ===
+  // Saldo Awal = Rp 0 SELALU (permintaan user 2026-08-12: Jurnal TIDAK cascade).
+  // Setiap bulan mulai bersih dari 0, hanya akumulasi transaksi bulan berjalan.
+  // (Buku Kas / Akun 101 TIDAK terpengaruh — tetap cascade seperti biasa.)
+  const openingBalance = 0;
 
   // Total Pemasukan = SEMUA `in` (apapun akunnya)
   const totalPemasukan = filtered.reduce(

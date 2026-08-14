@@ -2189,3 +2189,18 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-14 — Jurnal Akuntansi: Saldo Awal SELALU Rp 0 (No Cascade)
+**Problem**: User minta Tab Jurnal Akuntansi tidak boleh cascade dari bulan sebelumnya. Setiap bulan harus mulai bersih dari Rp 0. Buku Kas tetap cascade.
+
+**Fix** — `/app/frontend/src/pages/CashBook.jsx`:
+- `jurnalOpening` (scope parent, dipakai `cardData`) → hardcoded `0` (dihapus lookup ke `FORCED_OPENING_BOOK_CARD` & `txData.opening_balance`).
+- `BookTab.openingBalance` (Jurnal Akuntansi ledger) → hardcoded `0` (dihapus `FORCED_OPENING_BOOK` hardcode -27.850.601 dan fallback ke `txData.opening_balance`).
+- `bukuKasOpening` TIDAK DIUBAH → tetap `Number(txData.opening_balance || 0)` = cascade dari backend `/cashbook/summary` (rumus linear cascade Buku Kas tetap aktif).
+
+**Verifikasi UI (screenshot)**:
+- Jurnal Akuntansi Aug 2026: Saldo Awal `Rp 0`, header `SALDO NON-KAS Rp 0`, `SALDO AKHIR Rp 0` ✓
+- Buku Kas Aug 2026: Saldo Akhir Jul 2026 `Rp 10.805.718` (cascade utuh), `SALDO KAS REAL-TIME Rp 10.805.718` ✓
+
+**Status**: DONE ✓
+
