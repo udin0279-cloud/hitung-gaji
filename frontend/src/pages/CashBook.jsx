@@ -135,9 +135,10 @@ export default function CashBook() {
       setKasbonOpen({ items: openItems, total_open: openTotal });
 
       // Cash Plaza — dari koleksi sales:
-      //   payment_method ∈ ["cash","tunai"] DAN branch === "plaza" (branch kosong dianggap "plaza")
-      //   DAN status ∈ ["paid","dp"].
-      // Nilai yg dipakai: sale.total (net setelah diskon) — user request 2026-08-14.
+      //   payment_method ∈ ["cash","tunai"] DAN branch === "plaza" DAN status ∈ ["paid","dp"].
+      // Nilai per nota: PRIORITAS uang benar-benar diterima (Σ payments amounts),
+      //   fallback ke `sale.total` (net setelah diskon) jika payments tidak lengkap.
+      // Ini menghindari kasus data lama di mana field `total` menyimpan gross (subtotal).
       const salesRaw = Array.isArray(sl.data) ? sl.data : (sl.data.items || []);
       let cpAmount = 0, cpCount = 0;
       const _debug = [];
@@ -147,13 +148,20 @@ export default function CashBook() {
         const branch = (x.branch || "plaza").toLowerCase();
         const isCash = method === "cash" || method === "tunai";
         if (isCash && branch === "plaza" && (status === "paid" || status === "dp")) {
-          const val = Number(x.total || 0);
+          const paidFromPayments = (x.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+          const paidFallback = Number(x.total || 0) - Number(x.sisa_tagihan || 0);
+          const val = paidFromPayments > 0 ? paidFromPayments : paidFallback;
           cpAmount += val;
           cpCount += 1;
-          _debug.push({ sale_no: x.sale_no, subtotal: x.subtotal, discount: x.discount, total: x.total, used: val });
+          _debug.push({
+            sale_no: x.sale_no,
+            subtotal: x.subtotal, discount: x.discount, total: x.total,
+            sisa: x.sisa_tagihan, cash_paid: x.cash_paid,
+            payments_sum: paidFromPayments,
+            used: val,
+          });
         }
       }
-      // Debug: buka Console browser (F12) → cari "[CashPlaza]" untuk verifikasi nilai per sale.
       // eslint-disable-next-line no-console
       console.log("[CashPlaza]", { month, cpAmount, cpCount, samples: _debug.slice(0, 20), totalSalesFetched: salesRaw.length });
       setCashPlaza({ amount: cpAmount, count: cpCount });
