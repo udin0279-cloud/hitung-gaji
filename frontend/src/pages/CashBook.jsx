@@ -134,13 +134,17 @@ export default function CashBook() {
       const openTotal = openItems.reduce((sum, k) => sum + Number(k.amount || 0), 0);
       setKasbonOpen({ items: openItems, total_open: openTotal });
 
-      // Cash Plaza only — dari koleksi sales (payment_method='cash_plaza', status paid/dp).
+      // Cash Plaza — dari koleksi sales:
+      //   payment_method ∈ ["cash","tunai"] DAN branch === "plaza" (branch kosong dianggap "plaza")
+      //   DAN status ∈ ["paid","dp"].
       const salesRaw = Array.isArray(sl.data) ? sl.data : (sl.data.items || []);
       let cpAmount = 0, cpCount = 0;
       for (const x of salesRaw) {
         const status = (x.status || "").toLowerCase();
         const method = (x.payment_method || "").toLowerCase();
-        if (method === "cash_plaza" && (status === "paid" || status === "dp")) {
+        const branch = (x.branch || "plaza").toLowerCase();
+        const isCash = method === "cash" || method === "tunai";
+        if (isCash && branch === "plaza" && (status === "paid" || status === "dp")) {
           cpAmount += Number(x.total || 0);
           cpCount += 1;
         }
