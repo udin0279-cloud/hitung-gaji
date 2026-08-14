@@ -2229,3 +2229,12 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-14 (part 3) — Koreksi P&L: Item l = Kode 103-01 (bukan 401)
+**Perubahan**: `profit_loss_report.expenses[]` item l diganti dari `401` (Pembelian Bahan Baku umum) → `103-01` (Bahan Baku Mesin). Akun 401 sekarang **tidak ditampilkan** di Laporan Laba/Rugi.
+- Label baru: "By. Pembelian Bahan Baku Mesin" (Kode: 103-01).
+- Frontend otomatis mengikuti karena render dari `report.expenses[]`.
+- Verifikasi UI: row l muncul dengan kode 103-01, row lama 401 tidak ada ✓.
+
+**Status**: DONE ✓
+

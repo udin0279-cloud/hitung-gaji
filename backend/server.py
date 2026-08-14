@@ -3579,8 +3579,9 @@ async def profit_loss_report(period: str, user: dict = Depends(require_super_adm
         i. Administrasi Bank (511)
         j. Pajak (514)
         k. Perbaikan Mesin (402)
-        l. Pembelian Bahan Baku (401)
+        l. Pembelian Bahan Baku Mesin (103-01)
       Laba Bersih = Pendapatan − Total Beban A&U.
+      Catatan: Akun 401 (Pembelian Bahan Baku umum) SENGAJA tidak muncul di laporan.
     """
     start, end, year, month = _parse_month(period)
 
@@ -3649,7 +3650,7 @@ async def profit_loss_report(period: str, user: dict = Depends(require_super_adm
         {"key": "adm_bank", "label": "By. Administrasi Bank", "codes": ["511"], "amount": _sum("511")},
         {"key": "pajak", "label": "By. Pajak", "codes": ["514"], "amount": _sum("514")},
         {"key": "perbaikan_mesin", "label": "By. Perbaikan Mesin", "codes": ["402"], "amount": _sum("402")},
-        {"key": "bahan_baku", "label": "By. Pembelian Bahan Baku", "codes": ["401"], "amount": _sum("401")},
+        {"key": "bahan_baku_mesin", "label": "By. Pembelian Bahan Baku Mesin", "codes": ["103-01"], "amount": _sum("103-01")},
     ]
     total_expenses = round(sum(e["amount"] for e in expenses), 2)
     net_profit = round(revenue - total_expenses, 2)
