@@ -93,6 +93,7 @@ export default function CashBook() {
   const [setting, setSetting] = useState(null);
   // Kasbon open (semua waktu) — dipakai untuk mengurangi Saldo Kas Real-time & Saldo Akhir bulan.
   const [kasbonOpen, setKasbonOpen] = useState({ items: [], total_open: 0 });
+  const [cashPlaza, setCashPlaza] = useState({ amount: 0, count: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [openTx, setOpenTx] = useState(false);
@@ -106,13 +107,20 @@ export default function CashBook() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [a, tx, s, b, st, kb] = await Promise.all([
+      // Compute first + last day of the month for Cash Plaza sales query.
+      const [y, m] = month.split("-").map(Number);
+      const first = `${y}-${String(m).padStart(2, "0")}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const last = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+      const [a, tx, s, b, st, kb, sl] = await Promise.all([
         api.get("/cashbook/accounts"),
         api.get("/cashbook/transactions", { params: { month } }),
         api.get("/cashbook/summary", { params: { month } }),
         api.get("/cashbook/balance"),
         api.get("/cashbook/settings"),
         api.get("/cashbook/kasbon", { params: { status: "open" } }),
+        api.get("/sales", { params: { date_from: first, date_to: last } }),
       ]);
       setAccounts(a.data);
       setTxData(tx.data);
@@ -125,6 +133,15 @@ export default function CashBook() {
       const openItems = rawKasbon.filter(isOpenKasbon);
       const openTotal = openItems.reduce((sum, k) => sum + Number(k.amount || 0), 0);
       setKasbonOpen({ items: openItems, total_open: openTotal });
+
+      // Cash Plaza: aggregate sales dgn payment_method='cash_plaza' & status ∈ paid/dp.
+      const salesRaw = Array.isArray(sl.data) ? sl.data : (sl.data.items || []);
+      const cpSales = salesRaw.filter(
+        (x) => (x.payment_method || "").toLowerCase() === "cash_plaza"
+          && ["paid", "dp"].includes((x.status || "").toLowerCase())
+      );
+      const cpAmount = cpSales.reduce((sum, x) => sum + Number(x.total || 0), 0);
+      setCashPlaza({ amount: cpAmount, count: cpSales.length });
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
     } finally { setLoading(false); }
@@ -349,7 +366,7 @@ export default function CashBook() {
           <KasbonTab month={month} setMonth={setMonth} onCashChanged={loadAll} />
         )}
         {tab === "summary" && (
-          <SummaryTab summary={summary} month={month} setMonth={setMonth} />
+          <SummaryTab summary={summary} month={month} setMonth={setMonth} cashPlaza={cashPlaza} />
         )}
       </div>
 
@@ -614,13 +631,23 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
 }
 
 /* ---------- Summary Tab (Breakdown per Kategori) ---------- */
-function SummaryTab({ summary, month, setMonth }) {
+function SummaryTab({ summary, month, setMonth, cashPlaza = { amount: 0, count: 0 } }) {
   if (!summary) return <div className="text-zinc-400 text-sm">Memuat…</div>;
   // Pisahkan akun 101 (Penjualan Tunai / Kas) — user request 2026-08-14:
   // 101 tampil sebagai baris mandiri di luar Total Pemasukan.
   const inRows = summary.breakdown_in || [];
   const inMain = inRows.filter((r) => r.account_code !== "101");
   const inStandalone = inRows.filter((r) => r.account_code === "101");
+  // Cash Plaza — dari koleksi sales (payment_method='cash_plaza', status paid/dp).
+  // Diinject sebagai row synthetic ke inMain supaya IKUT dijumlahkan ke Total Pemasukan.
+  if (cashPlaza && cashPlaza.amount > 0) {
+    inMain.push({
+      account_code: "CASH-PLAZA",
+      account_name: "Cash Plaza",
+      amount: Number(cashPlaza.amount || 0),
+      count: Number(cashPlaza.count || 0),
+    });
+  }
   const totalInAdjusted = inMain.reduce((s, r) => s + Number(r.amount || 0), 0);
   const maxIn = Math.max(...inMain.map((r) => r.amount), 1);
   const maxOut = Math.max(...(summary.breakdown_out || []).map((r) => r.amount), 1);

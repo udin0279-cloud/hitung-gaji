@@ -2254,3 +2254,21 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-14 (part 5) — Ringkasan Kategori: Baris Cash Plaza (dari Sales)
+**Fitur baru**: Tab Ringkasan Kategori bagian PEMASUKAN sekarang menampilkan baris **Cash Plaza** yang diambil dari koleksi `sales` (payment_method=`cash_plaza`, status ∈ paid/dp). Nilainya **IKUT** dijumlahkan ke Total Pemasukan.
+
+**Implementasi** — `/app/frontend/src/pages/CashBook.jsx`:
+- State baru `cashPlaza = { amount, count }`.
+- `loadAll()` fetch `/api/sales?date_from=YYYY-MM-01&date_to=YYYY-MM-LAST` paralel dgn call lain. Filter di client: `payment_method === "cash_plaza"` & status ∈ paid/dp. Aggregate `Σ sale.total`.
+- `SummaryTab` inject synthetic row `{account_code: "CASH-PLAZA", account_name: "Cash Plaza", amount, count}` ke `inMain` **SEBELUM** hitung `totalInAdjusted` → otomatis tersumming ke total.
+- Row hanya muncul jika `cashPlaza.amount > 0` (jaga tampilan bersih saat kosong).
+
+**Verifikasi UI (Jul 2026 dgn 1 sale cash_plaza @ Rp 1.000.000)**:
+- Kartu Pemasukan Total: **Rp 1.000.000** ✓
+- Baris `CASH-PLAZA · Cash Plaza · Rp 1.000.000` (1 transaksi) dgn progress bar ✓
+- Section "Di Luar Total" (101 Penjualan Tunai) tetap terpisah — tidak double-count ✓
+- Bottom stat "Pemasukan Rp 1.000.000" konsisten ✓
+
+**Status**: DONE ✓
+
