@@ -120,7 +120,7 @@ export default function CashBook() {
         api.get("/cashbook/balance"),
         api.get("/cashbook/settings"),
         api.get("/cashbook/kasbon", { params: { status: "open" } }),
-        api.get("/sales", { params: { date_from: first, date_to: last } }),
+        api.get("/sales", { params: { date_from: first, date_to: last, limit: 5000 } }),
       ]);
       setAccounts(a.data);
       setTxData(tx.data);
@@ -140,16 +140,22 @@ export default function CashBook() {
       // Nilai yg dipakai: sale.total (net setelah diskon) — user request 2026-08-14.
       const salesRaw = Array.isArray(sl.data) ? sl.data : (sl.data.items || []);
       let cpAmount = 0, cpCount = 0;
+      const _debug = [];
       for (const x of salesRaw) {
         const status = (x.status || "").toLowerCase();
         const method = (x.payment_method || "").toLowerCase();
         const branch = (x.branch || "plaza").toLowerCase();
         const isCash = method === "cash" || method === "tunai";
         if (isCash && branch === "plaza" && (status === "paid" || status === "dp")) {
-          cpAmount += Number(x.total || 0);
+          const val = Number(x.total || 0);
+          cpAmount += val;
           cpCount += 1;
+          _debug.push({ sale_no: x.sale_no, subtotal: x.subtotal, discount: x.discount, total: x.total, used: val });
         }
       }
+      // Debug: buka Console browser (F12) → cari "[CashPlaza]" untuk verifikasi nilai per sale.
+      // eslint-disable-next-line no-console
+      console.log("[CashPlaza]", { month, cpAmount, cpCount, samples: _debug.slice(0, 20), totalSalesFetched: salesRaw.length });
       setCashPlaza({ amount: cpAmount, count: cpCount });
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
