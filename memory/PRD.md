@@ -2272,3 +2272,21 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-14 (part 6) — Ringkasan Kategori: 4 Baris Metode Pembayaran
+**Fitur**: Perluas fitur Cash Plaza jadi 4 metode pembayaran (agregasi keluarga plaza + kastem).
+
+**Implementasi** — `/app/frontend/src/pages/CashBook.jsx`:
+- State `cashPlaza` diganti `paymentMix = { cash_plaza, bca, mandiri, shopee }` masing-masing `{amount, count}`.
+- `loadAll()` loop sales sekali, kategorikan by prefix method (`cash_plaza`, `bca*`, `mandiri*`, `shopee*`).
+- `SummaryTab` inject 4 baris synthetic (row hanya muncul saat amount > 0):
+  - `CASH-PLAZA · Cash Plaza`
+  - `BCA · BCA (Plaza + Kastem)`
+  - `MANDIRI · Mandiri (Plaza + Kastem)`
+  - `SHOPEE · Shopee (Plaza + Kastem)`
+- Semua ikut dijumlahkan ke Total Pemasukan.
+
+**Verifikasi**: dummy sale bca_plaza Rp 1.000.000 → baris "BCA (Plaza + Kastem) Rp 1.000.000" muncul, Total Pemasukan Rp 1.000.000 ✓.
+
+**Status**: DONE ✓
+

@@ -93,7 +93,12 @@ export default function CashBook() {
   const [setting, setSetting] = useState(null);
   // Kasbon open (semua waktu) — dipakai untuk mengurangi Saldo Kas Real-time & Saldo Akhir bulan.
   const [kasbonOpen, setKasbonOpen] = useState({ items: [], total_open: 0 });
-  const [cashPlaza, setCashPlaza] = useState({ amount: 0, count: 0 });
+  const [paymentMix, setPaymentMix] = useState({
+    cash_plaza: { amount: 0, count: 0 },
+    bca:        { amount: 0, count: 0 },
+    mandiri:    { amount: 0, count: 0 },
+    shopee:     { amount: 0, count: 0 },
+  });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [openTx, setOpenTx] = useState(false);
@@ -134,14 +139,28 @@ export default function CashBook() {
       const openTotal = openItems.reduce((sum, k) => sum + Number(k.amount || 0), 0);
       setKasbonOpen({ items: openItems, total_open: openTotal });
 
-      // Cash Plaza: aggregate sales dgn payment_method='cash_plaza' & status ∈ paid/dp.
+      // Payment method mix — group sales by family (cash_plaza / bca / mandiri / shopee).
+      // Sales dgn status ∈ paid/dp ditotalkan per family (plaza + kastem digabung).
       const salesRaw = Array.isArray(sl.data) ? sl.data : (sl.data.items || []);
-      const cpSales = salesRaw.filter(
-        (x) => (x.payment_method || "").toLowerCase() === "cash_plaza"
-          && ["paid", "dp"].includes((x.status || "").toLowerCase())
-      );
-      const cpAmount = cpSales.reduce((sum, x) => sum + Number(x.total || 0), 0);
-      setCashPlaza({ amount: cpAmount, count: cpSales.length });
+      const buckets = {
+        cash_plaza: { amount: 0, count: 0 },
+        bca:        { amount: 0, count: 0 },
+        mandiri:    { amount: 0, count: 0 },
+        shopee:     { amount: 0, count: 0 },
+      };
+      for (const x of salesRaw) {
+        const status = (x.status || "").toLowerCase();
+        if (!["paid", "dp"].includes(status)) continue;
+        const method = (x.payment_method || "").toLowerCase();
+        const total = Number(x.total || 0);
+        let key = null;
+        if (method === "cash_plaza") key = "cash_plaza";
+        else if (method.startsWith("bca")) key = "bca";
+        else if (method.startsWith("mandiri")) key = "mandiri";
+        else if (method.startsWith("shopee")) key = "shopee";
+        if (key) { buckets[key].amount += total; buckets[key].count += 1; }
+      }
+      setPaymentMix(buckets);
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Gagal memuat data");
     } finally { setLoading(false); }
@@ -366,7 +385,7 @@ export default function CashBook() {
           <KasbonTab month={month} setMonth={setMonth} onCashChanged={loadAll} />
         )}
         {tab === "summary" && (
-          <SummaryTab summary={summary} month={month} setMonth={setMonth} cashPlaza={cashPlaza} />
+          <SummaryTab summary={summary} month={month} setMonth={setMonth} paymentMix={paymentMix} />
         )}
       </div>
 
@@ -631,22 +650,27 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
 }
 
 /* ---------- Summary Tab (Breakdown per Kategori) ---------- */
-function SummaryTab({ summary, month, setMonth, cashPlaza = { amount: 0, count: 0 } }) {
+function SummaryTab({ summary, month, setMonth, paymentMix }) {
   if (!summary) return <div className="text-zinc-400 text-sm">Memuat…</div>;
-  // Pisahkan akun 101 (Penjualan Tunai / Kas) — user request 2026-08-14:
-  // 101 tampil sebagai baris mandiri di luar Total Pemasukan.
   const inRows = summary.breakdown_in || [];
   const inMain = inRows.filter((r) => r.account_code !== "101");
   const inStandalone = inRows.filter((r) => r.account_code === "101");
-  // Cash Plaza — dari koleksi sales (payment_method='cash_plaza', status paid/dp).
-  // Diinject sebagai row synthetic ke inMain supaya IKUT dijumlahkan ke Total Pemasukan.
-  if (cashPlaza && cashPlaza.amount > 0) {
-    inMain.push({
-      account_code: "CASH-PLAZA",
-      account_name: "Cash Plaza",
-      amount: Number(cashPlaza.amount || 0),
-      count: Number(cashPlaza.count || 0),
-    });
+
+  // Inject baris per metode pembayaran dari koleksi sales (paid/dp).
+  // IKUT dijumlahkan ke Total Pemasukan. Row hanya muncul bila amount > 0.
+  const METHOD_ROWS = [
+    { key: "cash_plaza", code: "CASH-PLAZA", label: "Cash Plaza" },
+    { key: "bca",        code: "BCA",         label: "BCA (Plaza + Kastem)" },
+    { key: "mandiri",    code: "MANDIRI",     label: "Mandiri (Plaza + Kastem)" },
+    { key: "shopee",     code: "SHOPEE",      label: "Shopee (Plaza + Kastem)" },
+  ];
+  if (paymentMix) {
+    for (const m of METHOD_ROWS) {
+      const b = paymentMix[m.key];
+      if (b && b.amount > 0) {
+        inMain.push({ account_code: m.code, account_name: m.label, amount: b.amount, count: b.count });
+      }
+    }
   }
   const totalInAdjusted = inMain.reduce((s, r) => s + Number(r.amount || 0), 0);
   const maxIn = Math.max(...inMain.map((r) => r.amount), 1);
