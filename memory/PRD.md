@@ -2238,3 +2238,19 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-14 (part 4) — Ringkasan Kategori: Akun 101 Standalone (di Luar Total Pemasukan)
+**Problem**: Akun 101 (Penjualan Tunai / Kas fisik masuk) sebelumnya ikut dijumlahkan ke Total Pemasukan di tab "Ringkasan Kategori", tumpang tindih dengan tampilan Buku Kas.
+
+**Fix** — `/app/frontend/src/pages/CashBook.jsx`:
+- `SummaryTab`: pisahkan `breakdown_in` jadi `inMain` (semua akun kecuali 101) & `inStandalone` (akun 101 saja). Total Pemasukan dihitung ulang dari `inMain` saja (`totalInAdjusted`).
+- `BreakdownCard` menerima prop `standaloneRows` + `standaloneNote`. Render section "DI LUAR TOTAL" di bawah kartu Pemasukan dengan baris 101 mandiri (tanpa progress bar), disertai catatan penjelas.
+- Bottom summary strip `SummaryStat "Pemasukan"` juga pakai `totalInAdjusted` supaya konsisten.
+
+**Verifikasi UI (Jul 2026)**:
+- Total Pemasukan: **Rp 0** (tidak lagi menghitung 101) ✓
+- Section "DI LUAR TOTAL": **101 Penjualan Tunai Rp 1.000.000** tampil mandiri ✓
+- Bottom stat "Pemasukan Rp 0" konsisten ✓
+
+**Status**: DONE ✓
+

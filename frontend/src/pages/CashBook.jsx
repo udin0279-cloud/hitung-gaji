@@ -616,7 +616,13 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
 /* ---------- Summary Tab (Breakdown per Kategori) ---------- */
 function SummaryTab({ summary, month, setMonth }) {
   if (!summary) return <div className="text-zinc-400 text-sm">Memuat…</div>;
-  const maxIn = Math.max(...(summary.breakdown_in || []).map((r) => r.amount), 1);
+  // Pisahkan akun 101 (Penjualan Tunai / Kas) — user request 2026-08-14:
+  // 101 tampil sebagai baris mandiri di luar Total Pemasukan.
+  const inRows = summary.breakdown_in || [];
+  const inMain = inRows.filter((r) => r.account_code !== "101");
+  const inStandalone = inRows.filter((r) => r.account_code === "101");
+  const totalInAdjusted = inMain.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const maxIn = Math.max(...inMain.map((r) => r.amount), 1);
   const maxOut = Math.max(...(summary.breakdown_out || []).map((r) => r.amount), 1);
   return (
     <div>
@@ -625,12 +631,20 @@ function SummaryTab({ summary, month, setMonth }) {
         <div className="text-xs text-zinc-500 font-mono ml-2">Periode: {summary.period_start} s/d {summary.period_end}</div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <BreakdownCard title="Pemasukan" color="#008A00" rows={summary.breakdown_in || []} total={summary.total_in} max={maxIn} />
+        <BreakdownCard
+          title="Pemasukan"
+          color="#008A00"
+          rows={inMain}
+          total={totalInAdjusted}
+          max={maxIn}
+          standaloneRows={inStandalone}
+          standaloneNote="Baris di luar Total Pemasukan (kas fisik masuk — bukan bagian Ringkasan Kategori pendapatan)."
+        />
         <BreakdownCard title="Pengeluaran" color="#E81123" rows={summary.breakdown_out || []} total={summary.total_out} max={maxOut} />
       </div>
       <div className="mt-6 bg-zinc-900 text-white p-6 font-mono grid grid-cols-2 md:grid-cols-4 gap-4">
         <SummaryStat label="Saldo Awal" value={summary.opening_balance} />
-        <SummaryStat label="Pemasukan" value={summary.total_in} positive />
+        <SummaryStat label="Pemasukan" value={totalInAdjusted} positive />
         <SummaryStat label="Pengeluaran" value={summary.total_out} negative />
         <SummaryStat label="Saldo Akhir" value={summary.closing_balance} big />
       </div>
@@ -638,12 +652,12 @@ function SummaryTab({ summary, month, setMonth }) {
   );
 }
 
-function BreakdownCard({ title, color, rows, total, max }) {
+function BreakdownCard({ title, color, rows, total, max, standaloneRows = [], standaloneNote = "" }) {
   return (
     <div className="border border-zinc-200 bg-white p-4">
       <div className="flex items-center justify-between mb-3 pb-2 border-b border-zinc-200">
         <div className="text-xs uppercase tracking-widest font-bold text-zinc-700">{title}</div>
-        <div className="font-mono font-bold text-lg" style={{ color }}>{formatIDR(total)}</div>
+        <div data-testid={`breakdown-total-${title.toLowerCase()}`} className="font-mono font-bold text-lg" style={{ color }}>{formatIDR(total)}</div>
       </div>
       {rows.length === 0 && <div className="text-zinc-400 text-xs font-mono py-6 text-center">Belum ada transaksi.</div>}
       <div className="space-y-2">
@@ -663,6 +677,23 @@ function BreakdownCard({ title, color, rows, total, max }) {
           );
         })}
       </div>
+
+      {standaloneRows.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-dashed border-zinc-300">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2">Di Luar Total</div>
+          {standaloneNote && (
+            <div className="text-[10px] font-mono text-zinc-500 mb-2 leading-relaxed">{standaloneNote}</div>
+          )}
+          <div className="space-y-2">
+            {standaloneRows.map((r) => (
+              <div key={r.account_code} data-testid="breakdown-standalone-row" className="flex justify-between text-xs items-baseline">
+                <span><span className="font-mono text-zinc-500 mr-2">{r.account_code}</span>{r.account_name}</span>
+                <span className="font-mono font-bold text-zinc-700">{formatIDR(r.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
