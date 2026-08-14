@@ -137,6 +137,8 @@ export default function CashBook() {
       // Cash Plaza — dari koleksi sales:
       //   payment_method ∈ ["cash","tunai"] DAN branch === "plaza" (branch kosong dianggap "plaza")
       //   DAN status ∈ ["paid","dp"].
+      // Nilai yg dipakai: sale.subtotal (JUMLAH kotor sebelum diskon), bukan sale.total (net).
+      // Sesuai permintaan user 2026-08-14: "yang di tampilkan total bukan jumlah tolong di perbaiki".
       const salesRaw = Array.isArray(sl.data) ? sl.data : (sl.data.items || []);
       let cpAmount = 0, cpCount = 0;
       for (const x of salesRaw) {
@@ -145,7 +147,10 @@ export default function CashBook() {
         const branch = (x.branch || "plaza").toLowerCase();
         const isCash = method === "cash" || method === "tunai";
         if (isCash && branch === "plaza" && (status === "paid" || status === "dp")) {
-          cpAmount += Number(x.total || 0);
+          const sub = (x.subtotal != null)
+            ? Number(x.subtotal)
+            : (x.items || []).reduce((s, it) => s + Number(it.subtotal || 0), 0);
+          cpAmount += sub;
           cpCount += 1;
         }
       }
