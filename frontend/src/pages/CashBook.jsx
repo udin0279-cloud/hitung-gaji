@@ -134,31 +134,48 @@ export default function CashBook() {
       const openTotal = openItems.reduce((sum, k) => sum + Number(k.amount || 0), 0);
       setKasbonOpen({ items: openItems, total_open: openTotal });
 
-      // Cash Plaza — dari koleksi sales:
-      //   payment_method ∈ ["cash","tunai"] DAN branch === "plaza" DAN status ∈ ["paid","dp"].
-      // Nilai per nota: PRIORITAS uang benar-benar diterima (Σ payments amounts),
-      //   fallback ke `sale.total` (net setelah diskon) jika payments tidak lengkap.
-      // Ini menghindari kasus data lama di mana field `total` menyimpan gross (subtotal).
-      const salesRaw = Array.isArray(sl.data) ? sl.data : (sl.data.items || []);
+      // Cash Plaza butuh fetch sales lebih luas: pelunasan bisa lintas bulan (nota bulan lalu, bayar cash bulan ini).
+      // Fetch 6 bulan ke belakang dari akhir bulan aktif.
+      const cpFetchFrom = new Date(y, m - 6, 1).toISOString().slice(0, 10);
+      const cpFetchTo = last;
+      const slBroad = await api.get("/sales", { params: { date_from: cpFetchFrom, date_to: cpFetchTo, limit: 10000 } });
+      // Cash Plaza — DEFINISI SELARAS DENGAN KOLOM "CASH PLAZA NOMINAL" DI LAPORAN PENJUALAN.
+      // Ambil dari `sale.payments[]` (record pembayaran granular), FILTER:
+      //   - sale.branch === "plaza" (branch kosong dianggap "plaza")
+      //   - payment.payment_method ∈ ["cash","tunai"]
+      //   - payment.date jatuh dalam bulan aktif (untuk menangkap pelunasan lintas bulan)
+      // Jumlahkan payment.amount. Sales dgn status apapun tetap ikut kalau punya payment cash di bulan itu.
+      const salesRaw = Array.isArray(slBroad.data) ? slBroad.data : (slBroad.data.items || []);
       let cpAmount = 0, cpCount = 0;
       const _debug = [];
       for (const x of salesRaw) {
-        const status = (x.status || "").toLowerCase();
-        const method = (x.payment_method || "").toLowerCase();
         const branch = (x.branch || "plaza").toLowerCase();
-        const isCash = method === "cash" || method === "tunai";
-        if (isCash && branch === "plaza" && (status === "paid" || status === "dp")) {
-          const paidFromPayments = (x.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
-          const paidFallback = Number(x.total || 0) - Number(x.sisa_tagihan || 0);
-          const val = paidFromPayments > 0 ? paidFromPayments : paidFallback;
-          cpAmount += val;
+        if (branch !== "plaza") continue;
+        const payments = Array.isArray(x.payments) ? x.payments : [];
+        let saleCp = 0;
+        if (payments.length > 0) {
+          for (const p of payments) {
+            const pm = (p.payment_method || "").toLowerCase();
+            if (pm !== "cash" && pm !== "tunai") continue;
+            const pDate = (p.date || p.created_at || x.date || "").slice(0, 10);
+            if (pDate < first || pDate > last) continue;
+            saleCp += Number(p.amount || 0);
+          }
+        } else {
+          // Legacy: no payments[] tracking. Fallback ke sale.total bila:
+          //   sale.date dalam bulan aktif DAN payment_method-nya cash/tunai.
+          const sm = (x.payment_method || "").toLowerCase();
+          const sDate = (x.date || "").slice(0, 10);
+          if ((sm === "cash" || sm === "tunai") && sDate >= first && sDate <= last) {
+            saleCp = Number(x.total || 0) - Number(x.sisa_tagihan || 0);
+          }
+        }
+        if (saleCp > 0) {
+          cpAmount += saleCp;
           cpCount += 1;
           _debug.push({
-            sale_no: x.sale_no,
-            subtotal: x.subtotal, discount: x.discount, total: x.total,
-            sisa: x.sisa_tagihan, cash_paid: x.cash_paid,
-            payments_sum: paidFromPayments,
-            used: val,
+            sale_no: x.sale_no, branch: x.branch, total: x.total, status: x.status,
+            payments_count: payments.length, cash_paid_in_period: saleCp,
           });
         }
       }
