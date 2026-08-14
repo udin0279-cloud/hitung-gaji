@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatIDR, formatApiError, API } from "../lib/api";
 import { toast } from "sonner";
-import { Download, TrendingUp, TrendingDown, Wallet, Package as PackageIcon, ArrowUpDown } from "lucide-react";
+import { Download, TrendingUp, TrendingDown, Wallet, ArrowUpDown } from "lucide-react";
 
 export default function Reports() {
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
@@ -111,35 +111,46 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* Waterfall breakdown */}
+          {/* Waterfall breakdown — struktur baru per permintaan user 2026-08-14 */}
           <div className="mt-6 border border-zinc-200 bg-white p-6">
             <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold mb-4">Rincian Perhitungan</div>
             <div className="space-y-1">
-              <Row label="Pendapatan Penjualan" value={report.revenue} desc={`${report.order_count} order`} color="text-[#008A00]" bold sign="+" testId="pl-revenue" />
-              <Row label="Biaya Bahan Baku (COGS)" value={report.cogs} color="text-[#E81123]" sign="−" testId="pl-cogs" />
-              <div className="pt-2 pb-2 border-t border-b border-zinc-300 my-1">
-                <Row label={`LABA KOTOR (${report.gross_margin_pct}%)`} value={report.gross_profit} color={report.gross_profit >= 0 ? "text-[#008A00]" : "text-[#E81123]"} bold big testId="pl-gross-profit" />
+              <Row label="PENDAPATAN" value={report.revenue} desc={`${report.order_count} order · sales paid/dp`} color="text-[#008A00]" bold big sign="+" testId="pl-revenue" />
+
+              {/* Beban Administrasi & Umum */}
+              <div className="pt-4 pb-1 border-t border-zinc-300 mt-3">
+                <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-semibold">Beban Administrasi & Umum</div>
               </div>
-              <Row label="Kerugian Waste / Rijek" value={report.waste_loss} desc={`${report.waste_records} record`} color="text-[#E81123]" sign="−" testId="pl-waste" />
-              <Row label="Biaya Gaji Karyawan" value={report.payroll_cost} desc={`${report.employee_count} karyawan`} color="text-[#E81123]" sign="−" testId="pl-payroll" />
-              <div className="pt-2 border-t border-zinc-300 mt-1">
-                <Row label="Total Beban Operasional" value={report.total_expenses} color="text-zinc-700" bold testId="pl-expenses" />
+              {(report.expenses || []).map((e, idx) => (
+                <Row
+                  key={e.key}
+                  label={`${String.fromCharCode(97 + idx)}. ${e.label}`}
+                  value={e.amount}
+                  desc={`Kode: ${e.codes.join(" + ")}`}
+                  color="text-[#E81123]"
+                  sign="−"
+                  testId={`pl-expense-${e.key}`}
+                />
+              ))}
+
+              <div className="pt-2 border-t border-zinc-300 mt-2">
+                <Row label="Total Beban Administrasi & Umum" value={report.total_expenses} color="text-zinc-800" bold testId="pl-expenses" />
               </div>
-              <div className={`p-4 mt-2 -mx-6 ${isPositive ? "bg-[#008A00]" : "bg-[#E81123]"}`}>
+
+              <div className={`p-4 mt-3 -mx-6 ${isPositive ? "bg-[#008A00]" : "bg-[#E81123]"}`}>
                 <div className="flex items-center justify-between">
-                  <div className="text-white font-heading font-bold text-lg tracking-tight uppercase">Laba / Rugi Bersih</div>
-                  <div className="text-white font-mono text-2xl font-bold">{formatIDR(report.net_profit)}</div>
+                  <div className="text-white font-heading font-bold text-lg tracking-tight uppercase">Laba Bersih Setelah Pajak</div>
+                  <div data-testid="pl-net-profit-bottom" className="text-white font-mono text-2xl font-bold">{formatIDR(report.net_profit)}</div>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Stat cards */}
-          <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-px bg-zinc-200 border border-zinc-200">
-            <Stat label="Revenue" value={report.revenue} icon={TrendingUp} color="text-[#008A00]" />
-            <Stat label="COGS + Waste" value={report.cogs + report.waste_loss} icon={PackageIcon} color="text-amber-700" />
-            <Stat label="Beban Gaji" value={report.payroll_cost} icon={Wallet} color="text-zinc-900" />
-            <Stat label="Net Profit" value={report.net_profit} icon={isPositive ? TrendingUp : TrendingDown} color={isPositive ? "text-[#008A00]" : "text-[#E81123]"} />
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-px bg-zinc-200 border border-zinc-200">
+            <Stat label="Pendapatan" value={report.revenue} icon={TrendingUp} color="text-[#008A00]" />
+            <Stat label="Total Beban A&U" value={report.total_expenses} icon={Wallet} color="text-[#E81123]" />
+            <Stat label="Laba Bersih" value={report.net_profit} icon={isPositive ? TrendingUp : TrendingDown} color={isPositive ? "text-[#008A00]" : "text-[#E81123]"} />
           </div>
 
           {/* Top customers */}

@@ -2204,3 +2204,28 @@ Fitur ini menggantikan sistem hardcode manual dengan menu UI yang bisa dikelola 
 
 **Status**: DONE ✓
 
+
+## Update 2026-08-14 (part 2) — Pembaruan Sistem Akuntansi + Restrukturisasi Laba/Rugi
+**Perubahan Chart of Accounts** — `/app/backend/server.py` `DEFAULT_CASH_ACCOUNTS`:
+- **Rename** 402 → "By. Perbaikan Mesin" (dulu "Perlengkapan Kantor")
+- **Rename** 104 → "By. ATK & Keperluan Kantor" (dulu "Perlengkapan Kantor")
+- **New** 513 "By. Penyusutan GA" (type=out)
+- **New** 514 "By. Pajak" (type=out)
+- Migrasi rename idempotent via `_ACCOUNT_RENAMES` di `_ensure_cash_accounts()` — nama akun existing di DB otomatis di-update.
+
+**Restrukturisasi Laporan Laba/Rugi** — `profit_loss_report` + `Reports.jsx`:
+- PENDAPATAN: dari `db.sales` (status ∈ paid/dp), Σ items[].subtotal.
+- BEBAN ADMINISTRASI & UMUM: dari `db.cash_transactions` (type=out) grouped by `account_code`:
+  a. By. Gaji (505) — b. By. ATK, Fotocopy, Dll (104) — c. Telp/Listrik/Air (502) — d. Keperluan Kantor (104) — e. Jasa Handling (507 + 106) — f. Penyusutan GA (513) — g. Perbaikan Kendaraan (105) — h. Operasional Kendaraan (501) — i. Adm Bank (511) — j. Pajak (514) — k. Perbaikan Mesin (402) — l. Bahan Baku (401).
+- Total Beban A&U + Laba Bersih Setelah Pajak di bagian bawah.
+- Backward-compat: field lama (`cogs`, `gross_profit`, `payroll_cost`, `waste_loss`, dll) tetap ada dgn nilai 0 / turunan untuk konsumsi PDF & trend lama.
+
+**Verifikasi**:
+- `GET /cashbook/accounts` → 104 "By. ATK & Keperluan Kantor", 402 "By. Perbaikan Mesin", 513 "By. Penyusutan GA", 514 "By. Pajak" ✓
+- `GET /reports/profit-loss/2026-07` → revenue 1.050.000, 12 expense lines, total_expenses 0, net_profit 1.050.000 ✓
+- UI Reports menampilkan struktur baru rapi (screenshot) ✓
+
+**Catatan**: Kode 104 sengaja muncul di 2 baris (b & d) sesuai spec user — total menjumlahkan 2×, jika user ingin dedup harus konfirmasi.
+
+**Status**: DONE ✓
+

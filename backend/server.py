@@ -3565,21 +3565,32 @@ async def profit_loss_latest_period(user: dict = Depends(require_super_admin)):
 
 @api_router.get("/reports/profit-loss/{period}")
 async def profit_loss_report(period: str, user: dict = Depends(require_super_admin)):
-    """P&L bulanan: Revenue (sales paid/dp) − COGS (BOM) − Waste − Gaji = Net Profit.
-
-    Data source Revenue & COGS: db.sales dengan status ∈ ["paid","dp"].
-    COGS = sum(item.components[].consumption × material.purchase_price) — konsisten
-    dengan product_margin_report.
+    """P&L bulanan — Struktur baru (permintaan user 2026-08-14):
+      PENDAPATAN: dari db.sales (status ∈ paid/dp), Σ items[].subtotal.
+      BEBAN ADMINISTRASI & UMUM: dari db.cash_transactions (type=out) per account_code.
+        a. Gaji (505)
+        b. ATK, Fotocopy, Dll (104)
+        c. Telephone, Listrik & Air (502)
+        d. Keperluan Kantor (104)
+        e. Jasa handling barang (507 + 106)
+        f. Penyusutan GA (513)
+        g. Perbaikan & Perawatan Kendaraan (105)
+        h. Operasional Kendaraan (501)
+        i. Administrasi Bank (511)
+        j. Pajak (514)
+        k. Perbaikan Mesin (402)
+        l. Pembelian Bahan Baku (401)
+      Laba Bersih = Pendapatan − Total Beban A&U.
     """
     start, end, year, month = _parse_month(period)
 
-    # Sales (revenue & COGS BOM) — hanya paid + dp
+    # --- PENDAPATAN dari sales ---
     sales = await db.sales.find(
         {"date": {"$gte": start, "$lte": end}, "status": {"$in": ["paid", "dp"]}},
-        {"_id": 0},
+        {"_id": 0, "total": 1, "items": 1, "customer_name": 1},
     ).to_list(length=50000)
 
-    # Material lookup cache
+    # Material lookup untuk COGS per-customer (dipakai top_customers saja)
     material_cache: Dict[str, Dict[str, Any]] = {}
     async def _mat(mid: Optional[str]):
         if not mid:
@@ -3591,65 +3602,82 @@ async def profit_loss_report(period: str, user: dict = Depends(require_super_adm
         return m
 
     revenue = 0.0
-    cogs = 0.0
     cust_agg: Dict[str, Dict[str, Any]] = {}
     for s in sales:
         sale_revenue = 0.0
         sale_cogs = 0.0
         for it in (s.get("items") or []):
-            # Revenue = subtotal per item (konsisten dengan product_margin_report)
             sale_revenue += float(it.get("subtotal", 0) or 0)
             comps = it.get("components") or []
             if comps:
                 for c in comps:
                     m = await _mat(c.get("material_id"))
                     sale_cogs += float(c.get("consumption", 0) or 0) * float(m.get("purchase_price", 0) or 0)
-            else:
-                # Legacy: material_id + area_total
-                mid = it.get("material_id")
-                if mid:
-                    m = await _mat(mid)
-                    sale_cogs += float(it.get("area_total", 0) or 0) * float(m.get("purchase_price", 0) or 0)
+            elif it.get("material_id"):
+                m = await _mat(it.get("material_id"))
+                sale_cogs += float(it.get("area_total", 0) or 0) * float(m.get("purchase_price", 0) or 0)
         revenue += sale_revenue
-        cogs += sale_cogs
-
-        # Top customer aggregate
         key = (s.get("customer_name") or "-").strip() or "-"
         row = cust_agg.setdefault(key, {"customer": key, "orders": 0, "revenue": 0.0, "material_cost": 0.0})
         row["orders"] += 1
         row["revenue"] += sale_revenue
         row["material_cost"] += sale_cogs
 
-    gross_profit = revenue - cogs
-    # Waste
-    waste_docs = await db.waste.find({"date": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(length=5000)
-    waste_loss = sum(float(w.get("estimated_loss", 0)) for w in waste_docs)
-    # Payroll
-    payroll_cost, employee_count = await _payroll_cost_for_month(period)
-    # Total expenses
-    total_expenses = waste_loss + payroll_cost
-    net_profit = gross_profit - total_expenses
-    # Top customer sorting
+    # --- BEBAN A&U dari cash_transactions (type=out) per account_code ---
+    expense_tx = await db.cash_transactions.find(
+        {"date": {"$gte": start, "$lte": end}, "type": "out"},
+        {"_id": 0, "account_code": 1, "amount": 1},
+    ).to_list(length=200000)
+    code_totals: Dict[str, float] = {}
+    for t in expense_tx:
+        code = t.get("account_code") or ""
+        code_totals[code] = code_totals.get(code, 0.0) + float(t.get("amount") or 0)
+
+    def _sum(*codes: str) -> float:
+        return round(sum(code_totals.get(c, 0.0) for c in codes), 2)
+
+    # Struktur sesuai permintaan user (12 item, urutan tetap)
+    expenses = [
+        {"key": "gaji", "label": "By. Gaji", "codes": ["505"], "amount": _sum("505")},
+        {"key": "atk_fc", "label": "By. ATK, Fotocopy, Dll", "codes": ["104"], "amount": _sum("104")},
+        {"key": "telp_listrik_air", "label": "By. Telephone, Listrik & Air", "codes": ["502"], "amount": _sum("502")},
+        {"key": "keperluan_kantor", "label": "By. Keperluan Kantor", "codes": ["104"], "amount": _sum("104")},
+        {"key": "handling", "label": "By. Jasa Handling Barang", "codes": ["507", "106"], "amount": _sum("507", "106")},
+        {"key": "penyusutan_ga", "label": "By. Penyusutan GA", "codes": ["513"], "amount": _sum("513")},
+        {"key": "perbaikan_kendaraan", "label": "By. Perbaikan & Perawatan Kendaraan", "codes": ["105"], "amount": _sum("105")},
+        {"key": "operasional_kendaraan", "label": "By. Operasional Kendaraan", "codes": ["501"], "amount": _sum("501")},
+        {"key": "adm_bank", "label": "By. Administrasi Bank", "codes": ["511"], "amount": _sum("511")},
+        {"key": "pajak", "label": "By. Pajak", "codes": ["514"], "amount": _sum("514")},
+        {"key": "perbaikan_mesin", "label": "By. Perbaikan Mesin", "codes": ["402"], "amount": _sum("402")},
+        {"key": "bahan_baku", "label": "By. Pembelian Bahan Baku", "codes": ["401"], "amount": _sum("401")},
+    ]
+    total_expenses = round(sum(e["amount"] for e in expenses), 2)
+    net_profit = round(revenue - total_expenses, 2)
+
+    # Top customer
     top_customers = sorted(cust_agg.values(), key=lambda r: r["revenue"], reverse=True)[:10]
     for r in top_customers:
         r["revenue"] = round(r["revenue"], 2)
         r["material_cost"] = round(r["material_cost"], 2)
         r["margin"] = round(r["revenue"] - r["material_cost"], 2)
+
     return {
         "period": period,
         "revenue": round(revenue, 2),
-        "cogs": round(cogs, 2),
-        "gross_profit": round(gross_profit, 2),
-        "gross_margin_pct": round((gross_profit / revenue * 100) if revenue > 0 else 0, 2),
-        "waste_loss": round(waste_loss, 2),
-        "payroll_cost": round(payroll_cost, 2),
-        "employee_count": employee_count,
-        "total_expenses": round(total_expenses, 2),
-        "net_profit": round(net_profit, 2),
-        "net_margin_pct": round((net_profit / revenue * 100) if revenue > 0 else 0, 2),
         "order_count": len(sales),
-        "waste_records": len(waste_docs),
+        "expenses": expenses,
+        "total_expenses": total_expenses,
+        "net_profit": net_profit,
+        "net_margin_pct": round((net_profit / revenue * 100) if revenue > 0 else 0, 2),
         "top_customers": top_customers,
+        # Legacy fields (dipakai grafik/PDF lama) — biar backward compatible
+        "cogs": 0.0,
+        "gross_profit": round(revenue, 2),
+        "gross_margin_pct": 100.0 if revenue > 0 else 0.0,
+        "waste_loss": 0.0,
+        "waste_records": 0,
+        "payroll_cost": expenses[0]["amount"],
+        "employee_count": 0,
     }
 
 
@@ -4503,14 +4531,14 @@ DEFAULT_CASH_ACCOUNTS = [
     {"code": "102-PTP", "name": "Piutang Perusahaan", "type": "in", "system": True},
     {"code": "103", "name": "Persediaan Barang", "type": "out", "system": False},
     {"code": "103-01", "name": "Bahan Baku Mesin", "type": "out", "system": False},
-    {"code": "104", "name": "Perlengkapan Kantor", "type": "out", "system": False},
+    {"code": "104", "name": "By. ATK & Keperluan Kantor", "type": "out", "system": False},
     {"code": "105", "name": "BBM dan Maintenance Kendaraan", "type": "out", "system": False},
     {"code": "106", "name": "Pengiriman Dokumen", "type": "out", "system": False},
     {"code": "108", "name": "Makan dan Entertainment", "type": "out", "system": False},
     # Pengeluaran (expense) — kode lama tetap kompatibel
     {"code": "201", "name": "Bayar Utang Usaha", "type": "out", "system": True},
     {"code": "401", "name": "Pembelian Bahan Baku", "type": "out", "system": False},
-    {"code": "402", "name": "Perlengkapan Kantor", "type": "out", "system": False},
+    {"code": "402", "name": "By. Perbaikan Mesin", "type": "out", "system": False},
     {"code": "403", "name": "Alat Tulis Kantor", "type": "out", "system": False},
     {"code": "501", "name": "BBM, Parkir & Maintenance Kendaraan", "type": "out", "system": False},
     {"code": "502", "name": "Beban Listrik, Air, Telepon", "type": "out", "system": False},
@@ -4524,15 +4552,30 @@ DEFAULT_CASH_ACCOUNTS = [
     {"code": "510", "name": "Jasa Freelancer", "type": "out", "system": False},
     {"code": "511", "name": "Biaya Administrasi Bank", "type": "out", "system": False},
     {"code": "512", "name": "Kasbon Karyawan", "type": "out", "system": False},
+    {"code": "513", "name": "By. Penyusutan GA", "type": "out", "system": False},
+    {"code": "514", "name": "By. Pajak", "type": "out", "system": False},
     {"code": "599", "name": "Lain-lain", "type": "out", "system": False},
 ]
 
 
+# Kode akun yang butuh RENAME dari nama lama → nama baru (migrasi 2026-08-14)
+_ACCOUNT_RENAMES = {
+    "402": "By. Perbaikan Mesin",
+    "104": "By. ATK & Keperluan Kantor",
+}
+
+
 async def _ensure_cash_accounts():
-    """Seed default chart of accounts idempotently (per kode akun)."""
+    """Seed default chart of accounts idempotently (per kode akun).
+    Selain seed baru, juga migrasi rename untuk kode di _ACCOUNT_RENAMES.
+    """
     for a in DEFAULT_CASH_ACCOUNTS:
         exists = await db.cash_accounts.find_one({"code": a["code"]})
         if exists:
+            # Terapkan rename bila kode termasuk dalam _ACCOUNT_RENAMES dan namanya beda.
+            new_name = _ACCOUNT_RENAMES.get(a["code"])
+            if new_name and exists.get("name") != new_name:
+                await db.cash_accounts.update_one({"code": a["code"]}, {"$set": {"name": new_name}})
             continue
         await db.cash_accounts.insert_one({
             "id": str(uuid.uuid4()),
