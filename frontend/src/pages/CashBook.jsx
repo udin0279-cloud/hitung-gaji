@@ -97,6 +97,16 @@ export default function CashBook() {
   // Baris virtual Cash Plaza untuk di-inject ke Jurnal Akuntansi (filteredBook).
   // Setiap baris = 1 payment cash/tunai di sale dengan branch=plaza + payment.date di bulan aktif.
   const [cashPlazaTxRows, setCashPlazaTxRows] = useState([]);
+  // Buckets untuk Ringkasan Kategori — split per family & branch.
+  // Diambil dari sale.payments[] (paid/dp), filter date di bulan aktif.
+  const [payMix, setPayMix] = useState({
+    cash_plaza:    { amount: 0, count: 0 },
+    cash_kastem:   { amount: 0, count: 0 },
+    bca_plaza:     { amount: 0, count: 0 },
+    bca_kastem:    { amount: 0, count: 0 },
+    mandiri_plaza: { amount: 0, count: 0 },
+    mandiri_kastem:{ amount: 0, count: 0 },
+  });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [openTx, setOpenTx] = useState(false);
@@ -137,78 +147,115 @@ export default function CashBook() {
       const openTotal = openItems.reduce((sum, k) => sum + Number(k.amount || 0), 0);
       setKasbonOpen({ items: openItems, total_open: openTotal });
 
-      // Cash Plaza butuh fetch sales lebih luas: pelunasan bisa lintas bulan (nota bulan lalu, bayar cash bulan ini).
-      // Fetch 6 bulan ke belakang dari akhir bulan aktif.
+      // Fetch sales 6 bulan ke belakang untuk menangkap pelunasan lintas bulan.
       const cpFetchFrom = new Date(y, m - 6, 1).toISOString().slice(0, 10);
       const cpFetchTo = last;
       const slBroad = await api.get("/sales", { params: { date_from: cpFetchFrom, date_to: cpFetchTo, limit: 10000 } });
-      // Cash Plaza — DEFINISI SELARAS DENGAN KOLOM "CASH PLAZA NOMINAL" DI LAPORAN PENJUALAN.
-      // Ambil dari `sale.payments[]` (record pembayaran granular), FILTER:
-      //   - sale.branch === "plaza" (branch kosong dianggap "plaza")
-      //   - payment.payment_method ∈ ["cash","tunai"]
-      //   - payment.date jatuh dalam bulan aktif (untuk menangkap pelunasan lintas bulan)
-      // Jumlahkan payment.amount. Sales dgn status apapun tetap ikut kalau punya payment cash di bulan itu.
       const salesRaw = Array.isArray(slBroad.data) ? slBroad.data : (slBroad.data.items || []);
-      let cpAmount = 0, cpCount = 0;
-      const _debug = [];
+
+      // === Klasifikasi setiap payment berdasarkan payment_method/payment_bank/branch ===
+      // Family: cash | bca | mandiri (others ignored: shopee sudah lewat 301-SPP/SPK).
+      // Branch: plaza | kastem (dari method suffix, atau fallback ke sale.branch, atau default plaza).
+      const _classify = (p, saleBranch) => {
+        const pm = (p.payment_method || "").toLowerCase();
+        const pb = (p.payment_bank || "").toLowerCase();
+        let family = null;
+        if (pm.includes("cash") || pm === "tunai") family = "cash";
+        else if (pm.includes("bca") || pb.includes("bca")) family = "bca";
+        else if (pm.includes("mandiri") || pb.includes("mandiri")) family = "mandiri";
+        if (!family) return null;
+        let branch = null;
+        if (pm.includes("kastem")) branch = "kastem";
+        else if (pm.includes("plaza")) branch = "plaza";
+        else branch = (saleBranch || "plaza").toLowerCase();
+        if (branch !== "plaza" && branch !== "kastem") branch = "plaza";
+        return { family, branch };
+      };
+
+      const buckets = {
+        cash_plaza:    { amount: 0, count: 0 },
+        cash_kastem:   { amount: 0, count: 0 },
+        bca_plaza:     { amount: 0, count: 0 },
+        bca_kastem:    { amount: 0, count: 0 },
+        mandiri_plaza: { amount: 0, count: 0 },
+        mandiri_kastem:{ amount: 0, count: 0 },
+      };
+      const CASH_LABEL = { cash_plaza: "Cash Plaza", cash_kastem: "Cash Kastem" };
+      const CASH_CODE = { cash_plaza: "301-CP", cash_kastem: "301-CK" };
       const _cpVirtualTx = [];
+      let cpAmount = 0, cpCount = 0;  // Cash Plaza only — dipertahankan untuk Ringkasan Kategori
+      const _debug = [];
+
       for (const x of salesRaw) {
-        const branch = (x.branch || "plaza").toLowerCase();
-        if (branch !== "plaza") continue;
+        const saleBranch = (x.branch || "plaza").toLowerCase();
         const payments = Array.isArray(x.payments) ? x.payments : [];
-        let saleCp = 0;
+        let saleCashPlazaAmt = 0;
+
         if (payments.length > 0) {
           for (const p of payments) {
-            const pm = (p.payment_method || "").toLowerCase();
-            if (pm !== "cash" && pm !== "tunai") continue;
             const pDate = (p.date || p.created_at || x.date || "").slice(0, 10);
             if (pDate < first || pDate > last) continue;
+            const cls = _classify(p, saleBranch);
+            if (!cls) continue;
             const amt = Number(p.amount || 0);
-            saleCp += amt;
-            // Emit satu baris virtual Cash Plaza per payment (untuk Jurnal Akuntansi).
-            _cpVirtualTx.push({
-              id: `cp:${x.sale_no}:${pDate}:${_cpVirtualTx.length}`,
-              date: pDate,
-              account_code: "301-CP",
-              account_name: "Cash Plaza",
-              type: "in",
-              description: `Cash Plaza — ${x.customer_name || x.sale_no}`,
-              reference: x.sale_no,
-              amount: amt,
-              _virtual: true,
-            });
-          }
-        } else {
-          // Legacy: no payments[] tracking. Fallback ke sale.total bila:
-          //   sale.date dalam bulan aktif DAN payment_method-nya cash/tunai.
-          const sm = (x.payment_method || "").toLowerCase();
-          const sDate = (x.date || "").slice(0, 10);
-          if ((sm === "cash" || sm === "tunai") && sDate >= first && sDate <= last) {
-            saleCp = Number(x.total || 0) - Number(x.sisa_tagihan || 0);
-            if (saleCp > 0) {
+            const bucketKey = `${cls.family}_${cls.branch}`;
+            buckets[bucketKey].amount += amt;
+            buckets[bucketKey].count += 1;
+
+            // Emit virtual tx untuk Cash (Plaza + Kastem) ke Jurnal Akuntansi
+            if (cls.family === "cash") {
               _cpVirtualTx.push({
-                id: `cp:${x.sale_no}:${sDate}:legacy`,
-                date: sDate,
-                account_code: "301-CP",
-                account_name: "Cash Plaza",
+                id: `cp:${x.sale_no}:${pDate}:${_cpVirtualTx.length}`,
+                date: pDate,
+                account_code: CASH_CODE[bucketKey],
+                account_name: CASH_LABEL[bucketKey],
                 type: "in",
-                description: `Cash Plaza — ${x.customer_name || x.sale_no}`,
+                description: `${CASH_LABEL[bucketKey]} — ${x.customer_name || x.sale_no}`,
                 reference: x.sale_no,
-                amount: saleCp,
+                amount: amt,
                 _virtual: true,
               });
+              if (cls.branch === "plaza") saleCashPlazaAmt += amt;
+            }
+          }
+        } else {
+          // Legacy fallback: no payments[]. Pakai payment_method di sale + sale.date.
+          const cls = _classify({ payment_method: x.payment_method, payment_bank: x.payment_bank }, saleBranch);
+          const sDate = (x.date || "").slice(0, 10);
+          if (cls && sDate >= first && sDate <= last) {
+            const amt = Number(x.total || 0) - Number(x.sisa_tagihan || 0);
+            if (amt > 0) {
+              const bucketKey = `${cls.family}_${cls.branch}`;
+              buckets[bucketKey].amount += amt;
+              buckets[bucketKey].count += 1;
+              if (cls.family === "cash") {
+                _cpVirtualTx.push({
+                  id: `cp:${x.sale_no}:${sDate}:legacy`,
+                  date: sDate,
+                  account_code: CASH_CODE[bucketKey],
+                  account_name: CASH_LABEL[bucketKey],
+                  type: "in",
+                  description: `${CASH_LABEL[bucketKey]} — ${x.customer_name || x.sale_no}`,
+                  reference: x.sale_no,
+                  amount: amt,
+                  _virtual: true,
+                });
+                if (cls.branch === "plaza") saleCashPlazaAmt += amt;
+              }
             }
           }
         }
-        if (saleCp > 0) {
-          cpAmount += saleCp;
+
+        if (saleCashPlazaAmt > 0) {
+          cpAmount += saleCashPlazaAmt;
           cpCount += 1;
           _debug.push({
             sale_no: x.sale_no, branch: x.branch, total: x.total, status: x.status,
-            payments_count: payments.length, cash_paid_in_period: saleCp,
+            payments_count: payments.length, cash_plaza_paid: saleCashPlazaAmt,
           });
         }
       }
+      setPayMix(buckets);
       setCashPlazaTxRows(_cpVirtualTx);
       // eslint-disable-next-line no-console
       console.log("[CashPlaza]", { month, cpAmount, cpCount, samples: _debug.slice(0, 20), totalSalesFetched: salesRaw.length });
@@ -442,7 +489,7 @@ export default function CashBook() {
           <KasbonTab month={month} setMonth={setMonth} onCashChanged={loadAll} />
         )}
         {tab === "summary" && (
-          <SummaryTab summary={summary} month={month} setMonth={setMonth} cashPlaza={cashPlaza} />
+          <SummaryTab summary={summary} month={month} setMonth={setMonth} cashPlaza={cashPlaza} payMix={payMix} />
         )}
       </div>
 
@@ -796,25 +843,29 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
 }
 
 /* ---------- Summary Tab (Breakdown per Kategori) ---------- */
-function SummaryTab({ summary, month, setMonth, cashPlaza = { amount: 0, count: 0 } }) {
+function SummaryTab({ summary, month, setMonth, cashPlaza = { amount: 0, count: 0 }, payMix = {} }) {
   if (!summary) return <div className="text-zinc-400 text-sm">Memuat…</div>;
 
-  // ATURAN MUTLAK (permintaan user 2026-08-14, TIDAK BOLEH DIUBAH):
-  //   PEMASUKAN hanya berisi 5 baris: 301-SPP, 301-BCA, 301-MDR, 301-SPK, Cash Plaza.
-  //   Tidak ada baris "Di Luar Total". Tidak ada baris 101. Tidak ada BCA/Mandiri/Shopee family synthetic.
-  //   Total Pemasukan = jumlah dari kelima baris tsb.
-  const ALLOWED_CODES = ["301-SPP", "301-BCA", "301-MDR", "301-SPK"];
+  // Whitelist Shopee (dari cash_transactions): sudah split per branch di backend.
+  const SHOPEE_CODES = ["301-SPP", "301-SPK"];
   const byCode = Object.fromEntries((summary.breakdown_in || []).map((r) => [r.account_code, r]));
-  const inMain = ALLOWED_CODES
-    .map((code) => byCode[code])
-    .filter(Boolean);
-  if (cashPlaza && cashPlaza.amount > 0) {
-    inMain.push({
-      account_code: "CASH-PLAZA",
-      account_name: "Cash Plaza",
-      amount: Number(cashPlaza.amount || 0),
-      count: Number(cashPlaza.count || 0),
-    });
+  const inMain = SHOPEE_CODES.map((code) => byCode[code]).filter(Boolean);
+
+  // Baris synthetic per kategori pembayaran + branch (dari sales.payments[]).
+  // Cash Plaza kompat dgn state `cashPlaza` lama; kalau `payMix.cash_plaza` ada, prioritas ke situ.
+  const ROWS = [
+    { key: "cash_plaza",    code: "CASH-PLAZA", label: "Cash Plaza" },
+    { key: "cash_kastem",   code: "CASH-KASTEM", label: "Cash Kastem" },
+    { key: "bca_plaza",     code: "301-BCA-P", label: "Transfer BCA Plaza" },
+    { key: "bca_kastem",    code: "301-BCA-K", label: "Transfer BCA Kastem" },
+    { key: "mandiri_plaza", code: "301-MDR-P", label: "Transfer Mandiri Plaza" },
+    { key: "mandiri_kastem",code: "301-MDR-K", label: "Transfer Mandiri Kastem" },
+  ];
+  for (const r of ROWS) {
+    const b = payMix[r.key] || (r.key === "cash_plaza" ? cashPlaza : null);
+    if (b && Number(b.amount || 0) > 0) {
+      inMain.push({ account_code: r.code, account_name: r.label, amount: Number(b.amount), count: Number(b.count || 0) });
+    }
   }
   const totalInAdjusted = inMain.reduce((s, r) => s + Number(r.amount || 0), 0);
   const maxIn = Math.max(...inMain.map((r) => r.amount), 1);
