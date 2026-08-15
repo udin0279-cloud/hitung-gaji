@@ -1361,19 +1361,19 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
   const closingBalance = openingBalance + totalKredit - totalDebet - kasbonTotal;
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 md:gap-3 mb-4">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <MonthNav value={month} onChange={setMonth} testIdPrefix="journal-month" />
-          <div className="relative">
+          <div className="relative flex-1 md:flex-none">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input
               value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Cari keterangan / akun / ref…"
               data-testid="journal-search"
-              className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
+              className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-full md:w-80 focus:border-[#002FA7] focus:outline-none"
             />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap">Kredit: Akun 101 · Debet: Semua Akun</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest bg-[#002FA7]/10 text-[#002FA7] px-2.5 py-1.5 border border-[#002FA7]/30 whitespace-nowrap hidden md:inline">Kredit: Akun 101 · Debet: Semua Akun</span>
           {adjustCount > 0 && (
             <>
               <button
@@ -1395,14 +1395,14 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
                 data-testid="purge-adjustments-btn"
                 onClick={purgeAdjustments}
                 className="text-[10px] font-bold uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 whitespace-nowrap bg-white text-[#E81123] border-[#E81123]/40 hover:bg-[#E81123]/5"
-                title="Hapus SEMUA jurnal penyesuaian (ref=ADJUSTMENT) — saldo akan berubah, set manual via Saldo Awal setelah"
+                title="Hapus SEMUA jurnal penyesuaian"
               >
-                <Trash2 className="w-3 h-3" /> Hapus Semua Penyesuaian
+                <Trash2 className="w-3 h-3" /> <span className="hidden sm:inline">Hapus Semua Penyesuaian</span><span className="sm:hidden">Hapus Penyesuaian</span>
               </button>
             </>
           )}
         </div>
-        <div className="text-xs text-zinc-500 font-mono">
+        <div className="text-[11px] md:text-xs text-zinc-500 font-mono w-full md:w-auto">
           {jurnal.length} jurnal{showAdjustOnly ? " (penyesuaian saja)" : ""} · Debet <b className="text-[#E81123]">{formatIDR(totalDebet)}</b> · Kredit <b className="text-[#008A00]">{formatIDR(totalKredit)}</b>
           {kasbonList.length > 0 && !showAdjustOnly && (
             <> · Kasbon <b className="text-[#F97316]">{formatIDR(kasbonTotal)}</b></>
@@ -1410,7 +1410,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
         </div>
       </div>
 
-      <div className="border border-zinc-900 bg-white overflow-x-auto">
+      <div className="hidden md:block border border-zinc-900 bg-white overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="bg-zinc-900 text-white text-[11px] font-bold uppercase tracking-widest">
@@ -1578,6 +1578,132 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
           </tbody>
         </table>
       </div>
+
+      {/* Mobile card list */}
+      <div className="md:hidden space-y-2">
+        <div className="bg-[#002FA7]/5 border border-[#002FA7]/30 px-3 py-2.5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-[#002FA7] font-bold">Saldo Awal {monthLabel(month)}</div>
+              <div className="text-[10px] text-zinc-500 font-mono">Akun 101 · pindahan dari bulan sebelumnya</div>
+            </div>
+            <div className="font-mono font-bold text-sm text-[#002FA7]">{formatIDR(openingBalance)}</div>
+          </div>
+        </div>
+
+        {loading && (
+          <div className="text-center text-zinc-400 text-xs font-mono py-8">Memuat…</div>
+        )}
+        {!loading && jurnal.length === 0 && (
+          <div className="text-center text-zinc-400 text-xs font-mono py-8 border border-dashed border-zinc-200">
+            Belum ada arus kas bulan ini.
+          </div>
+        )}
+        {!loading && jurnal.map((t) => (
+          <div key={t.id} data-testid="mobile-journal-card" className={`border border-zinc-200 bg-white p-3 ${t.reference === "ADJUSTMENT" ? "border-l-4 border-l-[#002FA7]" : ""}`}>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-mono text-[10px] text-zinc-500 whitespace-nowrap">{t.date}</span>
+                <span className="font-mono text-[11px] font-bold text-zinc-800 bg-zinc-100 px-1.5 py-0.5">{t.account_code}</span>
+              </div>
+              <div className="flex items-center gap-0.5">
+                <button onClick={() => onEdit(t)} disabled={t.auto} className="p-1 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30" data-testid="edit-journal-mobile"><Pencil className="w-3.5 h-3.5" /></button>
+                <button onClick={() => onRemove(t)} className="p-1 hover:bg-[#E81123]/10 text-[#E81123]" data-testid="del-journal-mobile"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            </div>
+            <div className="text-sm font-semibold text-zinc-900">{t.account_name}</div>
+            <div className="text-xs text-zinc-600 mt-0.5 break-words">{t.description}</div>
+            {t.reference && (
+              <div className="text-[10px] font-mono text-zinc-400 mt-0.5">ref: {t.reference}</div>
+            )}
+            <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-zinc-100 text-[11px] font-mono">
+              <div>
+                <div className="text-[9px] uppercase text-zinc-400">Kredit</div>
+                <div className="text-[#008A00] font-bold">{t.type === "in" ? formatIDR(t.amount) : "—"}</div>
+              </div>
+              <div>
+                <div className="text-[9px] uppercase text-zinc-400">Debet</div>
+                <div className="text-[#E81123] font-bold">{t.type === "out" ? formatIDR(t.amount) : "—"}</div>
+              </div>
+              <div>
+                <div className="text-[9px] uppercase text-zinc-400">Saldo</div>
+                <div className="text-zinc-900 font-bold">{formatIDR(t.balance)}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {!showAdjustOnly && kasbonRows.length > 0 && (
+          <>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-[#F97316] mt-2 mb-1">
+              · Kasbon Sementara (belum lunas)
+            </div>
+            {kasbonRows.map((k) => (
+              <div key={`m-kasbon-${k.id}`} data-testid="mobile-kasbon-card" className="border border-[#F97316]/40 bg-[#F97316]/5 p-3">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] text-[#F97316] whitespace-nowrap">{k.date}</span>
+                    <span className="font-mono text-[11px] font-bold text-[#F97316] bg-white px-1.5 py-0.5 border border-[#F97316]/30">KASBON</span>
+                  </div>
+                  <span className="text-[9px] uppercase tracking-widest font-bold text-[#F97316]">pending</span>
+                </div>
+                <div className="text-sm font-semibold text-zinc-900">Kasbon · {k.name}</div>
+                <div className="text-xs text-zinc-600 mt-0.5 break-words">{k.description || "Uang muka staff — belum dilunasi"}</div>
+                <div className="text-[10px] font-mono text-zinc-400 mt-0.5">ref: KASBON-{String(k.id).slice(0, 8)}</div>
+                <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-[#F97316]/20 text-[11px] font-mono">
+                  <div>
+                    <div className="text-[9px] uppercase text-zinc-400">Kasbon</div>
+                    <div className="text-[#F97316] font-bold">{formatIDR(k.amount)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] uppercase text-zinc-400">—</div>
+                    <div className="text-zinc-300">—</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] uppercase text-zinc-400">Saldo</div>
+                    <div className="text-[#F97316] font-bold">{formatIDR(k.running_balance)}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {!loading && jurnal.length > 0 && (
+          <>
+            <div className="bg-zinc-50 border-2 border-zinc-900 p-3 mt-2">
+              <div className="text-[10px] uppercase tracking-widest text-zinc-800 font-bold mb-2">Total Kas Utama (sebelum Kasbon)</div>
+              <div className="grid grid-cols-3 gap-2 text-[11px] font-mono">
+                <div>
+                  <div className="text-[9px] uppercase text-zinc-400">Debet</div>
+                  <div className="text-[#E81123] font-bold">{formatIDR(totalDebet)}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] uppercase text-zinc-400">Kredit</div>
+                  <div className="text-[#008A00] font-bold">{formatIDR(totalKredit)}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] uppercase text-zinc-400">Saldo</div>
+                  <div className="text-zinc-900 font-bold">{formatIDR(runningAfterTx)}</div>
+                </div>
+              </div>
+            </div>
+            {kasbonRows.length > 0 && !showAdjustOnly && (
+              <div className="bg-[#F97316]/10 border border-[#F97316]/30 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] uppercase tracking-widest text-[#F97316] font-bold">− Kasbon Belum Lunas</div>
+                  <div className="font-mono font-bold text-[#F97316]">−{formatIDR(kasbonTotal)}</div>
+                </div>
+              </div>
+            )}
+            <div className="bg-zinc-900 text-white p-3">
+              <div className="text-[10px] uppercase tracking-widest text-zinc-300 font-bold">Saldo Akhir (setelah Kasbon)</div>
+              <div className="font-mono font-bold text-lg mt-1" data-testid="mobile-journal-closing">{formatIDR(closingBalance)}</div>
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="mt-3 text-[11px] text-zinc-500">
         <b>Konvensi:</b> Debet = pengeluaran · Kredit = pemasukan akun 101 · <b className="text-[#F97316]">Kasbon</b> = uang muka staff yg belum lunas (kas fisik berkurang meski belum jadi expense resmi). Rumus: <b>Saldo Akhir = Saldo Awal + Kredit − Debet − Kasbon Belum Lunas</b>.
         Auto-sync dari modul <b>Pembelian</b>, <b>Penjualan/Kasir</b>, <b>Kas Operasional</b>, dan <b>Kasbon Sementara</b>. Kasbon LUNAS tidak ditampilkan — kelola di tab <b>Kasbon Sementara</b>.
