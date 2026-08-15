@@ -557,20 +557,20 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
 
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 md:gap-3 mb-4">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <MonthNav value={month} onChange={setMonth} testIdPrefix="cash-month" />
-          <div className="relative">
+          <div className="relative flex-1 md:flex-none">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input
               value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Cari keterangan / akun / ref…"
               data-testid="cash-search"
-              className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-72 focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
+              className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-full md:w-72 focus:border-[#002FA7] focus:ring-1 focus:ring-[#002FA7] focus:outline-none"
             />
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full md:w-auto justify-between md:justify-end">
           <div className="text-xs text-zinc-500 font-mono">
             {filtered.length} transaksi
           </div>
@@ -578,30 +578,31 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             type="button"
             data-testid="cash-adjust-balance-btn"
             onClick={onAdjustBalance}
-            className="rounded-none border border-[#002FA7] bg-white text-[#002FA7] px-3 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#002FA7] hover:text-white inline-flex items-center gap-2"
+            className="rounded-none border border-[#002FA7] bg-white text-[#002FA7] px-3 py-2 text-[11px] md:text-xs font-bold uppercase tracking-wider hover:bg-[#002FA7] hover:text-white inline-flex items-center gap-2"
             title="Bikin jurnal penyesuaian otomatis agar saldo kas real-time menjadi angka target."
           >
             <Target className="w-3.5 h-3.5" />
-            Update Saldo Kas Terakhir
+            <span className="hidden sm:inline">Update Saldo Kas Terakhir</span>
+            <span className="sm:hidden">Update Saldo</span>
           </button>
         </div>
       </div>
 
       {/* Ringkasan Piutang Perusahaan (khusus Jurnal Akuntansi) */}
-      <div data-testid="jurnal-piutang-card" className="mb-4 border border-[#002FA7]/20 bg-[#002FA7]/[0.03] px-4 py-3 flex items-center justify-between gap-3">
+      <div data-testid="jurnal-piutang-card" className="mb-4 border border-[#002FA7]/20 bg-[#002FA7]/[0.03] px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <div className="text-[10px] uppercase tracking-widest text-[#002FA7]/80 font-bold">Total Piutang Perusahaan (Akun 102-PTP)</div>
           <div className="text-[10px] font-mono text-zinc-500 mt-0.5">Akumulasi net (in − out) transaksi bulan {monthLabel(month)}. Khusus Jurnal Akuntansi.</div>
         </div>
-        <div className="flex items-center gap-4">
-          <div data-testid="jurnal-piutang-value" className={`font-mono text-2xl font-bold ${totalPiutang >= 0 ? "text-[#002FA7]" : "text-[#E81123]"}`}>
+        <div className="flex items-center justify-between md:justify-end gap-3 md:gap-4">
+          <div data-testid="jurnal-piutang-value" className={`font-mono text-xl md:text-2xl font-bold ${totalPiutang >= 0 ? "text-[#002FA7]" : "text-[#E81123]"}`}>
             {formatIDR(totalPiutang)}
           </div>
           <button
             type="button"
             data-testid="btn-bayar-piutang"
             onClick={() => setOpenBayarPiutang(true)}
-            className="rounded-none bg-[#002FA7] text-white px-4 py-2 text-xs font-bold uppercase tracking-wider hover:bg-[#001F7A] inline-flex items-center gap-2"
+            className="rounded-none bg-[#002FA7] text-white px-3 md:px-4 py-2 text-[11px] md:text-xs font-bold uppercase tracking-wider hover:bg-[#001F7A] inline-flex items-center gap-2 whitespace-nowrap"
             title="Catat pelunasan piutang perusahaan. Insert 1 baris transaksi type=out ke akun 102-PTP. Tidak menyentuh Buku Kas."
           >
             <ArrowDownCircle className="w-3.5 h-3.5" /> Bayar Piutang
@@ -616,7 +617,7 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
         />
       )}
 
-      <div className="border border-zinc-200 bg-white overflow-x-auto">
+      <div className="hidden md:block border border-zinc-200 bg-white overflow-x-auto">
         <table className="w-full text-left text-sm table-fixed">
           <colgroup>
             <col className="w-[110px]" />
@@ -707,6 +708,88 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile card list */}
+      <div className="md:hidden space-y-2">
+        <div className="bg-[#002FA7]/5 border border-[#002FA7]/30 px-3 py-2.5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-[#002FA7] font-bold">Saldo Awal {monthLabel(month)}</div>
+              <div className="text-[10px] text-zinc-500 font-mono">pindahan bulan sebelumnya</div>
+            </div>
+            <div className="font-mono font-bold text-sm text-[#002FA7]">{formatIDR(openingBalance)}</div>
+          </div>
+        </div>
+
+        {loading && (
+          <div className="text-center text-zinc-400 text-xs font-mono py-8">Memuat…</div>
+        )}
+        {!loading && filtered.length === 0 && (
+          <div className="text-center text-zinc-400 text-xs font-mono py-8 border border-dashed border-zinc-200">
+            Belum ada transaksi non-Kas bulan ini.
+          </div>
+        )}
+        {!loading && filtered.map((t, idx) => (
+          <div key={t.id} data-testid="mobile-tx-card" className={`border border-zinc-200 bg-white p-3 ${t._virtual ? "border-l-4 border-l-[#008A00]" : ""}`}>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-mono text-[10px] text-zinc-500 whitespace-nowrap">{t.date}</span>
+                <span className="font-mono text-[11px] font-bold text-zinc-800 bg-zinc-100 px-1.5 py-0.5">{t.account_code}</span>
+              </div>
+              {t._virtual ? (
+                <span className="text-[9px] text-zinc-400 font-mono">auto</span>
+              ) : (
+                <div className="flex items-center gap-0.5">
+                  <button onClick={() => onEdit(t)} disabled={t.auto} className="p-1 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30" data-testid="edit-tx-button-mobile"><Pencil className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => onRemove(t)} className="p-1 hover:bg-[#E81123]/10 text-[#E81123]" data-testid="del-tx-button-mobile"><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+              )}
+            </div>
+            <div className="text-sm font-semibold text-zinc-900">{t.account_name}</div>
+            <div className="text-xs text-zinc-600 mt-0.5 break-words">{t.description}</div>
+            {t.reference && (
+              <div className="text-[10px] font-mono text-zinc-400 mt-0.5">ref: {t.reference}</div>
+            )}
+            <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-zinc-100 text-[11px] font-mono">
+              <div>
+                <div className="text-[9px] uppercase text-zinc-400">In</div>
+                <div className="text-[#008A00] font-bold">{t.type === "in" ? formatIDR(t.amount) : "—"}</div>
+              </div>
+              <div>
+                <div className="text-[9px] uppercase text-zinc-400">Out</div>
+                <div className="text-[#E81123] font-bold">{t.type === "out" ? formatIDR(t.amount) : "—"}</div>
+              </div>
+              <div>
+                <div className="text-[9px] uppercase text-zinc-400">Saldo</div>
+                <div className="text-[#002FA7] font-bold">{formatIDR(balanceByRowIndex[idx])}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {!loading && filtered.length > 0 && (
+          <div className="bg-zinc-900 text-white p-3">
+            <div className="text-[10px] uppercase tracking-widest text-zinc-300 font-bold">Saldo Akhir {monthLabel(month)}</div>
+            <div className="text-[9px] font-mono text-zinc-400 mt-0.5 mb-2">
+              {formatIDR(openingBalance)} + {formatIDR(totalPemasukan)} − {formatIDR(totalPengeluaran)}
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-[11px] font-mono">
+              <div>
+                <div className="text-[9px] uppercase text-zinc-400">In</div>
+                <div className="text-[#00c800] font-bold">{formatIDR(totalPemasukan)}</div>
+              </div>
+              <div>
+                <div className="text-[9px] uppercase text-zinc-400">Out</div>
+                <div className="text-[#ff6b6b] font-bold">{formatIDR(totalPengeluaran)}</div>
+              </div>
+              <div>
+                <div className="text-[9px] uppercase text-zinc-400">Total</div>
+                <div className="text-white font-bold text-sm">{formatIDR(saldoAkhirComputed)}</div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
