@@ -1811,8 +1811,8 @@ function KasbonTab({ month, setMonth, onCashChanged }) {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex flex-wrap items-center justify-between gap-2 md:gap-3 mb-4">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <MonthNav value={month} onChange={setMonth} testIdPrefix="kasbon-month" />
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} data-testid="kasbon-status-filter"
             className="rounded-none border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-[#002FA7] focus:outline-none">
@@ -1820,31 +1820,32 @@ function KasbonTab({ month, setMonth, onCashChanged }) {
             <option value="open">Belum Lunas</option>
             <option value="settled">Sudah Lunas</option>
           </select>
-          <div className="relative">
+          <div className="relative flex-1 md:flex-none w-full md:w-auto">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / keterangan…" data-testid="kasbon-search"
-              className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-72 focus:border-[#002FA7] focus:outline-none" />
+              className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-full md:w-72 focus:border-[#002FA7] focus:outline-none" />
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           {Number(data.total_open || 0) > 0 && (
             <button
               data-testid="kasbon-bulk-settle-all"
               onClick={bulkSettleAll}
-              className="rounded-none bg-white text-[#008A00] border border-[#008A00] px-4 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-[#008A00]/5 inline-flex items-center gap-2"
+              className="rounded-none bg-white text-[#008A00] border border-[#008A00] px-3 md:px-4 py-2 md:py-2.5 text-[11px] md:text-sm font-bold uppercase tracking-wider hover:bg-[#008A00]/5 inline-flex items-center gap-2 flex-1 md:flex-none justify-center"
               title="Tandai SEMUA kasbon PENDING → LUNAS (tanpa memotong kas). Untuk membersihkan data lama."
             >
-              <CheckCircle2 className="w-4 h-4" /> Tandai Semua Lunas
+              <CheckCircle2 className="w-4 h-4" /> <span className="hidden sm:inline">Tandai Semua Lunas</span><span className="sm:hidden">Lunas Semua</span>
             </button>
           )}
           <button data-testid="kasbon-add-button" onClick={() => { setEditing(null); setOpenForm(true); }}
-            className="rounded-none bg-[#002FA7] text-white px-5 py-2.5 text-sm font-bold uppercase tracking-wider hover:bg-[#001E7A] inline-flex items-center gap-2">
+            className="rounded-none bg-[#002FA7] text-white px-3 md:px-5 py-2 md:py-2.5 text-[11px] md:text-sm font-bold uppercase tracking-wider hover:bg-[#001E7A] inline-flex items-center gap-2 flex-1 md:flex-none justify-center">
             <Plus className="w-4 h-4" /> Tambah Kasbon
           </button>
         </div>
       </div>
 
-      <div className="border border-zinc-200 bg-white overflow-x-auto">
+      {/* Desktop table */}
+      <div className="hidden md:block border border-zinc-200 bg-white overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="bg-zinc-50 border-b border-zinc-200 text-[11px] font-bold text-zinc-600 uppercase tracking-widest">
@@ -1920,6 +1921,59 @@ function KasbonTab({ month, setMonth, onCashChanged }) {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile card list */}
+      <div className="md:hidden space-y-2">
+        {loading && <div className="text-center text-zinc-400 text-xs font-mono py-8">Memuat…</div>}
+        {!loading && filtered.length === 0 && (
+          <div className="text-center text-zinc-400 text-xs font-mono py-8 border border-dashed border-zinc-200">Belum ada kasbon.</div>
+        )}
+        {!loading && filtered.map((k) => {
+          const _s = String(k.status || "").trim().toUpperCase();
+          const isPaid = _s === "PAID" || _s === "SETTLED";
+          return (
+            <div key={k.id} data-testid="mobile-kasbon-item" className={`border bg-white p-3 ${isPaid ? "border-zinc-200 opacity-70" : "border-l-4 border-l-[#F97316] border-zinc-200"}`}>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono text-[10px] text-zinc-500 whitespace-nowrap">{k.date}</span>
+                  {isPaid ? (
+                    <span className="inline-flex items-center gap-1 text-[9px] uppercase tracking-widest font-bold text-[#008A00] bg-[#008A00]/10 px-1.5 py-0.5">
+                      <CheckCircle2 className="w-2.5 h-2.5" /> Lunas
+                    </span>
+                  ) : (
+                    <span className="text-[9px] uppercase tracking-widest font-bold text-[#E81123] bg-[#E81123]/10 px-1.5 py-0.5">Belum Lunas</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-0.5">
+                  {!isPaid ? (
+                    <button onClick={() => settle(k)} className="p-1 hover:bg-[#008A00]/10 text-[#008A00]" data-testid="kasbon-settle-mobile" title="Tandai Lunas"><CheckCircle2 className="w-3.5 h-3.5" /></button>
+                  ) : (
+                    <button onClick={() => reopen(k)} className="p-1 hover:bg-amber-100 text-amber-700" data-testid="kasbon-reopen-mobile" title="Buka kembali"><RotateCcw className="w-3.5 h-3.5" /></button>
+                  )}
+                  <button onClick={() => { setEditing(k); setOpenForm(true); }} className="p-1 hover:bg-zinc-100 text-zinc-700" data-testid="kasbon-edit-mobile"><Pencil className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => remove(k)} className="p-1 hover:bg-[#E81123]/10 text-[#E81123]" data-testid="kasbon-del-mobile"><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+              </div>
+              <div className="text-sm font-semibold text-zinc-900">{k.name}</div>
+              <div className="text-xs text-zinc-600 mt-0.5 break-words">{k.description || "—"}</div>
+              <div className="mt-2 pt-2 border-t border-zinc-100 flex items-center justify-between">
+                <div className="text-[9px] uppercase text-zinc-400">Jumlah</div>
+                <div className="font-mono font-bold text-base text-zinc-900">{formatIDR(k.amount)}</div>
+              </div>
+            </div>
+          );
+        })}
+        {!loading && filtered.length > 0 && (
+          <div className="bg-zinc-900 text-white p-3 mt-2">
+            <div className="text-[10px] uppercase tracking-widest text-zinc-300 font-bold">
+              TOTAL {filterStatus === "settled" ? "LUNAS" : filterStatus === "open" ? "BELUM LUNAS" : "SEMUA KASBON"}
+            </div>
+            <div className="font-mono font-bold text-lg mt-1">
+              {formatIDR(filtered.reduce((s, k) => s + Number(k.amount || 0), 0))}
+            </div>
+          </div>
+        )}
       </div>
 
       {openForm && (
