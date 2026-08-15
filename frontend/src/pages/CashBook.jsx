@@ -94,6 +94,9 @@ export default function CashBook() {
   // Kasbon open (semua waktu) — dipakai untuk mengurangi Saldo Kas Real-time & Saldo Akhir bulan.
   const [kasbonOpen, setKasbonOpen] = useState({ items: [], total_open: 0 });
   const [cashPlaza, setCashPlaza] = useState({ amount: 0, count: 0 });
+  // Baris virtual Cash Plaza untuk di-inject ke Jurnal Akuntansi (filteredBook).
+  // Setiap baris = 1 payment cash/tunai di sale dengan branch=plaza + payment.date di bulan aktif.
+  const [cashPlazaTxRows, setCashPlazaTxRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [openTx, setOpenTx] = useState(false);
@@ -148,6 +151,7 @@ export default function CashBook() {
       const salesRaw = Array.isArray(slBroad.data) ? slBroad.data : (slBroad.data.items || []);
       let cpAmount = 0, cpCount = 0;
       const _debug = [];
+      const _cpVirtualTx = [];
       for (const x of salesRaw) {
         const branch = (x.branch || "plaza").toLowerCase();
         if (branch !== "plaza") continue;
@@ -159,7 +163,20 @@ export default function CashBook() {
             if (pm !== "cash" && pm !== "tunai") continue;
             const pDate = (p.date || p.created_at || x.date || "").slice(0, 10);
             if (pDate < first || pDate > last) continue;
-            saleCp += Number(p.amount || 0);
+            const amt = Number(p.amount || 0);
+            saleCp += amt;
+            // Emit satu baris virtual Cash Plaza per payment (untuk Jurnal Akuntansi).
+            _cpVirtualTx.push({
+              id: `cp:${x.sale_no}:${pDate}:${_cpVirtualTx.length}`,
+              date: pDate,
+              account_code: "301-CP",
+              account_name: "Cash Plaza",
+              type: "in",
+              description: `Cash Plaza — ${x.customer_name || x.sale_no}`,
+              reference: x.sale_no,
+              amount: amt,
+              _virtual: true,
+            });
           }
         } else {
           // Legacy: no payments[] tracking. Fallback ke sale.total bila:
@@ -168,6 +185,19 @@ export default function CashBook() {
           const sDate = (x.date || "").slice(0, 10);
           if ((sm === "cash" || sm === "tunai") && sDate >= first && sDate <= last) {
             saleCp = Number(x.total || 0) - Number(x.sisa_tagihan || 0);
+            if (saleCp > 0) {
+              _cpVirtualTx.push({
+                id: `cp:${x.sale_no}:${sDate}:legacy`,
+                date: sDate,
+                account_code: "301-CP",
+                account_name: "Cash Plaza",
+                type: "in",
+                description: `Cash Plaza — ${x.customer_name || x.sale_no}`,
+                reference: x.sale_no,
+                amount: saleCp,
+                _virtual: true,
+              });
+            }
           }
         }
         if (saleCp > 0) {
@@ -179,6 +209,7 @@ export default function CashBook() {
           });
         }
       }
+      setCashPlazaTxRows(_cpVirtualTx);
       // eslint-disable-next-line no-console
       console.log("[CashPlaza]", { month, cpAmount, cpCount, samples: _debug.slice(0, 20), totalSalesFetched: salesRaw.length });
       setCashPlaza({ amount: cpAmount, count: cpCount });
@@ -199,9 +230,10 @@ export default function CashBook() {
       || (t.reference || "").toLowerCase().includes(q);
   };
 
-  const filteredBook = txData.transactions
+  const filteredBook = [...txData.transactions, ...cashPlazaTxRows]
     .filter(t => t.account_code !== "101")
-    .filter(matchesSearch);
+    .filter(matchesSearch)
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   // Tab Buku Kas (JournalTab):
   // - KREDIT: HANYA akun 101 (kas fisik masuk), + description tanpa keyword "penjualan"
   // - DEBET: SEMUA type=out (dari akun mana pun — semua uang keluar mengurangi kas)
@@ -647,8 +679,14 @@ function BookTab({ month, setMonth, search, setSearch, txData, filtered, loading
                 <td data-testid="book-saldo-kas-cell" className="px-4 py-2.5 text-right font-mono text-xs font-bold text-[#002FA7] bg-[#002FA7]/5 whitespace-nowrap">{formatIDR(balanceByRowIndex[idx])}</td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center justify-end gap-1">
-                    <button data-testid="edit-tx-button" onClick={() => onEdit(t)} disabled={t.auto} className="p-1.5 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed" title={t.auto ? "Transaksi otomatis — edit di modul sumbernya" : "Edit"}><Pencil className="w-3.5 h-3.5" /></button>
-                    <button data-testid="del-tx-button" onClick={() => onRemove(t)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]" title={t.auto ? "Coba hapus (sistem akan cek orphan)" : "Hapus"}><Trash2 className="w-3.5 h-3.5" /></button>
+                    {t._virtual ? (
+                      <span className="text-[10px] text-zinc-400 font-mono px-2" title="Cash Plaza — virtual dari koleksi Sales. Edit/hapus lewat modul Penjualan.">auto</span>
+                    ) : (
+                      <>
+                        <button data-testid="edit-tx-button" onClick={() => onEdit(t)} disabled={t.auto} className="p-1.5 hover:bg-zinc-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed" title={t.auto ? "Transaksi otomatis — edit di modul sumbernya" : "Edit"}><Pencil className="w-3.5 h-3.5" /></button>
+                        <button data-testid="del-tx-button" onClick={() => onRemove(t)} className="p-1.5 hover:bg-[#E81123]/10 text-[#E81123]" title={t.auto ? "Coba hapus (sistem akan cek orphan)" : "Hapus"}><Trash2 className="w-3.5 h-3.5" /></button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>
