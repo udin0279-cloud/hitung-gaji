@@ -199,19 +199,23 @@ export default function CashBook() {
       || (t.reference || "").toLowerCase().includes(q);
   };
 
-  const filteredBook = txData.transactions.filter(t => t.account_code !== "101");
+  const filteredBook = txData.transactions
+    .filter(t => t.account_code !== "101")
+    .filter(matchesSearch);
   // Tab Buku Kas (JournalTab):
   // - KREDIT: HANYA akun 101 (kas fisik masuk), + description tanpa keyword "penjualan"
   // - DEBET: SEMUA type=out (dari akun mana pun — semua uang keluar mengurangi kas)
   // - Akun 102-PTP (Piutang Perusahaan) DILARANG muncul di Buku Kas (khusus Jurnal Akuntansi).
-  const filteredJournal = txData.transactions.filter(t => {
-    if (t.account_code === "102-PTP") return false;
-    if (t.type === "in") {
-      return t.account_code === "101"
-        && !(t.description || "").toLowerCase().includes("penjualan");
-    }
-    return t.type === "out";
-  });
+  const filteredJournal = txData.transactions
+    .filter(t => {
+      if (t.account_code === "102-PTP") return false;
+      if (t.type === "in") {
+        return t.account_code === "101"
+          && !(t.description || "").toLowerCase().includes("penjualan");
+      }
+      return t.type === "out";
+    })
+    .filter(matchesSearch);
 
   // Total Piutang Perusahaan (akun 102-PTP) — akumulatif dari semua transaksi bulan ini.
   const totalPiutangBulan = txData.transactions
