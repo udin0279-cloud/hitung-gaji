@@ -1247,7 +1247,7 @@ function JournalTab({ month, setMonth, search, setSearch, txData, filtered, load
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input
               value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari keterangan…"
+              placeholder="Cari keterangan / akun / ref…"
               data-testid="journal-search"
               className="rounded-none border border-zinc-300 bg-white pl-10 pr-3 py-2 text-sm w-80 focus:border-[#002FA7] focus:outline-none"
             />
